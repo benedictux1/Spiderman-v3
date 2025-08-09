@@ -11,15 +11,21 @@ __pycache__/
 venv/
 
 # App data
-kith-platform/chroma_db/
-kith-platform/kith_platform.db
-*.sqlite
+chroma_db/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
 
 # Node
 node_modules/
 
 # Logs
 *.log
+
+# Coverage
+.coverage
 
 # Misc
 *.swp

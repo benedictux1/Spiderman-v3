@@ -108,9 +108,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                await createContact(name, tier);
-                createContactModal.style.display = 'none';
-                createContactForm.reset();
+                try {
+                    await createContact(name, tier);
+                    createContactModal.style.display = 'none';
+                    createContactForm.reset();
+                    // Refresh both settings table and main view lists
+                    if (typeof loadContacts === 'function') loadContacts();
+                    if (typeof loadTier1Contacts === 'function') loadTier1Contacts();
+                    if (typeof loadTier2Contacts === 'function') loadTier2Contacts();
+                    alert('Contact created successfully!');
+                } catch (e) {
+                    alert('Error creating contact: ' + (e.message || e));
+                }
             });
         }
     }
@@ -125,14 +134,13 @@ async function createContact(name, tier) {
         });
         const result = await response.json();
         if (response.ok) {
-            alert('Contact created successfully!');
-            loadContacts();
+            return result;
         } else {
-            alert('Error creating contact: ' + result.error);
+            throw new Error(result.error || 'Failed to create contact');
         }
     } catch (error) {
         console.error('Error creating contact:', error);
-        alert('An error occurred while creating the contact.');
+        throw error;
     }
 }
 

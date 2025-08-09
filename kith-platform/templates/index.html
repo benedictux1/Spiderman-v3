@@ -102,6 +102,37 @@
                     <div id="raw-logs-content"></div>
                 </details>
             </div>
+
+            <!-- Import Progress UI -->
+            <div id="import-progress" style="display:none; margin-top: 16px;" class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong>Telegram Sync Progress</strong>
+                    <span id="import-progress-status">Starting…</span>
+                </div>
+                <div style="background:#eee; border-radius:6px; height:10px; overflow:hidden;">
+                    <div id="import-progress-bar" style="height:10px; width:0%; background:#4a90e2;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Telegram Modal -->
+        <div id="sync-telegram-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); align-items:center; justify-content:center; z-index:1000;">
+            <div style="background:#fff; padding:20px; border-radius:8px; width: 380px; max-width: 90%;">
+                <h3>Sync Telegram Chat</h3>
+                <p style="margin-top:4px; color:#555;">Enter the contact's Telegram username and how many days back to sync.</p>
+                <div class="form-group" style="margin-top:12px;">
+                    <label for="sync-telegram-username">Telegram Username</label>
+                    <input id="sync-telegram-username" type="text" placeholder="e.g. johndoe" />
+                </div>
+                <div class="form-group" style="margin-top:12px;">
+                    <label for="sync-telegram-days">Days Back</label>
+                    <input id="sync-telegram-days" type="number" min="1" max="365" value="30" />
+                </div>
+                <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
+                    <button id="sync-telegram-cancel-btn">Cancel</button>
+                    <button id="sync-telegram-start-btn">Start Sync</button>
+                </div>
+            </div>
         </div>
 
         <!-- Settings View (Initially hidden) -->
@@ -445,6 +476,11 @@
         }
 
         function pollImportStatus(taskId, statusDiv = null, onComplete = null) {
+            const progressContainer = document.getElementById('import-progress');
+            const progressBar = document.getElementById('import-progress-bar');
+            const progressStatus = document.getElementById('import-progress-status');
+            if (progressContainer) progressContainer.style.display = 'block';
+
             const pollInterval = setInterval(async () => {
                 try {
                     const response = await fetch(`/api/telegram/import-status/${taskId}`);
@@ -452,17 +488,28 @@
                     
                     if (status.status === 'completed') {
                         clearInterval(pollInterval);
+                        if (progressStatus) progressStatus.textContent = 'Completed';
+                        if (progressBar) progressBar.style.width = '100%';
                         loadContacts();
                         loadTier1Contacts();
                         loadTier2Contacts();
                         if (onComplete) onComplete();
+                        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 1500);
                     } else if (status.status === 'failed') {
                         clearInterval(pollInterval);
                         alert('Import failed: ' + (status.error || 'Unknown error'));
+                        if (progressStatus) progressStatus.textContent = 'Failed';
+                        if (progressBar) progressBar.style.width = '100%';
+                        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
+                    } else {
+                        if (progressStatus) progressStatus.textContent = status.status_message || status.status || 'Running...';
+                        if (progressBar && typeof status.progress === 'number') progressBar.style.width = `${Math.max(0, Math.min(100, status.progress))}%`;
                     }
                 } catch (error) {
                     clearInterval(pollInterval);
                     console.error('Error polling import status:', error);
+                    if (progressStatus) progressStatus.textContent = 'Error';
+                    setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
                 }
             }, 3000);
         }
@@ -504,6 +551,12 @@
             document.getElementById('confirm-btn').addEventListener('click', confirmAndSave);
             document.getElementById('cancel-btn').addEventListener('click', cancelAnalysis);
             document.getElementById('back-to-input').addEventListener('click', showMainView);
+            // Sync modal buttons
+            const syncModal = document.getElementById('sync-telegram-modal');
+            const syncCancel = document.getElementById('sync-telegram-cancel-btn');
+            const syncStart = document.getElementById('sync-telegram-start-btn');
+            if (syncCancel) syncCancel.addEventListener('click', () => { syncModal.style.display = 'none'; });
+            if (syncStart) syncStart.addEventListener('click', () => { if (window.startTelegramSyncFromModal) window.startTelegramSyncFromModal(); });
             
             // Note input handling
             document.getElementById('note-input').addEventListener('input', function() {

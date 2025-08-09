@@ -305,17 +305,61 @@ function wireProfileButtons() {
     syncBtn.onclick = async () => {
       const id = parseInt(document.getElementById('selected-contact-id').value, 10);
       try {
-        const res = await fetch('/api/telegram/start-import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contact_id: id, days_back: 30 })
-        });
-        const out = await res.json();
-        if (out.error) throw new Error(out.error);
-        alert('Telegram sync started. This may take a few moments.');
+        // Load current contact info
+        const infoRes = await fetch(`/api/contact/${id}`);
+        const infoData = await infoRes.json();
+        if (infoData.error) throw new Error(infoData.error);
+        const curHandle = infoData?.contact_info?.telegram_username || infoData?.contact_info?.telegram_handle || '';
+
+        // Pre-fill modal and open
+        const modal = document.getElementById('sync-telegram-modal');
+        const unameInput = document.getElementById('sync-telegram-username');
+        const daysInput = document.getElementById('sync-telegram-days');
+        if (unameInput) unameInput.value = (curHandle || '').replace(/^@/, '');
+        if (daysInput && !daysInput.value) daysInput.value = 30;
+        if (modal) modal.style.display = 'flex';
+
+        // Provide a global starter used by the modal button
+        window.startTelegramSyncFromModal = async () => {
+          const username = (unameInput?.value || '').trim().replace(/^@/, '');
+          const days = Math.max(1, Math.min(365, parseInt(daysInput?.value || '30', 10) || 30));
+          if (!username) {
+            alert('Please enter a valid Telegram username.');
+            return;
+          }
+          // Save username if changed/missing
+          if (username !== curHandle.replace(/^@/, '')) {
+            const patchRes = await fetch(`/api/contact/${id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ telegram_username: username })
+            });
+            const patchOut = await patchRes.json();
+            if (patchOut.error) {
+              alert('Failed to save username: ' + patchOut.error);
+              return;
+            }
+          }
+          // Start import
+          const res = await fetch('/api/telegram/start-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contact_id: id, days_back: days, identifier: username })
+          });
+          const out = await res.json();
+          if (out.error) {
+            alert('Failed to start Telegram sync: ' + out.error);
+            return;
+          }
+          if (modal) modal.style.display = 'none';
+          alert('Telegram sync started. This may take a few moments.');
+          if (out.task_id && typeof pollImportStatus === 'function') {
+            pollImportStatus(out.task_id, null, () => loadContactProfile(id));
+          }
+        };
       } catch (e) {
         console.error(e);
-        alert('Failed to start Telegram sync.');
+        alert('Failed to prepare Telegram sync: ' + (e.message || e));
       }
     };
   }

@@ -1163,17 +1163,14 @@ def start_telegram_import():
                 row = cur.fetchone()
                 if not row:
                     return jsonify({"error": "Contact not found"}), 404
-                identifier = (row['telegram_username'] or row['telegram_handle'] or row['full_name'] or '').strip()
-                if identifier.startswith('@'):
-                    identifier = identifier[1:]
+                identifier = (row['telegram_username'] or row['telegram_handle'] or '').strip()
             finally:
                 conn.close()
         
         if not identifier:
-            return jsonify({"error": "Valid identifier or contact_id with a telegram handle/username is required"}), 400
+            return jsonify({"error": "Please provide a Telegram username (e.g., 'username' or '@username')."}), 400
 
-        # Find or create contact based on identifier
-        contact_id = get_or_create_contact_by_identifier(identifier)
+        identifier = identifier.lstrip('@')
 
         # Create a new task record in the database
         with IMPORT_TASK_LOCK:  # Thread-safe import task creation
@@ -1200,7 +1197,7 @@ def start_telegram_import():
 import sys
 sys.path.insert(0, "{os.path.dirname(os.path.abspath(__file__))}")
 from telegram_worker import run_telegram_import
-run_telegram_import("{task_id}", "{identifier}", {contact_id}, {days_back})
+run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 'None'}, {days_back})
 '''
                 
                 # Write script to temp file
@@ -1216,7 +1213,6 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id}, {days_back})
                 env['KITH_API_URL'] = os.getenv('KITH_API_URL', 'http://127.0.0.1:5001')
                 env['KITH_API_TOKEN'] = os.getenv('KITH_API_TOKEN', 'dev_token')
                 
-                # Run subprocess with better timeout handling
                 process = subprocess.Popen([
                     sys.executable, script_path
                 ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -1227,8 +1223,7 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id}, {days_back})
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-                    print(f"Import subprocess timed out for task {task_id}")
-                    return
+                    stdout, stderr, result_code = '', 'Timeout', 1
                 
                 # Clean up temp file
                 try:
@@ -1236,26 +1231,24 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id}, {days_back})
                 except:
                     pass
                 
-                if result_code != 0:
-                    print(f"Subprocess error: {stderr}")
-                    # Update task status to failed
-                    try:
-                        conn = get_db_connection()
+                conn = get_db_connection()
+                try:
+                    if result_code != 0:
                         conn.execute('''
                             UPDATE import_tasks 
                             SET status = ?, status_message = ?, error_details = ?
                             WHERE id = ?
                         ''', ('failed', 'Import process failed', stderr, task_id))
-                        conn.commit()
-                        conn.close()
-                    except Exception as db_err:
-                        print(f"Failed to update task status: {db_err}")
-                else:
-                    print(f"Import subprocess completed successfully: {stdout}")
-                    
+                    else:
+                        conn.execute('''
+                            UPDATE import_tasks 
+                            SET status = ?, status_message = ?, progress = 100, completed_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        ''', ('completed', 'Import completed', task_id))
+                    conn.commit()
+                finally:
+                    conn.close()
             except Exception as e:
-                print(f"Error running subprocess: {e}")
-                # Update task status to failed
                 try:
                     conn = get_db_connection()
                     conn.execute('''
@@ -1268,7 +1261,6 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id}, {days_back})
                 except:
                     pass
         
-        # Run in background thread
         import threading
         thread = threading.Thread(target=run_import_subprocess)
         thread.daemon = True

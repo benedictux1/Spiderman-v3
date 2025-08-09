@@ -444,6 +444,43 @@ showProfileView = function() {
   wireProfileButtons();
 };
 
+// Fallback poller if inline definition is not present
+if (typeof window.pollImportStatus !== 'function') {
+  window.pollImportStatus = function(taskId, _statusDiv = null, onComplete = null) {
+    const progressContainer = document.getElementById('import-progress');
+    const progressBar = document.getElementById('import-progress-bar');
+    const progressStatus = document.getElementById('import-progress-status');
+    if (progressContainer) progressContainer.style.display = 'block';
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/telegram/import-status/${taskId}`);
+        const s = await res.json();
+        if (s.status === 'completed') {
+          clearInterval(timer);
+          if (progressStatus) progressStatus.textContent = 'Completed';
+          if (progressBar) progressBar.style.width = '100%';
+          if (typeof onComplete === 'function') onComplete();
+          setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 1500);
+        } else if (s.status === 'failed') {
+          clearInterval(timer);
+          alert('Import failed: ' + (s.error_details || 'Unknown error'));
+          if (progressStatus) progressStatus.textContent = 'Failed';
+          if (progressBar) progressBar.style.width = '100%';
+          setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
+        } else {
+          if (progressStatus) progressStatus.textContent = s.status_message || s.status || 'Running...';
+          if (progressBar && typeof s.progress === 'number') progressBar.style.width = `${Math.max(0, Math.min(100, s.progress))}%`;
+        }
+      } catch (e) {
+        clearInterval(timer);
+        console.error('Polling error:', e);
+        if (progressStatus) progressStatus.textContent = 'Error';
+        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
+      }
+    }, 3000);
+  }
+}
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     loadContacts();

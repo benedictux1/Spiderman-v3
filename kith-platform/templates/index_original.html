@@ -1,0 +1,1579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kith - Personal Intelligence Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Kith Platform</h1>
+        
+        <!-- Main Input View -->
+        <div id="main-view">
+            <!-- Search Area -->
+            <div class="search-area">
+                <div class="search-container">
+                    <input type="search" id="contact-search" placeholder="Search for a contact...">
+                    <label class="tier-filter">
+                        <input type="checkbox" id="tier-filter"> Tier 1 Only
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Note Input Area -->
+            <div id="input-area">
+                <div class="selected-contact">
+                    <span id="selected-contact-name">Select a contact to add notes...</span>
+                    <button id="change-contact-btn" style="display:none;">Change Contact</button>
+                </div>
+                <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
+                <button id="analyze-btn" disabled>Analyze Note</button>
+            </div>
+            
+            <!-- Tier 1 Contacts List -->
+            <div class="tier1-contacts-section">
+                <h3>Tier 1 Contacts</h3>
+                <div id="tier1-contacts-list" class="tier1-contacts-list">
+                    <!-- Tier 1 contacts will be dynamically inserted here -->
+                </div>
+            </div>
+            
+            <!-- Tier 2 Contacts List -->
+            <div class="tier2-contacts-section">
+                <h3>Tier 2 Contacts</h3>
+                <div id="tier2-contacts-list" class="tier1-contacts-list">
+                    <!-- Tier 2 contacts will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Review View (Initially hidden) -->
+        <div id="review-view" style="display:none;">
+            <div class="review-header">
+                <h2>AI Analysis Review</h2>
+                <p class="review-subtitle">Edit freely before saving</p>
+                <button id="back-to-input">← Back to Input</button>
+            </div>
+            <div id="review-content"></div>
+            <div class="review-actions">
+                <button id="confirm-btn">Confirm & Save Analysis</button>
+                <button id="cancel-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Individual Contact Profile View (Initially hidden) -->
+        <div id="contact-profile-view" style="display:none;">
+            <div class="profile-header">
+                <h2 id="contact-profile-name"></h2>
+                <div class="profile-actions">
+                    <button id="back-to-main-from-profile">← Back to Main</button>
+                </div>
+            </div>
+            
+            <!-- NEW: In-Context Actions -->
+            <div class="profile-actions-bar card">
+                <button id="profile-add-note-btn">Add Note</button>
+                <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
+                <button id="edit-contact-profile-btn">Edit Profile Details</button>
+                <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
+            </div>
+
+            <!-- NEW: In-Context Note Input Area (hidden by default) -->
+            <div id="profile-note-input-area" class="card" style="display:none;">
+                <h3>Add New Note</h3>
+                <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
+                <div class="note-actions">
+                    <button id="profile-analyze-btn">Analyze Note</button>
+                    <button id="profile-cancel-note-btn">Cancel</button>
+                </div>
+            </div>
+            
+            <div id="contact-profile-content" class="profile-sections">
+                <!-- Category sections will be dynamically inserted here -->
+            </div>
+            
+            <!-- NEW: Raw Log Viewer -->
+            <div class="raw-logs-section">
+                <details id="raw-logs-details">
+                    <summary>View Raw Input History</summary>
+                    <div id="raw-logs-content" class="card">
+                        <!-- Raw logs will be dynamically inserted here -->
+                    </div>
+                </details>
+            </div>
+        </div>
+
+        <!-- Settings/Import Section (Initially hidden) -->
+        <div id="settings-view" style="display:none;">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button id="back-to-main-from-settings">← Back to Main</button>
+            </div>
+            <div class="settings-content">
+                <div class="section">
+                    <h3>Import Contacts</h3>
+                    <form id="vcard-form" enctype="multipart/form-data">
+                        <input type="file" id="vcard-file-input" accept=".vcf" required>
+                        <button type="submit">Import VCard</button>
+                    </form>
+                    <div id="upload-status"></div>
+                </div>
+                
+                <div class="section">
+                    <h3>Add Contact Manually</h3>
+                    <form id="add-contact-form">
+                        <div class="form-group">
+                            <label for="contact-name">Full Name:</label>
+                            <input type="text" id="contact-name" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="contact-tier">Tier:</label>
+                            <select id="contact-tier">
+                                <option value="1">Tier 1 (Inner Circle)</option>
+                                <option value="2" selected>Tier 2 (Outer Circle)</option>
+                            </select>
+                        </div>
+                        <button type="submit">Add Contact</button>
+                    </form>
+                    <div id="add-contact-status"></div>
+                </div>
+                
+                <div class="section">
+                    <h3>Data Management</h3>
+                    <button id="download-csv-btn">Download All Data as CSV</button>
+                    <p id="download-status"></p>
+                </div>
+                
+                <div class="section">
+                    <h3>Manage Contacts</h3>
+                    <div class="contact-management">
+                        <div class="bulk-delete-section">
+                            <h4>Bulk Delete</h4>
+                            <div class="contact-list-container">
+                                <div id="contact-list-for-delete" class="contact-list">
+                                    <!-- Contact checkboxes will be dynamically inserted here -->
+                                </div>
+                            </div>
+                            <div class="bulk-actions">
+                                <button id="select-all-btn">Select All</button>
+                                <button id="deselect-all-btn">Deselect All</button>
+                                <button id="bulk-delete-btn" class="danger-btn" disabled>Delete Selected</button>
+                            </div>
+                            <div id="bulk-delete-status"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section telegram-section">
+                    <div class="section-header">
+                        <h3>Telegram Integration</h3>
+                        <div class="section-badge" id="telegram-connection-badge">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Checking...</span>
+                        </div>
+                    </div>
+                    <div class="telegram-integration">
+                        <div id="telegram-status" class="telegram-status" role="status" aria-live="polite">
+                            <!-- Status will be dynamically inserted here -->
+                        </div>
+                        
+                        <div class="integration-help">
+                            <h4>How to use Telegram Integration:</h4>
+                            <ol>
+                                <li><strong>Import by Username:</strong> Enter @username or phone number with country code</li>
+                                <li><strong>Select Time Range:</strong> Choose how far back to import messages (7-365 days)</li>
+                                <li><strong>Monitor Progress:</strong> Track import status with real-time updates</li>
+                                <li><strong>View Results:</strong> Check your Tier 1 contacts list for imported conversations</li>
+                            </ol>
+                        </div>
+
+                        <div class="telegram-actions">
+                            <div class="telegram-action">
+                                <h4>Import Contacts</h4>
+                                <p>Select which Telegram contacts to import to Kith</p>
+                                <button id="load-telegram-contacts-btn" class="telegram-btn">Load Contacts</button>
+                                <div id="telegram-contacts-list" class="telegram-list" style="display:none;">
+                                    <div class="list-header">
+                                        <label class="select-all-checkbox">
+                                            <input type="checkbox" id="select-all-contacts">
+                                            Select All Contacts
+                                        </label>
+                                        <span id="contacts-count"></span>
+                                    </div>
+                                    <div id="contacts-checkboxes" class="checkboxes-container">
+                                        <!-- Contact checkboxes will be dynamically inserted here -->
+                                    </div>
+                                    <button id="import-selected-contacts-btn" class="telegram-btn" disabled>Import Selected Contacts</button>
+                                </div>
+                                <div id="import-contacts-status"></div>
+                            </div>
+
+                            <div class="telegram-action">
+                                <h4>Import Conversations</h4>
+                                <p>Select which Telegram conversations to import</p>
+                                <div class="conversation-options">
+                                    <label for="days-back">Days back:</label>
+                                    <select id="days-back">
+                                        <option value="7">Last 7 days</option>
+                                        <option value="30" selected>Last 30 days</option>
+                                        <option value="90">Last 90 days</option>
+                                        <option value="180">Last 6 months</option>
+                                    </select>
+                                </div>
+                                <button id="load-telegram-conversations-btn" class="telegram-btn">Load Conversations</button>
+                                <div id="telegram-conversations-list" class="telegram-list" style="display:none;">
+                                    <div class="list-header">
+                                        <label class="select-all-checkbox">
+                                            <input type="checkbox" id="select-all-conversations">
+                                            Select All Conversations
+                                        </label>
+                                        <span id="conversations-count"></span>
+                                    </div>
+                                    <div id="conversations-checkboxes" class="checkboxes-container">
+                                        <!-- Conversation checkboxes will be dynamically inserted here -->
+                                    </div>
+                                    <button id="import-selected-conversations-btn" class="telegram-btn" disabled>Import Selected Conversations</button>
+                                </div>
+                                <div id="import-conversations-status"></div>
+                            </div>
+
+                            <div class="telegram-action">
+                                <h4>Import by Username/Handle</h4>
+                                <p>Enter a Telegram username (@username) or phone number to import conversation history:</p>
+                                <form id="telegram-import-form" class="telegram-import-form" novalidate>
+                                    <div class="form-field">
+                                        <label for="identifier-input" class="field-label">
+                                            Telegram Identifier <span class="required">*</span>
+                                        </label>
+                                        <div class="input-group">
+                                            <input type="text" 
+                                                   id="identifier-input" 
+                                                   class="identifier-input" 
+                                                   placeholder="@username or +1234567890" 
+                                                   required 
+                                                   aria-label="Telegram identifier"
+                                                   aria-describedby="identifier-help identifier-error"
+                                                   pattern="^(@[a-zA-Z0-9_]{5,32}|\+[1-9]\d{1,14})$"
+                                                   title="Enter @username (5-32 characters) or phone number with country code" 
+                                                   autocomplete="off" 
+                                                   spellcheck="false" />
+                                            <div class="input-icon">
+                                                <span class="icon-telegram">📱</span>
+                                            </div>
+                                        </div>
+                                        <div id="identifier-help" class="input-help">
+                                            <small>Examples: @username, +14155552345 (include country code)</small>
+                                        </div>
+                                        <div id="identifier-error" class="input-error" aria-live="polite"></div>
+                                    </div>
+                                    
+                                    <div class="form-field">
+                                        <label for="days-back-identifier" class="field-label">Import Period</label>
+                                        <select id="days-back-identifier" 
+                                                class="days-select" 
+                                                aria-label="Import period">
+                                            <option value="7">Last 7 days</option>
+                                            <option value="30" selected>Last 30 days</option>
+                                            <option value="90">Last 90 days</option>
+                                            <option value="365">Last year</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="form-actions">
+                                        <button type="submit" id="direct-import-btn" class="telegram-btn import-btn primary-btn">
+                                            <span class="btn-text">
+                                                <span class="btn-icon">📥</span>
+                                                Start Import
+                                            </span>
+                                            <span class="btn-loading" style="display: none;">
+                                                <span class="spinner"></span>
+                                                Importing...
+                                            </span>
+                                        </button>
+                                        <button type="button" id="clear-form-btn" class="telegram-btn secondary-btn">
+                                            Clear
+                                        </button>
+                                    </div>
+                                </form>
+                                <div id="direct-import-status" class="import-status" role="status" aria-live="polite" aria-atomic="true"></div>
+                                
+                                <div class="import-tips">
+                                    <h5>💡 Pro Tips:</h5>
+                                    <ul>
+                                        <li>Use public usernames (@username) for public channels or users</li>
+                                        <li>Phone numbers work for contacts in your Telegram address book</li>
+                                        <li>Longer time periods may take more time to process</li>
+                                        <li>You can import multiple contacts by running separate imports</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Settings Button -->
+    <button id="settings-btn" class="settings-btn">⚙️</button>
+    </div>
+
+    <script>
+        // Cache-busting timestamp: 20250809-021500
+        const API_URL = '/api/process-note';
+        const SAVE_URL = '/api/save-synthesis';
+        let currentAnalysisData = null;
+        let currentContactId = null;
+        let currentContactName = null;
+        let isProfileEditMode = false;
+        let isContactProfileEditMode = false;
+        let currentProfileContactId = null; // Store the ID of the contact being viewed in profile
+
+        // Load contacts (no longer displaying recent contacts on main page)
+        async function loadContacts() {
+            try {
+                const response = await fetch('/api/contacts');
+                const contacts = await response.json();
+                // Contacts are now only used for search functionality
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+            }
+        }
+
+        // Load and display tier 1 contacts
+        async function loadTier1Contacts() {
+            try {
+                const response = await fetch('/api/contacts');
+                const contacts = await response.json();
+                
+                // Filter tier 1 contacts and sort by name
+                const tier1Contacts = contacts
+                    .filter(contact => contact.tier === 1)
+                    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+                
+                displayTier1Contacts(tier1Contacts);
+            } catch (error) {
+                console.error('Error loading tier 1 contacts:', error);
+            }
+        }
+        
+        // Load and display tier 2 contacts
+        async function loadTier2Contacts() {
+            try {
+                const response = await fetch('/api/contacts');
+                const contacts = await response.json();
+                
+                // Filter tier 2 contacts and sort by name
+                const tier2Contacts = contacts
+                    .filter(contact => contact.tier === 2)
+                    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+                
+                displayTier2Contacts(tier2Contacts);
+            } catch (error) {
+                console.error('Error loading tier 2 contacts:', error);
+            }
+        }
+
+        // Display tier 1 contacts as a list
+        function displayTier1Contacts(contacts) {
+            const tier1ListDiv = document.getElementById('tier1-contacts-list');
+            tier1ListDiv.innerHTML = '';
+            
+            if (contacts.length === 0) {
+                tier1ListDiv.innerHTML = '<p class="no-contacts">No Tier 1 contacts found.</p>';
+                return;
+            }
+            
+            contacts.forEach(contact => {
+                const contactItem = document.createElement('div');
+                contactItem.className = 'tier1-contact-item';
+                contactItem.dataset.contactId = contact.id;
+                contactItem.dataset.contactName = contact.full_name;
+                
+                // Create initials for display
+                const initials = contact.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+                
+                contactItem.innerHTML = `
+                    <div class="contact-item-content">
+                        <div class="contact-initials">${initials}</div>
+                        <div class="contact-name">${contact.full_name}</div>
+                    </div>
+                `;
+                
+                // Use a click delay to avoid interference with double-click
+                let clickTimer = null;
+                let isDoubleClick = false;
+                
+                // Add click handler to select contact (with delay)
+                contactItem.addEventListener('click', () => {
+                    if (isDoubleClick) return; // Don't process single click if it's part of a double-click
+                    
+                    clickTimer = setTimeout(() => {
+                        if (!isDoubleClick) {
+                            selectContact(contact.id, contact.full_name);
+                            // Highlight selected contact
+                            document.querySelectorAll('.tier1-contact-item').forEach(item => {
+                                item.classList.remove('selected');
+                            });
+                            contactItem.classList.add('selected');
+                        }
+                    }, 250); // 250ms delay to allow for double-click detection
+                });
+                
+                // Add double-click handler to view profile
+                contactItem.addEventListener('dblclick', () => {
+                    isDoubleClick = true;
+                    if (clickTimer) {
+                        clearTimeout(clickTimer); // Cancel the single-click action
+                    }
+                    showContactProfile(contact.id);
+                    
+                    // Reset the double-click flag after a short delay
+                    setTimeout(() => {
+                        isDoubleClick = false;
+                    }, 300);
+                });
+                
+                tier1ListDiv.appendChild(contactItem);
+            });
+        }
+        
+        // Display tier 2 contacts as a list
+        function displayTier2Contacts(contacts) {
+            const tier2ListDiv = document.getElementById('tier2-contacts-list');
+            tier2ListDiv.innerHTML = '';
+            
+            if (contacts.length === 0) {
+                tier2ListDiv.innerHTML = '<p class="no-contacts">No Tier 2 contacts found.</p>';
+                return;
+            }
+
+            contacts.forEach(contact => {
+                const contactItem = document.createElement('div');
+                contactItem.className = 'tier1-contact-item';
+                contactItem.dataset.contactId = contact.id;
+                contactItem.dataset.contactName = contact.full_name;
+                
+                // Create initials for display
+                const initials = contact.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+                
+                contactItem.innerHTML = `
+                    <div class="contact-item-content">
+                        <div class="contact-initials">${initials}</div>
+                        <div class="contact-name">${contact.full_name}</div>
+                    </div>
+                `;
+                
+                // Use a click delay to avoid interference with double-click
+                let clickTimer = null;
+                let isDoubleClick = false;
+                
+                // Add click handler to select contact (with delay)
+                contactItem.addEventListener('click', () => {
+                    if (isDoubleClick) return; // Don't process single click if it's part of a double-click
+                    
+                    clickTimer = setTimeout(() => {
+                        if (!isDoubleClick) {
+                            selectContact(contact.id, contact.full_name);
+                            // Highlight selected contact
+                            document.querySelectorAll('.tier1-contact-item').forEach(item => {
+                                item.classList.remove('selected');
+                            });
+                            contactItem.classList.add('selected');
+                        }
+                    }, 250); // 250ms delay to allow for double-click detection
+                });
+                
+                // Add double-click handler to view profile
+                contactItem.addEventListener('dblclick', () => {
+                    isDoubleClick = true;
+                    if (clickTimer) {
+                        clearTimeout(clickTimer); // Cancel the single-click action
+                    }
+                    showContactProfile(contact.id);
+                    
+                    // Reset the double-click flag after a short delay
+                    setTimeout(() => {
+                        isDoubleClick = false;
+                    }, 300);
+                });
+                
+                tier2ListDiv.appendChild(contactItem);
+            });
+        }
+
+        // Delete individual contact
+        async function deleteContact(contactId, contactName) {
+            if (!confirm(`Are you sure you want to delete "${contactName}" and all associated data? This action cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/contacts/${contactId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert(`Contact "${contactName}" deleted successfully.`);
+                    loadContacts(); // Refresh contact list
+                    loadTier1Contacts(); // Refresh tier 1 contacts
+                    loadTier2Contacts(); // Refresh tier 2 contacts
+                } else {
+                    alert(`Error: ${result.error}`);
+                }
+            } catch (error) {
+                alert(`Error deleting contact: ${error.message}`);
+            }
+        }
+
+        // Load contacts for bulk delete
+        async function loadContactsForDelete() {
+            try {
+                const response = await fetch('/api/contacts');
+                const contacts = await response.json();
+                displayContactListForDelete(contacts);
+            } catch (error) {
+                console.error('Error loading contacts for delete:', error);
+            }
+        }
+
+        // Display contact list for bulk delete
+        function displayContactListForDelete(contacts) {
+            const contactListDiv = document.getElementById('contact-list-for-delete');
+            contactListDiv.innerHTML = '';
+            
+            contacts.forEach(contact => {
+                const contactItem = document.createElement('div');
+                contactItem.className = 'contact-item';
+                contactItem.innerHTML = `
+                    <label class="contact-checkbox">
+                        <input type="checkbox" value="${contact.id}" data-name="${contact.full_name}">
+                        <span class="contact-name">${contact.full_name}</span>
+                        <span class="contact-tier">Tier ${contact.tier}</span>
+                    </label>
+                `;
+                contactListDiv.appendChild(contactItem);
+            });
+            
+            // Update bulk delete button state
+            updateBulkDeleteButton();
+        }
+
+        // Update bulk delete button state
+        function updateBulkDeleteButton() {
+            const checkboxes = document.querySelectorAll('#contact-list-for-delete input[type="checkbox"]');
+            const checkedBoxes = document.querySelectorAll('#contact-list-for-delete input[type="checkbox"]:checked');
+            const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+            
+            bulkDeleteBtn.disabled = checkedBoxes.length === 0;
+        }
+
+        // Select all contacts
+        function selectAllContacts() {
+            const checkboxes = document.querySelectorAll('#contact-list-for-delete input[type="checkbox"]');
+            checkboxes.forEach(checkbox => checkbox.checked = true);
+            updateBulkDeleteButton();
+        }
+
+        // Deselect all contacts
+        function deselectAllContacts() {
+            const checkboxes = document.querySelectorAll('#contact-list-for-delete input[type="checkbox"]');
+            checkboxes.forEach(checkbox => checkbox.checked = false);
+            updateBulkDeleteButton();
+        }
+
+        // Bulk delete selected contacts
+        async function bulkDeleteContacts() {
+            const checkboxes = document.querySelectorAll('#contact-list-for-delete input[type="checkbox"]:checked');
+            const selectedIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            const selectedNames = Array.from(checkboxes).map(cb => cb.dataset.name);
+            
+            if (selectedIds.length === 0) {
+                alert('Please select at least one contact to delete.');
+                return;
+            }
+            
+            const confirmMessage = `Are you sure you want to delete ${selectedIds.length} contact(s)?\n\n${selectedNames.join('\n')}\n\nThis action cannot be undone.`;
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+            
+            const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+            const statusDiv = document.getElementById('bulk-delete-status');
+            
+            bulkDeleteBtn.disabled = true;
+            bulkDeleteBtn.textContent = 'Deleting...';
+            statusDiv.textContent = 'Deleting contacts...';
+            statusDiv.style.color = 'black';
+            
+            try {
+                const response = await fetch('/api/contacts/bulk-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contact_ids: selectedIds })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    statusDiv.textContent = result.message;
+                    statusDiv.style.color = 'green';
+                    
+                    // Uncheck all checkboxes
+                    deselectAllContacts();
+                    
+                    // Refresh contact lists
+                    loadContacts();
+                    loadContactsForDelete();
+                    loadTier1Contacts(); // Refresh tier 1 contacts
+                    loadTier2Contacts(); // Refresh tier 2 contacts
+                } else {
+                    statusDiv.textContent = `Error: ${result.error}`;
+                    statusDiv.style.color = 'red';
+                }
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                statusDiv.style.color = 'red';
+            } finally {
+                bulkDeleteBtn.disabled = false;
+                bulkDeleteBtn.textContent = 'Delete Selected';
+            }
+        }
+
+        // Handle contact search
+        async function handleContactSearch() {
+            const query = document.getElementById('contact-search').value;
+            
+            if (query.length < 2) {
+                // When search is cleared, load contacts based on tier filter
+                const showTier1Only = document.getElementById('tier-filter').checked;
+                if (showTier1Only) {
+                    loadTier1Contacts();
+                    // Clear tier 2 section when showing tier 1 only
+                    document.getElementById('tier2-contacts-list').innerHTML = '';
+                } else {
+                    loadTier1Contacts();
+                    loadTier2Contacts();
+                }
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                const results = await response.json();
+                
+                // Check tier filter checkbox
+                const showTier1Only = document.getElementById('tier-filter').checked;
+                
+                let tier1Results, tier2Results;
+                
+                if (showTier1Only) {
+                    // Show only tier 1 contacts when checkbox is checked
+                    tier1Results = results
+                        .filter(contact => contact.tier === 1)
+                        .sort((a, b) => a.full_name.localeCompare(b.full_name));
+                    tier2Results = [];
+                } else {
+                    // Show both tier 1 and tier 2 contacts when checkbox is unchecked
+                    tier1Results = results
+                        .filter(contact => contact.tier === 1)
+                        .sort((a, b) => a.full_name.localeCompare(b.full_name));
+                    tier2Results = results
+                        .filter(contact => contact.tier === 2)
+                        .sort((a, b) => a.full_name.localeCompare(b.full_name));
+                }
+                
+                displayTier1Contacts(tier1Results);
+                displayTier2Contacts(tier2Results);
+            } catch (error) {
+                console.error('Search error:', error);
+            }
+        }
+
+        // Handle tier filter
+        function handleTierFilter() {
+            const showTier1Only = document.getElementById('tier-filter').checked;
+            const query = document.getElementById('contact-search').value;
+            
+            if (query.length >= 2) {
+                // If there's an active search, re-run the search with new filter
+                handleContactSearch();
+            } else {
+                // If no search, load contacts based on filter
+                if (showTier1Only) {
+                    loadTier1Contacts();
+                    // Clear tier 2 section when showing tier 1 only
+                    document.getElementById('tier2-contacts-list').innerHTML = '';
+                } else {
+                    loadTier1Contacts();
+                    loadTier2Contacts();
+                }
+            }
+        }
+
+        // Select a contact
+        function selectContact(contactId, contactName) {
+            currentContactId = contactId;
+            currentContactName = contactName;
+            
+            document.getElementById('selected-contact-name').textContent = contactName;
+            document.getElementById('change-contact-btn').style.display = 'inline-block';
+            document.getElementById('analyze-btn').disabled = false;
+            document.getElementById('note-input').focus();
+        }
+
+        // Handle note analysis
+        async function handleAnalyzeNote() {
+            const noteText = document.getElementById('note-input').value;
+            
+            if (!noteText.trim()) {
+                alert('Please enter a note.');
+                return;
+            }
+            
+            if (!currentContactId) {
+                alert('Please select a contact.');
+                return;
+            }
+            
+            const analyzeBtn = document.getElementById('analyze-btn');
+            analyzeBtn.textContent = 'Analyzing...';
+            analyzeBtn.disabled = true;
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        note_text: noteText, 
+                        contact_id: currentContactId 
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                currentAnalysisData = await response.json();
+                displayReviewCards(currentAnalysisData);
+                showReviewView();
+            } catch (error) {
+                console.error("Error processing note:", error);
+                alert("Failed to analyze note. Please check the console for details.");
+            } finally {
+                analyzeBtn.textContent = 'Analyze Note';
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        // Display review cards with editable content
+        function displayReviewCards(data) {
+            const reviewContent = document.getElementById('review-content');
+            reviewContent.innerHTML = '';
+            
+            // Narrative card
+            const narrativeCard = document.createElement('div');
+            narrativeCard.className = 'card narrative-card';
+            narrativeCard.innerHTML = `
+                <h3>Synthesized Narrative (Confidence: ${data.confidence_score}/10)</h3>
+                <p><strong>Reasoning:</strong></p>
+                <textarea class="review-card-textarea" readonly>${data.reasoning_chain}</textarea>
+                <p><strong>Narrative:</strong></p>
+                <textarea class="review-card-textarea" readonly>${data.synthesized_narrative}</textarea>
+            `;
+            reviewContent.appendChild(narrativeCard);
+
+            // Define all 20 categories in order
+            const CATEGORY_ORDER = [
+                "Actionable", "Goals", "Relationship_Strategy", "Social", "Wellbeing",
+                "Avocation", "Professional_Background", "Environment_And_Lifestyle", 
+                "Psychology_And_Values", "Communication_Style", "Challenges_And_Development",
+                "Deeper_Insights", "Financial_Situation", "Admin_Matters", 
+                "ESTABLISHED_PATTERNS", "CORE_IDENTITY", "INFORMATION_GAPS", 
+                "MEMORY_ANCHORS", "POSITIONALITY", "Others"
+            ];
+
+            // Create a map of existing categorized data
+            const categorizedData = {};
+            data.categorized_updates.forEach(item => {
+                if (item.details && Array.isArray(item.details)) {
+                    categorizedData[item.category] = item.details.join('\n');
+                } else if (item.summary) {
+                    categorizedData[item.category] = item.summary;
+                }
+            });
+
+            // Create cards for all 20 categories
+            CATEGORY_ORDER.forEach(category => {
+                const card = document.createElement('div');
+                card.className = 'card category-card';
+                card.setAttribute('data-category', category);
+                
+                const existingContent = categorizedData[category] || '';
+                
+                // Add empty-category class if no content
+                if (!existingContent.trim()) {
+                    card.classList.add('empty-category');
+                }
+                
+                card.innerHTML = `
+                    <div class="card-header">
+                        <h3>${category}</h3>
+                        <button class="delete-card-btn" onclick="deleteCard(this)">×</button>
+                    </div>
+                    <textarea class="review-card-textarea" data-category="${category}" placeholder="Add or edit information for ${category}...">${existingContent}</textarea>
+                `;
+                reviewContent.appendChild(card);
+            });
+        }
+
+        // Delete a category card
+        function deleteCard(button) {
+            button.closest('.category-card').remove();
+        }
+
+        // Show review view
+        function showReviewView() {
+            document.getElementById('main-view').style.display = 'none';
+            document.getElementById('review-view').style.display = 'block';
+        }
+
+        // Show main view
+        function showMainView() {
+            document.getElementById('main-view').style.display = 'block';
+            document.getElementById('review-view').style.display = 'none';
+            document.getElementById('contact-profile-view').style.display = 'none';
+            document.getElementById('settings-view').style.display = 'none';
+            
+            // Clear current selection
+            currentContactId = null;
+            currentContactName = null;
+            document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
+            document.getElementById('change-contact-btn').style.display = 'none';
+            document.getElementById('analyze-btn').disabled = true;
+            document.getElementById('note-input').value = '';
+        }
+
+        // Show settings view
+        function showSettingsView() {
+            document.getElementById('main-view').style.display = 'none';
+            document.getElementById('settings-view').style.display = 'block';
+            loadContactsForDelete(); // Load contacts for bulk delete
+        }
+
+        // Add event listeners for checkbox changes
+        function setupCheckboxListeners() {
+            const contactListDiv = document.getElementById('contact-list-for-delete');
+            contactListDiv.addEventListener('change', function(e) {
+                if (e.target.type === 'checkbox') {
+                    updateBulkDeleteButton();
+                }
+            });
+        }
+
+        // Handle confirm analysis
+        async function handleConfirmAnalysis() {
+            if (currentAnalysisData && currentContactId) {
+                try {
+                    // Collect edited data from textareas
+                    const editedData = { ...currentAnalysisData };
+                    editedData.categorized_updates = [];
+                    
+                    // Get narrative and reasoning
+                    const narrativeTextarea = document.querySelector('.narrative-card textarea:last-child');
+                    const reasoningTextarea = document.querySelector('.narrative-card textarea:first-of-type');
+                    
+                    editedData.synthesized_narrative = narrativeTextarea.value;
+                    editedData.reasoning_chain = reasoningTextarea.value;
+                    
+                    // Get category data
+                    const categoryCards = document.querySelectorAll('.category-card');
+                    categoryCards.forEach(card => {
+                        const category = card.querySelector('textarea').dataset.category;
+                        const details = card.querySelector('textarea').value.split('\n').filter(line => line.trim());
+                        
+                        if (details.length > 0) {
+                            editedData.categorized_updates.push({
+                                category: category,
+                                details: details
+                            });
+                        }
+                    });
+                    
+                    const response = await fetch(SAVE_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contact_id: currentContactId,
+                            raw_note: document.getElementById('note-input').value,
+                            synthesis: editedData
+                        })
+                    });
+                    
+                    if (!response.ok) throw new Error('Failed to save analysis');
+                    
+                    alert('Analysis saved successfully!');
+                    showMainView();
+                } catch (error) {
+                    alert(`Error saving analysis: ${error.message}`);
+                }
+            }
+        }
+
+        // Show individual contact profile
+        async function showContactProfile(contactId) {
+            const profileView = document.getElementById('contact-profile-view');
+            const profileContent = document.getElementById('contact-profile-content');
+
+            profileContent.innerHTML = '<p>Loading profile...</p>';
+            document.getElementById('main-view').style.display = 'none';
+            profileView.style.display = 'block';
+            
+            // Store the current profile contact ID for other functions to use
+            currentProfileContactId = contactId;
+
+            try {
+                const response = await fetch(`/api/contact/${contactId}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error);
+
+                displayContactProfile(data);
+            } catch (error) {
+                profileContent.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
+            }
+        }
+
+        // Handle profile note analysis
+        async function handleProfileAnalyzeNote() {
+            const noteText = document.getElementById('profile-note-input').value;
+            
+            if (!noteText.trim()) {
+                alert('Please enter a note.');
+                return;
+            }
+            
+            if (!currentProfileContactId) {
+                alert('No contact selected.');
+                return;
+            }
+            
+            const analyzeBtn = document.getElementById('profile-analyze-btn');
+            analyzeBtn.textContent = 'Analyzing...';
+            analyzeBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/process-note', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        note_text: noteText, 
+                        contact_id: currentProfileContactId 
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const analysisData = await response.json();
+                
+                // Save the analysis automatically (trusted source)
+                const saveResponse = await fetch('/api/save-synthesis', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: currentProfileContactId,
+                        raw_note: noteText,
+                        synthesis: analysisData
+                    })
+                });
+                
+                if (!saveResponse.ok) throw new Error('Failed to save analysis');
+                
+                alert('Note analyzed and saved successfully!');
+                
+                // Clear the input and hide the area
+                document.getElementById('profile-note-input').value = '';
+                document.getElementById('profile-note-input-area').style.display = 'none';
+                
+                // Refresh the profile to show new data
+                showContactProfile(currentProfileContactId);
+                
+            } catch (error) {
+                console.error("Error processing note:", error);
+                alert("Failed to analyze note. Please check the console for details.");
+            } finally {
+                analyzeBtn.textContent = 'Analyze Note';
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        // Handle profile Telegram sync
+        async function handleProfileTelegramSync() {
+            if (!currentProfileContactId) {
+                alert('No contact selected.');
+                return;
+            }
+            
+            try {
+                // Fetch the contact's details to see if a telegram_handle exists
+                const contactResponse = await fetch(`/api/contact/${currentProfileContactId}`);
+                const contactDetails = await contactResponse.json();
+                let handle = contactDetails.contact_info.telegram_handle;
+                
+                // If no handle, prompt the user for it
+                if (!handle) {
+                    handle = prompt("Please enter the Telegram username (e.g., @username) or phone for this contact:");
+                    if (handle) {
+                        // Save the new handle to the database via a PATCH request
+                        const updateResponse = await fetch(`/api/contact/${currentProfileContactId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ telegram_handle: handle })
+                        });
+                        
+                        if (!updateResponse.ok) {
+                            throw new Error('Failed to save Telegram handle');
+                        }
+                    }
+                }
+                
+                // If a handle exists (or was just entered), start the import
+                if (handle) {
+                    const importResponse = await fetch('/api/telegram/start-import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            identifier: handle,
+                            days_back: 30
+                        })
+                    });
+                    
+                    if (!importResponse.ok) {
+                        throw new Error('Failed to start Telegram import');
+                    }
+                    
+                    const result = await importResponse.json();
+                    
+                    if (result.task_id) {
+                        alert('Telegram import started! Check the import status for progress.');
+                        // You could add polling logic here similar to the main import
+                    } else {
+                        alert('Import completed successfully!');
+                        // Refresh the profile to show new data
+                        showContactProfile(currentProfileContactId);
+                    }
+                }
+            } catch (error) {
+                console.error("Error syncing Telegram:", error);
+                alert("Failed to sync Telegram chat. Please try again.");
+            }
+        }
+
+        // Handle raw logs toggle
+        async function handleRawLogsToggle(event) {
+            const rawLogsContent = document.getElementById('raw-logs-content');
+            
+            // Only fetch data if the section is opened and hasn't been loaded yet
+            if (event.target.open && rawLogsContent.children.length === 0) {
+                rawLogsContent.innerHTML = '<p>Loading history...</p>';
+                try {
+                    const response = await fetch(`/api/contact/${currentProfileContactId}/raw-logs`);
+                    const logs = await response.json();
+
+                    if (logs.length === 0) {
+                        rawLogsContent.innerHTML = '<p>No raw notes have been saved for this contact yet.</p>';
+                        return;
+                    }
+
+                    let logsHtml = '<ul>';
+                    logs.forEach(log => {
+                        const formattedDate = new Date(log.date).toLocaleString();
+                        logsHtml += `<li><strong>${formattedDate}:</strong><pre>${log.content}</pre></li>`;
+                    });
+                    logsHtml += '</ul>';
+
+                    rawLogsContent.innerHTML = logsHtml;
+
+                } catch (error) {
+                    rawLogsContent.innerHTML = '<p style="color:red;">Failed to load raw history.</p>';
+                }
+            }
+        }
+
+        // Display individual contact profile
+        function displayContactProfile(contactData) {
+            document.getElementById('contact-profile-name').textContent = contactData.contact_info.full_name;
+            const profileContent = document.getElementById('contact-profile-content');
+            profileContent.innerHTML = '';
+
+            // Define all 20 categories in order
+            const CATEGORY_ORDER = [
+                "Actionable", "Goals", "Relationship_Strategy", "Social", "Wellbeing",
+                "Avocation", "Professional_Background", "Environment_And_Lifestyle", 
+                "Psychology_And_Values", "Communication_Style", "Challenges_And_Development",
+                "Deeper_Insights", "Financial_Situation", "Admin_Matters", 
+                "ESTABLISHED_PATTERNS", "CORE_IDENTITY", "INFORMATION_GAPS", 
+                "MEMORY_ANCHORS", "POSITIONALITY", "Others"
+            ];
+
+            // Create sections for all categories
+            CATEGORY_ORDER.forEach(category => {
+                const section = document.createElement('div');
+                section.className = 'profile-section';
+                section.setAttribute('data-category', category);
+                
+                const summaries = contactData.categorized_data[category] || [];
+                
+                if (summaries.length === 0) {
+                    section.classList.add('empty-section');
+                    section.innerHTML = `
+                        <h3>${category}</h3>
+                        <div class="profile-section-content">
+                            <p>No information available for this category yet.</p>
+                        </div>
+                    `;
+                } else {
+                    section.innerHTML = `
+                        <h3>${category}</h3>
+                        <div class="profile-section-content">
+                            ${summaries.map(summary => `<p>${summary}</p>`).join('')}
+                        </div>
+                    `;
+                }
+                
+                profileContent.appendChild(section);
+            });
+        }
+
+        // Toggle contact profile edit mode
+        function toggleContactProfileEditMode() {
+            const editBtn = document.getElementById('edit-contact-profile-btn');
+            const profileSections = document.querySelectorAll('.profile-section');
+            
+            if (!isContactProfileEditMode) {
+                // Enter edit mode
+                editBtn.textContent = 'Save Changes';
+                profileSections.forEach(section => {
+                    const content = section.querySelector('.profile-section-content');
+                    const textarea = document.createElement('textarea');
+                    textarea.className = 'profile-section-edit-textarea';
+                    textarea.value = content.textContent.trim();
+                    content.innerHTML = '';
+                    content.appendChild(textarea);
+                });
+                isContactProfileEditMode = true;
+            } else {
+                // Save changes
+                editBtn.textContent = 'Edit Profile';
+                profileSections.forEach(section => {
+                    const textarea = section.querySelector('.profile-section-edit-textarea');
+                    const content = section.querySelector('.profile-section-content');
+                    const lines = textarea.value.split('\n').filter(line => line.trim());
+                    content.innerHTML = lines.map(line => `<p>${line}</p>`).join('');
+                });
+                isContactProfileEditMode = false;
+                // TODO: Save changes to backend
+            }
+        }
+
+        // Handle manual contact addition
+        async function handleAddContact(event) {
+            event.preventDefault();
+            
+            const contactName = document.getElementById('contact-name').value.trim();
+            const contactTier = document.getElementById('contact-tier').value;
+            const statusDiv = document.getElementById('add-contact-status');
+            const submitBtn = event.target.querySelector('button[type="submit"]');
+            
+            if (!contactName) {
+                statusDiv.textContent = 'Please enter a contact name.';
+                statusDiv.style.color = 'red';
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Adding...';
+            
+            try {
+                const response = await fetch('/api/contacts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        full_name: contactName,
+                        tier: parseInt(contactTier)
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    statusDiv.textContent = `Contact "${contactName}" added successfully!`;
+                    statusDiv.style.color = 'green';
+                    document.getElementById('add-contact-form').reset();
+                    loadContacts(); // Refresh contact list
+                    loadTier1Contacts(); // Refresh tier 1 contacts
+                    loadTier2Contacts(); // Refresh tier 2 contacts
+                } else {
+                    throw new Error(result.error || 'Failed to add contact');
+                }
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                statusDiv.style.color = 'red';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Add Contact';
+            }
+        }
+
+        // Handle VCard import
+        async function handleVCardImport(event) {
+            event.preventDefault();
+            const fileInput = document.getElementById('vcard-file-input');
+            const submitBtn = event.target.querySelector('button');
+            const uploadStatus = document.getElementById('upload-status');
+
+            if (fileInput.files.length === 0) {
+                uploadStatus.textContent = 'Please select a file.';
+                uploadStatus.style.color = 'red';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('vcard_file', fileInput.files[0]);
+
+            uploadStatus.textContent = 'Uploading and processing...';
+            uploadStatus.style.color = 'black';
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/import-vcard', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || 'Upload failed.');
+                }
+                uploadStatus.textContent = result.message;
+                uploadStatus.style.color = 'green';
+                loadContacts(); // Refresh contact list
+                loadTier1Contacts(); // Refresh tier 1 contacts
+                loadTier2Contacts(); // Refresh tier 2 contacts
+            } catch (error) {
+                uploadStatus.textContent = `Error: ${error.message}`;
+                uploadStatus.style.color = 'red';
+            } finally {
+                submitBtn.disabled = false;
+                fileInput.value = '';
+            }
+        }
+
+        // Delete contact from profile view
+        async function deleteContactFromProfile() {
+            if (!confirm(`Are you sure you want to delete "${currentContactName}" and all associated data? This action cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/contacts/${currentContactId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert(`Contact "${currentContactName}" deleted successfully.`);
+                    showMainView(); // Return to main view
+                    loadTier1Contacts(); // Refresh tier 1 contacts
+                    loadTier2Contacts(); // Refresh tier 2 contacts
+                } else {
+                    alert(`Error: ${result.error}`);
+                }
+            } catch (error) {
+                alert(`Error deleting contact: ${error.message}`);
+            }
+        }
+
+        // Utility function for debouncing
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Enhanced Telegram status check
+        async function checkTelegramStatus() {
+            const statusDiv = document.getElementById('telegram-status');
+            updateTelegramStatusBadge('checking');
+            
+            statusDiv.innerHTML = '<div class="status-checking">Checking Telegram connection...</div>';
+
+            try {
+                const response = await fetch('/api/telegram/status');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    const isConnected = data.status === 'Connected';
+                    updateTelegramStatusBadge(isConnected ? 'connected' : 'error', data.status);
+                    
+                    statusDiv.innerHTML = `
+                        <div class="status-display ${isConnected ? 'status-success' : 'status-error'}">
+                            <div class="status-icon">${isConnected ? '✅' : '⚠️'}</div>
+                            <div class="status-info">
+                                <div class="status-title">Telegram Integration</div>
+                                <div class="status-description">${data.status}</div>
+                                ${data.user_info ? `<div class="user-info">Connected as: ${data.user_info}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    updateTelegramStatusBadge('error', 'Connection Error');
+                    statusDiv.innerHTML = `
+                        <div class="status-display status-error">
+                            <div class="status-icon">❌</div>
+                            <div class="status-info">
+                                <div class="status-title">Connection Error</div>
+                                <div class="status-description">${data.error || 'Unable to connect to Telegram'}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                updateTelegramStatusBadge('error', 'Network Error');
+                statusDiv.innerHTML = `
+                    <div class="status-display status-error">
+                        <div class="status-icon">🌐</div>
+                        <div class="status-info">
+                            <div class="status-title">Network Error</div>
+                            <div class="status-description">Unable to check Telegram status: ${error.message}</div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+
+        function pollImportStatus(taskId, statusDiv, onComplete = null) {
+            let pollCount = 0;
+            const maxPolls = 200; // 10 minutes max (30s * 200)
+            
+            const pollInterval = setInterval(async () => {
+                pollCount++;
+                
+                if (pollCount >= maxPolls) {
+                    clearInterval(pollInterval);
+                    showImportError('Import is taking too long. Please check back later.', statusDiv);
+                    if (onComplete) onComplete();
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/telegram/import-status/${taskId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: Failed to get status`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    // Create enhanced progress display
+                    const progressHtml = data.progress !== null ? 
+                        `<div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${Math.min(100, Math.max(0, data.progress))}%"></div>
+                            </div>
+                            <span class="progress-text">${Math.round(data.progress)}%</span>
+                        </div>` : '';
+
+                    const statusHtml = `
+                        <div class="import-status-display">
+                            <div class="status-header">
+                                <span class="status-badge status-${data.status}">${data.status.toUpperCase()}</span>
+                                <span class="task-id">Task: ${data.task_id.substring(0, 8)}...</span>
+                            </div>
+                            ${progressHtml}
+                            <div class="status-message">${data.status_message || 'Processing your request...'}</div>
+                            ${data.error_details ? `<div class="error-details">Error: ${data.error_details}</div>` : ''}
+                            <div class="status-timestamp">Started: ${new Date(data.created_at).toLocaleString()}</div>
+                        </div>
+                    `;
+                    
+                    statusDiv.innerHTML = statusHtml;
+                    statusDiv.className = `import-status status-${data.status}`;
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollInterval);
+                        showImportStatus('Import completed successfully! 🎉', statusDiv, 'success');
+                        
+                        // Refresh contacts list
+                        setTimeout(() => {
+                            loadContacts();
+                            loadTier1Contacts();
+                            loadTier2Contacts(); // Refresh tier 2 contacts
+                        }, 1000);
+                        
+                        if (onComplete) onComplete();
+                        
+                    } else if (data.status === 'failed') {
+                        clearInterval(pollInterval);
+                        const errorMessage = data.error_details || 'Import failed';
+                        showImportError(errorMessage, statusDiv);
+                        if (onComplete) onComplete();
+                    }
+                    
+                } catch (error) {
+                    console.error('Error polling task status:', error);
+                    clearInterval(pollInterval);
+                    showImportError(`Failed to get status: ${getErrorMessage(error)}`, statusDiv);
+                    if (onComplete) onComplete();
+                }
+            }, 3000); // Poll every 3 seconds
+        }
+
+
+        // Setup event listeners for all buttons
+        function setupEventListeners() {
+            // Add Note button
+            const addNoteBtn = document.getElementById('profile-add-note-btn');
+            if (addNoteBtn) {
+                addNoteBtn.addEventListener('click', function() {
+                    handleProfileAnalyzeNote();
+                });
+            }
+
+            // Sync Telegram Chat button
+            const syncTelegramBtn = document.getElementById('profile-sync-telegram-btn');
+            if (syncTelegramBtn) {
+                syncTelegramBtn.addEventListener('click', function() {
+                    handleProfileTelegramSync();
+                });
+            }
+
+            // Edit Profile Details button
+            const editProfileBtn = document.getElementById('edit-contact-profile-btn');
+            if (editProfileBtn) {
+                editProfileBtn.addEventListener('click', function() {
+                    const selectedContacts = getSelectedContacts();
+                    if (selectedContacts.length === 1) {
+                        editContactProfile(selectedContacts[0]);
+                    } else if (selectedContacts.length === 0) {
+                        alert('Please select a contact to edit.');
+                    } else {
+                        alert('Please select only one contact to edit.');
+                    }
+                });
+            }
+
+            // Delete Contact button
+            const deleteContactBtn = document.getElementById('delete-contact-btn');
+            if (deleteContactBtn) {
+                deleteContactBtn.addEventListener('click', function() {
+                    const selectedContacts = getSelectedContacts();
+                    if (selectedContacts.length > 0) {
+                        if (confirm(`Are you sure you want to delete ${selectedContacts.length} contact(s)?`)) {
+                            deleteSelectedContacts(selectedContacts);
+                        }
+                    } else {
+                        alert('Please select contacts to delete.');
+                    }
+                });
+            }
+
+            // Settings button
+            const settingsBtn = document.getElementById('settings-btn');
+            if (settingsBtn) {
+                settingsBtn.addEventListener('click', function() {
+                    showSettingsView();
+                });
+            }
+        }
+
+        // Helper function to get selected contacts
+        function getSelectedContacts() {
+            const checkboxes = document.querySelectorAll('input[name="contact_ids"]:checked');
+            return Array.from(checkboxes).map(checkbox => parseInt(checkbox.value));
+        }
+
+        // Helper function to delete selected contacts
+        function deleteSelectedContacts(contactIds) {
+            fetch('/api/contacts/bulk-delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ contact_ids: contactIds })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Successfully deleted ${contactIds.length} contact(s)`);
+                    loadContacts(); // Reload the contact list
+                } else {
+                    alert('Error deleting contacts: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while deleting contacts');
+            });
+        }
+
+        // Helper function to edit contact profile
+        function editContactProfile(contactId) {
+            // Find the contact data
+            fetch(`/api/contacts/${contactId}`)
+            .then(response => response.json())
+            .then(contact => {
+                const newName = prompt('Enter new name:', contact.name || '');
+                if (newName !== null && newName.trim() !== '') {
+                    // Update the contact
+                    fetch(`/api/contact/${contactId}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ 
+                            name: newName.trim(),
+                            telegram_handle: contact.telegram_handle 
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('Contact updated successfully');
+                            loadContacts(); // Reload the contact list
+                        } else {
+                            alert('Error updating contact: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('An error occurred while updating contact');
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error loading contact data');
+            });
+        }
+
+        // Load contacts on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadContacts();
+            loadTier1Contacts();
+            loadTier2Contacts(); // Load tier 2 contacts
+            setupEventListeners();
+            setupCheckboxListeners();
+            checkTelegramStatus();
+        });
+    </script>
+</body>
+</html>

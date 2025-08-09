@@ -1,0 +1,38 @@
+[
+  {
+    "title": "Follow up with John Smith",
+    "description": "Follow up about the project proposal",
+    "date": "2025-08-10",
+    "time": "14:00",
+    "duration_minutes": 60,
+    "reminder_minutes": 15,
+    "confidence": "high",
+    "contact_name": "John Smith",
+    "source": "kith_actionable_item",
+    "created_at": "2025-08-06T22:51:41.182296"
+  },
+  {
+    "title": "Follow up with John Smith",
+    "description": "John has requested to meet for coffee, which requires scheduling and follow-up.",
+    "date": "2025-08-08",
+    "time": "09:00",
+    "duration_minutes": 60,
+    "reminder_minutes": 15,
+    "confidence": "low",
+    "contact_name": "John Smith",
+    "source": "kith_actionable_item",
+    "created_at": "2025-08-07T00:02:21.407749"
+  },
+  {
+    "title": "Follow up with John Smith",
+    "description": "John has requested to meet for coffee, which requires scheduling and follow-up.",
+    "date": "2025-08-08",
+    "time": "09:00",
+    "duration_minutes": 60,
+    "reminder_minutes": 15,
+    "confidence": "low",
+    "contact_name": "John Smith",
+    "source": "kith_actionable_item",
+    "created_at": "2025-08-07T00:34:37.045625"
+  }
+]

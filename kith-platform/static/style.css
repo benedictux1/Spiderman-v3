@@ -1,0 +1,2439 @@
+html {
+    scroll-behavior: smooth;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f8f9fa;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    position: relative;
+}
+
+h1 {
+    text-align: center;
+    color: #2c3e50;
+    margin-bottom: 30px;
+    font-size: 2.5rem;
+    font-weight: 300;
+}
+
+h2 {
+    color: #2c3e50;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+h3 {
+    color: #34495e;
+    margin-bottom: 15px;
+    font-weight: 500;
+}
+
+/* Main Input View */
+#main-view {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+/* Contact Selection Area */
+.contact-selection {
+    margin-bottom: 30px;
+}
+
+/* Search Area */
+.search-area {
+    margin-bottom: 30px;
+}
+
+.search-container {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+#contact-search {
+    flex: 1;
+    padding: 12px 16px;
+    border: 2px solid #e1e8ed;
+    border-radius: 8px;
+    font-size: 16px;
+    transition: border-color 0.3s ease;
+}
+
+#contact-search:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.tier-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #666;
+}
+
+.tier-filter input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+/* Tier 1 Contacts Section */
+.tier1-contacts-section {
+    margin-top: 2rem;
+}
+
+.tier1-contacts-section h3 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.tier1-contacts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.tier1-contact-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: white;
+    border: 1px solid #e1e8ed;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.tier1-contact-item:hover {
+    background: #f1f3f4;
+    border-color: #3498db;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.tier1-contact-item.selected {
+    background: #3498db;
+    color: white;
+    border-color: #2980b9;
+}
+
+.tier1-contact-item.selected .contact-name {
+    color: white;
+}
+
+.contact-item-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.contact-initials {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.tier1-contact-item.selected .contact-initials {
+    background: white;
+    color: #3498db;
+}
+
+.contact-name {
+    flex: 1;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.no-contacts {
+    text-align: center;
+    color: #7f8c8d;
+    font-style: italic;
+    padding: 20px;
+}
+
+/* Recent Contacts */
+.recent-contacts {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+}
+
+.contact-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 600;
+    font-size: 14px;
+    border: 3px solid transparent;
+}
+
+.contact-icon:hover {
+    transform: scale(1.1);
+    border-color: #3498db;
+    box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+}
+
+.contact-icon.selected {
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+    border-color: #e74c3c;
+}
+
+.initials {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+/* Note Input Area */
+#input-area {
+    margin-top: 30px;
+}
+
+.selected-contact {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 15px;
+    padding: 12px 16px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #3498db;
+}
+
+#selected-contact-name {
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+#change-contact-btn {
+    background: #95a5a6;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background-color 0.3s ease;
+}
+
+#change-contact-btn:hover {
+    background: #7f8c8d;
+}
+
+#note-input {
+    width: 100%;
+    min-height: 120px;
+    padding: 16px;
+    border: 2px solid #e1e8ed;
+    border-radius: 8px;
+    font-size: 16px;
+    font-family: inherit;
+    resize: vertical;
+    transition: border-color 0.3s ease;
+}
+
+#note-input:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+#analyze-btn {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 15px;
+    transition: all 0.3s ease;
+}
+
+#analyze-btn:hover:not(:disabled) {
+    background: #2980b9;
+    transform: translateY(-1px);
+}
+
+#analyze-btn:disabled {
+    background: #bdc3c7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Review View */
+#review-view {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.review-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #ecf0f1;
+}
+
+.review-subtitle {
+    color: #7f8c8d;
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+#back-to-input {
+    background: #95a5a6;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s ease;
+}
+
+#back-to-input:hover {
+    background: #7f8c8d;
+}
+
+.review-actions {
+    display: flex;
+    gap: 15px;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 2px solid #ecf0f1;
+}
+
+#confirm-btn {
+    background: #27ae60;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#confirm-btn:hover {
+    background: #229954;
+    transform: translateY(-1px);
+}
+
+#cancel-btn {
+    background: #e74c3c;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#cancel-btn:hover {
+    background: #c0392b;
+    transform: translateY(-1px);
+}
+
+/* Review Cards */
+.card {
+    background: white;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.narrative-card {
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+    border-left: 4px solid #3498db;
+}
+
+.category-card {
+    border-left: 4px solid #27ae60;
+}
+
+/* Category-specific colors for review cards */
+.category-card[data-category="Actionable"] { border-left-color: #e74c3c; }
+.category-card[data-category="Goals"] { border-left-color: #f39c12; }
+.category-card[data-category="Relationship_Strategy"] { border-left-color: #9b59b6; }
+.category-card[data-category="Social"] { border-left-color: #3498db; }
+.category-card[data-category="Wellbeing"] { border-left-color: #27ae60; }
+.category-card[data-category="Avocation"] { border-left-color: #e67e22; }
+.category-card[data-category="Professional_Background"] { border-left-color: #34495e; }
+.category-card[data-category="Environment_And_Lifestyle"] { border-left-color: #16a085; }
+.category-card[data-category="Psychology_And_Values"] { border-left-color: #8e44ad; }
+.category-card[data-category="Communication_Style"] { border-left-color: #2980b9; }
+.category-card[data-category="Challenges_And_Development"] { border-left-color: #d35400; }
+.category-card[data-category="Deeper_Insights"] { border-left-color: #c0392b; }
+.category-card[data-category="Financial_Situation"] { border-left-color: #f1c40f; }
+.category-card[data-category="Admin_Matters"] { border-left-color: #95a5a6; }
+.category-card[data-category="ESTABLISHED_PATTERNS"] { border-left-color: #1abc9c; }
+.category-card[data-category="CORE_IDENTITY"] { border-left-color: #2c3e50; }
+.category-card[data-category="INFORMATION_GAPS"] { border-left-color: #7f8c8d; }
+.category-card[data-category="MEMORY_ANCHORS"] { border-left-color: #e74c3c; }
+.category-card[data-category="POSITIONALITY"] { border-left-color: #9b59b6; }
+.category-card[data-category="Others"] { border-left-color: #34495e; }
+
+/* Empty category styling */
+.category-card.empty-category {
+    opacity: 0.7;
+    background: #f8f9fa;
+}
+
+.category-card.empty-category .card-header h3 {
+    color: #7f8c8d;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.delete-card-btn {
+    background: #e74c3c;
+    color: white;
+    border: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.3s ease;
+}
+
+.delete-card-btn:hover {
+    background: #c0392b;
+}
+
+.review-card-textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 12px;
+    border: 1px dashed #bdc3c7;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+    transition: border-color 0.3s ease;
+}
+
+.review-card-textarea:focus {
+    outline: none;
+    border-color: #3498db;
+    border-style: solid;
+}
+
+.review-card-textarea[readonly] {
+    background: #f8f9fa;
+    color: #666;
+    cursor: not-allowed;
+}
+
+.review-card-textarea::placeholder {
+    color: #bdc3c7;
+    font-style: italic;
+}
+
+/* Profile View */
+#profile-view {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.profile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #ecf0f1;
+}
+
+.profile-actions {
+    display: flex;
+    gap: 15px;
+}
+
+#edit-profile-btn {
+    background: #f39c12;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s ease;
+}
+
+#edit-profile-btn:hover {
+    background: #e67e22;
+}
+
+#back-to-main {
+    background: #95a5a6;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s ease;
+}
+
+#back-to-main:hover {
+    background: #7f8c8d;
+}
+
+.card-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.profile-card {
+    border-left: 4px solid #9b59b6;
+}
+
+.profile-content p {
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    border-left: 3px solid #3498db;
+}
+
+.profile-edit-textarea {
+    width: 100%;
+    min-height: 100px;
+    padding: 12px;
+    border: 2px solid #3498db;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+}
+
+/* Settings View */
+#settings-view {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #ecf0f1;
+}
+
+#back-to-main-from-settings {
+    background: #95a5a6;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s ease;
+}
+
+#back-to-main-from-settings:hover {
+    background: #7f8c8d;
+}
+
+.settings-content {
+    max-width: 600px;
+}
+
+.section {
+    margin-bottom: 30px;
+    padding: 20px;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+/* Settings Button */
+.settings-btn {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #34495e;
+    color: white;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    z-index: 1000;
+}
+
+.settings-btn:hover {
+    background: #2c3e50;
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Form Styles */
+form {
+    margin-bottom: 20px;
+}
+
+input[type="file"] {
+    margin-bottom: 15px;
+    padding: 10px;
+    border: 2px dashed #bdc3c7;
+    border-radius: 6px;
+    width: 100%;
+    cursor: pointer;
+}
+
+input[type="file"]:hover {
+    border-color: #3498db;
+}
+
+button[type="submit"] {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s ease;
+}
+
+button[type="submit"]:hover {
+    background: #2980b9;
+}
+
+#upload-status {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+/* Contact Profile View */
+#contact-profile-view {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Profile Sections Layout */
+.profile-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    max-width: 100%;
+}
+
+.profile-section {
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    background: #f8f9fa;
+    overflow: hidden;
+}
+
+.profile-section h3 {
+    background: #2c3e50;
+    color: white;
+    margin: 0;
+    padding: 15px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    border-bottom: 1px solid #e1e8ed;
+}
+
+.profile-section-content {
+    padding: 20px;
+    min-height: 60px;
+}
+
+.profile-section-content p {
+    margin-bottom: 12px;
+    padding: 10px 15px;
+    background: white;
+    border-radius: 6px;
+    border-left: 4px solid #3498db;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    line-height: 1.5;
+}
+
+.profile-section-content p:last-child {
+    margin-bottom: 0;
+}
+
+.profile-section-edit-textarea {
+    width: 100%;
+    min-height: 120px;
+    padding: 15px;
+    border: 2px solid #3498db;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+    background: white;
+}
+
+/* Empty section styling */
+.profile-section.empty-section {
+    opacity: 0.6;
+}
+
+.profile-section.empty-section h3 {
+    background: #95a5a6;
+}
+
+.profile-section.empty-section .profile-section-content {
+    padding: 20px;
+    text-align: center;
+    color: #7f8c8d;
+    font-style: italic;
+}
+
+/* Category-specific colors */
+.profile-section[data-category="Actionable"] h3 { background: #e74c3c; }
+.profile-section[data-category="Goals"] h3 { background: #f39c12; }
+.profile-section[data-category="Relationship_Strategy"] h3 { background: #9b59b6; }
+.profile-section[data-category="Social"] h3 { background: #3498db; }
+.profile-section[data-category="Wellbeing"] h3 { background: #27ae60; }
+.profile-section[data-category="Avocation"] h3 { background: #e67e22; }
+.profile-section[data-category="Professional_Background"] h3 { background: #34495e; }
+.profile-section[data-category="Environment_And_Lifestyle"] h3 { background: #16a085; }
+.profile-section[data-category="Psychology_And_Values"] h3 { background: #8e44ad; }
+.profile-section[data-category="Communication_Style"] h3 { background: #2980b9; }
+.profile-section[data-category="Challenges_And_Development"] h3 { background: #d35400; }
+.profile-section[data-category="Deeper_Insights"] h3 { background: #c0392b; }
+.profile-section[data-category="Financial_Situation"] h3 { background: #f1c40f; }
+.profile-section[data-category="Admin_Matters"] h3 { background: #95a5a6; }
+.profile-section[data-category="ESTABLISHED_PATTERNS"] h3 { background: #1abc9c; }
+.profile-section[data-category="CORE_IDENTITY"] h3 { background: #2c3e50; }
+.profile-section[data-category="INFORMATION_GAPS"] h3 { background: #7f8c8d; }
+.profile-section[data-category="MEMORY_ANCHORS"] h3 { background: #e74c3c; }
+.profile-section[data-category="POSITIONALITY"] h3 { background: #9b59b6; }
+.profile-section[data-category="Others"] h3 { background: #34495e; }
+
+/* Responsive design for sections */
+@media (max-width: 768px) {
+    .profile-sections {
+        gap: 20px;
+    }
+    
+    .profile-section h3 {
+        padding: 12px 15px;
+        font-size: 14px;
+    }
+    
+    .profile-section-content {
+        padding: 15px;
+    }
+    
+    .profile-section-content p {
+        padding: 8px 12px;
+        font-size: 14px;
+    }
+    
+    .profile-section-edit-textarea {
+        min-height: 100px;
+        padding: 12px;
+    }
+}
+
+/* Contact Icon Interactions */
+.contact-icon {
+    position: relative;
+    cursor: pointer;
+}
+
+.contact-icon:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: -30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2c3e50;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+}
+
+.contact-icon:hover::before {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #2c3e50;
+    z-index: 1000;
+}
+
+/* Contact Management Styles */
+.contact-management {
+    margin-top: 20px;
+}
+
+.bulk-delete-section h4 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 16px;
+}
+
+.contact-list-container {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #e1e8ed;
+    border-radius: 6px;
+    background: white;
+    margin-bottom: 15px;
+}
+
+.contact-list {
+    padding: 10px;
+}
+
+.contact-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f2f3;
+    transition: background-color 0.3s ease;
+}
+
+.contact-item:last-child {
+    border-bottom: none;
+}
+
+.contact-item:hover {
+    background: #f8f9fa;
+}
+
+.contact-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    width: 100%;
+}
+
+.contact-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.contact-name {
+    flex: 1;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.contact-tier {
+    font-size: 12px;
+    color: #7f8c8d;
+    background: #ecf0f1;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.bulk-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.bulk-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.bulk-actions button:not(.danger-btn) {
+    background: #3498db;
+    color: white;
+}
+
+.bulk-actions button:not(.danger-btn):hover {
+    background: #2980b9;
+}
+
+.danger-btn {
+    background: #e74c3c !important;
+    color: white !important;
+}
+
+.danger-btn:hover {
+    background: #c0392b !important;
+}
+
+.danger-btn:disabled {
+    background: #bdc3c7 !important;
+    cursor: not-allowed;
+}
+
+#bulk-delete-status {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+/* Form Styles for Manual Contact Addition */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid #e1e8ed;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.3s ease;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+#add-contact-status {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+/* Enhanced Settings Section */
+.settings-content .section {
+    margin-bottom: 30px;
+    padding: 20px;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+.settings-content .section h3 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 18px;
+}
+
+/* Profile Actions Enhancement */
+.profile-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.profile-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+#edit-contact-profile-btn {
+    background: #f39c12;
+    color: white;
+}
+
+#edit-contact-profile-btn:hover {
+    background: #e67e22;
+}
+
+#add-note-to-contact-btn {
+    background: #27ae60;
+    color: white;
+}
+
+#add-note-to-contact-btn:hover {
+    background: #229954;
+}
+
+#delete-contact-btn {
+    background: #e74c3c;
+    color: white;
+}
+
+#delete-contact-btn:hover {
+    background: #c0392b;
+}
+
+#back-to-main {
+    background: #95a5a6;
+    color: white;
+}
+
+#back-to-main:hover {
+    background: #7f8c8d;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .container {
+        padding: 15px;
+    }
+    
+    h1 {
+        font-size: 2rem;
+    }
+    
+    #main-view {
+        padding: 20px;
+    }
+    
+    .search-container {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 15px;
+    }
+    
+    .recent-contacts {
+        justify-content: center;
+    }
+    
+    .contact-icon {
+        width: 45px;
+        height: 45px;
+    }
+    
+    .card-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .profile-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 15px;
+    }
+    
+    .profile-actions {
+        justify-content: center;
+    }
+    
+    .settings-btn {
+        bottom: 20px;
+        right: 20px;
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+    }
+
+    .profile-actions {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .profile-actions button {
+        width: 100%;
+        text-align: center;
+    }
+    
+    .contact-icon:hover::after {
+        display: none; /* Hide tooltips on mobile */
+    }
+    
+    .form-group input,
+    .form-group select {
+        font-size: 16px; /* Prevent zoom on iOS */
+    }
+}
+
+/* Loading States */
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.card {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Focus States */
+button:focus,
+input:focus,
+textarea:focus {
+    outline: 2px solid #3498db;
+    outline-offset: 2px;
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* Telegram Integration Styles */
+.telegram-integration {
+    margin-top: 20px;
+}
+
+.telegram-status {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+.telegram-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.telegram-action {
+    background: white;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.telegram-action h4 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 18px;
+}
+
+.telegram-action p {
+    margin: 0 0 15px 0;
+    color: #666;
+    font-size: 14px;
+}
+
+.telegram-btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.telegram-btn:hover {
+    background: #0056b3;
+}
+
+.telegram-btn:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+}
+
+.conversation-options {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.conversation-options label {
+    font-size: 14px;
+    color: #666;
+    font-weight: 500;
+}
+
+.conversation-options select {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.telegram-list {
+    margin-top: 15px;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    background: #f8f9fa;
+}
+
+.list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    border-bottom: 1px solid #e9ecef;
+    background: white;
+    border-radius: 6px 6px 0 0;
+}
+
+.select-all-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: #333;
+    cursor: pointer;
+}
+
+.select-all-checkbox input[type="checkbox"] {
+    margin: 0;
+}
+
+.checkboxes-container {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.contact-checkbox-item,
+.conversation-checkbox-item {
+    margin-bottom: 8px;
+}
+
+.contact-checkbox-label,
+.conversation-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.contact-checkbox-label:hover,
+.conversation-checkbox-label:hover {
+    background: #e9ecef;
+}
+
+.contact-checkbox-label input[type="checkbox"],
+.conversation-checkbox-label input[type="checkbox"] {
+    margin: 0;
+}
+
+.contact-name,
+.conversation-name {
+    font-weight: 500;
+    color: #333;
+    flex: 1;
+}
+
+.contact-username {
+    color: #666;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.conversation-messages {
+    color: #666;
+    font-size: 12px;
+    background: #e9ecef;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+#import-contacts-status,
+#import-conversations-status {
+    margin-top: 10px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+@media (max-width: 768px) {
+    .telegram-actions {
+        gap: 15px;
+    }
+    
+    .telegram-action {
+        padding: 15px;
+    }
+    
+    .conversation-options {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .list-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .checkboxes-container {
+        max-height: 200px;
+    }
+    
+    /* Enhanced mobile styles for new components */
+    .input-group {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .identifier-input {
+        padding-right: 16px; /* Reset for mobile */
+    }
+    
+    .input-icon {
+        position: static;
+        transform: none;
+        align-self: center;
+        margin-top: -30px;
+        margin-bottom: 10px;
+    }
+}
+
+
+/* Enhanced Telegram Import by Identifier Styles */
+.telegram-import-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.input-group {
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+    flex-wrap: wrap;
+}
+
+.identifier-input {
+    flex: 1;
+    min-width: 200px;
+    padding: 12px 16px;
+    border: 2px solid #e1e8ed;
+    border-radius: 8px;
+    font-size: 16px;
+    transition: all 0.3s ease;
+    font-family: inherit;
+}
+
+.identifier-input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.identifier-input[aria-invalid="true"] {
+    border-color: #e74c3c;
+    box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.1);
+}
+
+.days-select {
+    min-width: 120px;
+    padding: 12px 16px;
+    border: 2px solid #e1e8ed;
+    border-radius: 8px;
+    font-size: 16px;
+    background: white;
+    cursor: pointer;
+    transition: border-color 0.3s ease;
+}
+
+.days-select:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.import-btn {
+    min-width: 120px;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.import-btn.loading {
+    pointer-events: none;
+    opacity: 0.8;
+}
+
+.btn-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid transparent;
+    border-top: 2px solid currentColor;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.input-help {
+    margin-top: 5px;
+}
+
+.input-help small {
+    color: #7f8c8d;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+/* Enhanced Import Status Styles */
+.import-status {
+    margin-top: 15px;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    display: none;
+}
+
+.import-status.status-info {
+    background: #e3f2fd;
+    border: 1px solid #2196f3;
+}
+
+.import-status.status-success {
+    background: #e8f5e8;
+    border: 1px solid #4caf50;
+}
+
+.import-status.status-error {
+    background: #ffebee;
+    border: 1px solid #f44336;
+}
+
+.import-status.status-processing {
+    background: #fff3e0;
+    border: 1px solid #ff9800;
+}
+
+.import-status.status-connecting {
+    background: #f3e5f5;
+    border: 1px solid #9c27b0;
+}
+
+.import-status.status-fetching {
+    background: #e1f5fe;
+    border: 1px solid #00bcd4;
+}
+
+.status-message {
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.status-message.status-info {
+    color: #1976d2;
+}
+
+.status-message.status-success {
+    color: #388e3c;
+    font-weight: 500;
+}
+
+.status-message.status-error {
+    color: #d32f2f;
+    font-weight: 500;
+}
+
+/* Enhanced Import Status Display */
+.import-status-display {
+    padding: 16px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e1e8ed;
+}
+
+.status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-badge.status-processing {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+.status-badge.status-completed {
+    background: #e8f5e8;
+    color: #2e7d32;
+}
+
+.status-badge.status-failed {
+    background: #ffebee;
+    color: #c62828;
+}
+
+.status-badge.status-connecting {
+    background: #f3e5f5;
+    color: #6a1b9a;
+}
+
+.status-badge.status-fetching {
+    background: #e1f5fe;
+    color: #0277bd;
+}
+
+.task-id {
+    font-size: 11px;
+    color: #7f8c8d;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 0;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 8px;
+    background: #e1e8ed;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3498db, #2ecc71);
+    border-radius: 4px;
+    transition: width 0.5s ease-out;
+    position: relative;
+}
+
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.progress-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: #2c3e50;
+    min-width: 40px;
+    text-align: right;
+}
+
+.error-details {
+    background: #ffebee;
+    border-left: 4px solid #f44336;
+    padding: 8px 12px;
+    margin: 8px 0;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #c62828;
+    line-height: 1.4;
+}
+
+.status-timestamp {
+    font-size: 11px;
+    color: #7f8c8d;
+    margin-top: 8px;
+    text-align: center;
+}
+
+/* Responsive Design for Telegram Import */
+@media (max-width: 768px) {
+    .input-group {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .identifier-input {
+        min-width: auto;
+    }
+    
+    .days-select {
+        min-width: auto;
+    }
+    
+    .import-btn {
+        min-width: auto;
+        width: 100%;
+    }
+    
+    .status-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    .progress-container {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    
+    .progress-text {
+        text-align: center;
+        min-width: auto;
+    }
+}
+
+/* Accessibility Improvements */
+@media (prefers-reduced-motion: reduce) {
+    .spinner,
+    .progress-fill::after {
+        animation: none;
+    }
+    
+    .progress-fill {
+        transition: none;
+    }
+}
+
+/* High Contrast Mode Support */
+@media (prefers-contrast: high) {
+    .identifier-input,
+    .days-select {
+        border-width: 3px;
+    }
+    
+    .status-badge {
+        border: 2px solid currentColor;
+    }
+}
+
+/* Enhanced Telegram Section Styles */
+.telegram-section {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-left: 4px solid #0088cc;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e1e8ed;
+}
+
+.section-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.3s ease;
+}
+
+.section-badge.status-connected {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.section-badge.status-error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.section-badge.status-checking {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 2s infinite;
+}
+
+.section-badge.status-connected .status-dot {
+    background: #28a745;
+    animation: none;
+}
+
+.section-badge.status-error .status-dot {
+    background: #dc3545;
+    animation: none;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Enhanced Status Display */
+.status-display {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid;
+}
+
+.status-display.status-success {
+    background: #d4edda;
+    border-color: #c3e6cb;
+    color: #155724;
+}
+
+.status-display.status-error {
+    background: #f8d7da;
+    border-color: #f5c6cb;
+    color: #721c24;
+}
+
+.status-display.status-checking {
+    background: #fff3cd;
+    border-color: #ffeaa7;
+    color: #856404;
+}
+
+.status-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.status-info {
+    flex: 1;
+}
+
+.status-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.status-description {
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.user-info {
+    font-size: 12px;
+    opacity: 0.8;
+    font-style: italic;
+}
+
+/* Integration Help Styles */
+.integration-help {
+    background: white;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.integration-help h4 {
+    color: #2c3e50;
+    margin-bottom: 12px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.integration-help ol {
+    margin: 0;
+    padding-left: 20px;
+    line-height: 1.6;
+}
+
+.integration-help li {
+    margin-bottom: 8px;
+    color: #495057;
+}
+
+.integration-help strong {
+    color: #2c3e50;
+}
+
+/* Enhanced Form Styles */
+.form-field {
+    margin-bottom: 20px;
+}
+
+.field-label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 14px;
+}
+
+.required {
+    color: #e74c3c;
+    margin-left: 2px;
+}
+
+.input-group {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+}
+
+.input-icon {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    font-size: 16px;
+    color: #7f8c8d;
+    z-index: 2;
+}
+
+.identifier-input {
+    padding-right: 45px; /* Make room for icon */
+}
+
+.identifier-input.invalid {
+    border-color: #e74c3c;
+    background: #fdf2f2;
+}
+
+.input-error {
+    color: #e74c3c;
+    font-size: 12px;
+    margin-top: 5px;
+    min-height: 16px;
+    line-height: 1.4;
+}
+
+.form-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.primary-btn {
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+    border: none;
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(52, 152, 219, 0.3);
+    transition: all 0.3s ease;
+}
+
+.primary-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2980b9, #21618c);
+    box-shadow: 0 4px 8px rgba(52, 152, 219, 0.4);
+    transform: translateY(-1px);
+}
+
+.secondary-btn {
+    background: #f8f9fa;
+    color: #6c757d;
+    border: 2px solid #e9ecef;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.secondary-btn:hover {
+    background: #e9ecef;
+    border-color: #dee2e6;
+    color: #495057;
+}
+
+.btn-icon {
+    margin-right: 6px;
+}
+
+/* Import Tips Styles */
+.import-tips {
+    background: linear-gradient(135deg, #e3f2fd, #f3e5f5);
+    border: 1px solid #bbdefb;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 20px;
+}
+
+.import-tips h5 {
+    color: #1565c0;
+    margin-bottom: 12px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.import-tips ul {
+    margin: 0;
+    padding-left: 20px;
+    line-height: 1.5;
+}
+
+.import-tips li {
+    margin-bottom: 6px;
+    color: #424242;
+    font-size: 13px;
+}
+
+/* Focus visible for better keyboard navigation */
+.import-btn:focus-visible,
+.identifier-input:focus-visible,
+.days-select:focus-visible {
+    outline: 2px solid #3498db;
+    outline-offset: 2px;
+}
+
+/* Enhanced Responsive Design */
+@media (max-width: 768px) {
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .form-actions {
+        flex-direction: column;
+    }
+    
+    .form-actions .telegram-btn {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .integration-help {
+        padding: 15px;
+    }
+    
+    .integration-help ol {
+        padding-left: 15px;
+    }
+    
+    .status-display {
+        padding: 12px;
+    }
+    
+    .import-tips {
+        padding: 12px;
+    }
+    
+    .import-tips ul {
+        padding-left: 15px;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .integration-help {
+        background: #2d3748;
+        border-color: #4a5568;
+        color: #e2e8f0;
+    }
+    
+    .integration-help h4,
+    .integration-help strong {
+        color: #e2e8f0;
+    }
+    
+    .import-tips {
+        background: linear-gradient(135deg, #2d3748, #4a5568);
+        border-color: #4a5568;
+        color: #e2e8f0;
+    }
+    
+    .import-tips h5 {
+        color: #90cdf4;
+    }
+}
+
+.tier2-contacts-section {
+    margin-top: 2rem;
+    border-top: 1px solid #e1e8ed;
+    padding-top: 1.5rem;
+}
+
+.tier1-contacts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Contact Profile Edit Mode */
+.contact-profile-edit-textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-family: inherit;
+    resize: vertical;
+}
+
+/* V3.1 Feature Styles */
+
+/* Profile Actions Bar */
+.profile-actions-bar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.profile-actions-bar button {
+    padding: 10px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.profile-actions-bar button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+#profile-add-note-btn {
+    background: #28a745;
+    color: white;
+}
+
+#profile-sync-telegram-btn {
+    background: #007bff;
+    color: white;
+}
+
+#edit-contact-profile-btn {
+    background: #6c757d;
+    color: white;
+}
+
+/* Profile Note Input Area */
+#profile-note-input-area {
+    margin-bottom: 20px;
+}
+
+#profile-note-input {
+    width: 100%;
+    min-height: 120px;
+    padding: 12px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    resize: vertical;
+    margin-bottom: 10px;
+}
+
+#profile-note-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.note-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.note-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+#profile-analyze-btn {
+    background: #28a745;
+    color: white;
+}
+
+#profile-cancel-note-btn {
+    background: #6c757d;
+    color: white;
+}
+
+/* Raw Logs Section */
+.raw-logs-section {
+    margin-top: 30px;
+    border-top: 1px solid #e0e0e0;
+    padding-top: 20px;
+}
+
+#raw-logs-details summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 10px 0;
+    color: #495057;
+}
+
+#raw-logs-details summary:hover {
+    color: #007bff;
+}
+
+#raw-logs-content {
+    margin-top: 10px;
+}
+
+#raw-logs-content ul {
+    list-style: none;
+    padding: 0;
+}
+
+#raw-logs-content li {
+    margin-bottom: 15px;
+    padding: 12px;
+    background: #f8f9fa;
+    border-left: 4px solid #007bff;
+    border-radius: 4px;
+}
+
+#raw-logs-content pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin: 8px 0 0 0;
+    font-family: inherit;
+    font-size: 14px;
+    background: white;
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+}
+
+/* Settings & Management Page Styles */
+#settings-view {
+    /* Styles for the main settings container can be added here if needed */
+}
+
+.settings-section {
+    background: #ffffff;
+    padding: 25px;
+    margin-bottom: 25px;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.management-controls {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+    align-items: center;
+}
+
+#contact-search-manage {
+    flex-grow: 1;
+    padding: 10px 15px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+#tier-filter-manage {
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #f8f8f8;
+    font-size: 14px;
+}
+
+.bulk-actions {
+    margin-bottom: 20px;
+}
+
+.bulk-actions button {
+    padding: 10px 18px;
+    font-size: 14px;
+    border-radius: 5px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+#select-all-btn, #deselect-all-btn {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+#select-all-btn:hover, #deselect-all-btn:hover {
+    background-color: #0056b3;
+}
+
+#delete-selected-btn {
+    background-color: #dc3545;
+    color: white;
+    border-color: #dc3545;
+}
+
+#delete-selected-btn:disabled {
+    background-color: #e9ecef;
+    color: #6c757d;
+    border-color: #ced4da;
+    cursor: not-allowed;
+}
+
+#contacts-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+#contacts-table th, #contacts-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #dee2e6;
+}
+
+#contacts-table thead th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+}
+
+#contacts-table tbody tr:hover {
+    background-color: #f1f3f5;
+}
+
+#contacts-table .danger-btn {
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+.import-export-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.import-export-controls input[type="file"] {
+    border: 2px dashed #ced4da;
+    padding: 20px;
+    border-radius: 5px;
+    text-align: center;
+    background-color: #f8f9fa;
+}
+
+#download-csv-btn {
+    align-self: flex-start;
+    padding: 10px 20px;
+    background-color: #28a745;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+#telegram-status .status-indicator {
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+#telegram-status .status-indicator.connected {
+    color: #28a745;
+}
+
+#telegram-status .status-indicator.disconnected {
+    color: #dc3545;
+}
+
+/* Create Contact Modal */
+#create-contact-modal {
+    display: none;
+    position: fixed;
+    z-index: 1001;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+    justify-content: center;
+    align-items: center;
+}
+
+#create-contact-modal > div {
+    background-color: #fefefe;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 500px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+#create-contact-modal > div > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+#close-create-contact-modal-btn {
+    color: #aaa;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.form-group input[type="text"], .form-group select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+#create-contact-modal > div > div:last-child {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+#save-contact-btn, #cancel-create-contact-btn {
+    padding: 10px 20px;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
+}
+
+#save-contact-btn {
+    background-color: #28a745;
+    color: white;
+}
+
+#cancel-create-contact-btn {
+    background-color: #6c757d;
+    color: white;
+}

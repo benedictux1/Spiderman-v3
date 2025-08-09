@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kith - Personal Intelligence Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Kith Platform</h1>
+        
+        <!-- Main Input View -->
+        <div id="main-view">
+            <!-- Search Area -->
+            <div class="search-area">
+                <div class="search-container">
+                    <input type="search" id="contact-search" placeholder="Search for a contact...">
+                    <label class="tier-filter">
+                        <input type="checkbox" id="tier-filter"> Tier 1 Only
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Note Input Area -->
+            <div id="input-area">
+                <div class="selected-contact">
+                    <span id="selected-contact-name">Select a contact to add notes...</span>
+                    <button id="change-contact-btn" style="display:none;">Change Contact</button>
+                </div>
+                <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
+                <button id="analyze-btn" disabled>Analyze Note</button>
+            </div>
+            
+            <!-- Tier 1 Contacts List -->
+            <div class="tier1-contacts-section">
+                <h3>Tier 1 Contacts</h3>
+                <div id="tier1-contacts" class="tier1-contacts-list">
+                    <!-- Tier 1 contacts will be dynamically inserted here -->
+                </div>
+            </div>
+            
+            <!-- Tier 2 Contacts List -->
+            <div class="tier2-contacts-section">
+                <h3>Tier 2 Contacts</h3>
+                <div id="tier2-contacts" class="tier1-contacts-list">
+                    <!-- Tier 2 contacts will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Review View (Initially hidden) -->
+        <div id="review-view" style="display:none;">
+            <div class="review-header">
+                <h2>AI Analysis Review</h2>
+                <p class="review-subtitle">Edit freely before saving</p>
+                <button id="back-to-input">← Back to Input</button>
+            </div>
+            <div id="review-content"></div>
+            <div class="review-actions">
+                <button id="confirm-btn">Confirm & Save Analysis</button>
+                <button id="cancel-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Individual Contact Profile View (Initially hidden) -->
+        <div id="profile-view" style="display:none;">
+            <input type="hidden" id="selected-contact-id" />
+            <div class="profile-header">
+                <h2 id="contact-profile-name"></h2>
+                <div class="profile-actions">
+                    <button id="back-to-main-from-profile">← Back to Main</button>
+                </div>
+            </div>
+            
+            <!-- Profile Actions -->
+            <div class="profile-actions-bar card">
+                <button id="profile-add-note-btn">Add Note</button>
+                <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
+                <button id="edit-contact-profile-btn">Edit Profile Details</button>
+                <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
+            </div>
+
+            <!-- Profile Note Input Area (hidden by default) -->
+            <div id="profile-note-input-area" class="card" style="display:none;">
+                <h3>Add New Note</h3>
+                <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
+                <div class="note-actions">
+                    <button id="profile-analyze-btn">Analyze Note</button>
+                    <button id="profile-cancel-note-btn">Cancel</button>
+                </div>
+            </div>
+            
+            <div id="contact-profile-content" class="profile-sections">
+                <!-- Category sections will be dynamically inserted here -->
+            </div>
+            
+            <!-- Raw Log Viewer -->
+            <div class="raw-logs-section">
+                <details id="raw-logs-details">
+                    <summary>View Raw Input History</summary>
+                    <div id="raw-logs-content"></div>
+                </details>
+            </div>
+        </div>
+
+        <!-- Settings View (Initially hidden) -->
+        <div id="settings-view" style="display:none;">
+            <h2>Settings & Management</h2>
+            
+            <!-- Contacts Management -->
+            <div class="settings-section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>Manage Contacts</h3>
+                    <button id="show-create-contact-modal-btn">Create Contact</button>
+                </div>
+                
+                <!-- Search and Filter -->
+                <div class="management-controls">
+                    <input type="text" id="contact-search-manage" placeholder="Search contacts...">
+                    <select id="tier-filter-manage">
+                        <option value="">All Tiers</option>
+                        <option value="1">Tier 1</option>
+                        <option value="2">Tier 2</option>
+                        <option value="3">Tier 3</option>
+                    </select>
+                </div>
+                
+                <!-- Bulk Actions -->
+                <div class="bulk-actions">
+                    <button id="select-all-btn">Select All</button>
+                    <button id="deselect-all-btn">Deselect All</button>
+                    <button id="delete-selected-btn" class="danger-btn" disabled>Delete Selected</button>
+                </div>
+                
+                <!-- Contacts Table -->
+                <table id="contacts-table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all-header"></th>
+                            <th>Name</th>
+                            <th>Tier</th>
+                            <th>Telegram Handle</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Contacts will be dynamically inserted here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Import/Export -->
+            <div class="settings-section">
+                <h3>Import & Export</h3>
+                <div class="import-export-controls">
+                    <label for="vcf-upload">Import vCard:</label>
+                    <input type="file" id="vcf-upload" accept=".vcf">
+                    <button id="download-csv-btn">Download All Data as CSV</button>
+                </div>
+            </div>
+
+            <!-- Telegram Integration -->
+            <div class="settings-section">
+                <h3>Telegram Integration</h3>
+                <div id="telegram-status"></div>
+                <div id="import-status" style="display:none;"></div>
+            </div>
+        </div>
+
+        <div id="create-contact-modal" style="display:none;">
+            <div>
+                <div>
+                    <h2>Create New Contact</h2>
+                    <span id="close-create-contact-modal-btn">&times;</span>
+                </div>
+                <div>
+                    <form id="create-contact-form">
+                        <div class="form-group">
+                            <label for="new-contact-name">Full Name</label>
+                            <input type="text" id="new-contact-name" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="new-contact-tier">Tier</label>
+                            <select id="new-contact-tier">
+                                <option value="1">Tier 1</option>
+                                <option value="2" selected>Tier 2</option>
+                                <option value="3">Tier 3</option>
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                <div>
+                    <button id="save-contact-btn">Save Contact</button>
+                    <button id="cancel-create-contact-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Button -->
+        <button id="settings-btn" class="settings-btn">⚙️</button>
+    </div>
+
+    <!-- External JavaScript files -->
+    <script src="/static/js/main.js"></script>
+    <script src="/static/js/contacts.js"></script>
+    <script src="/static/js/settings.js"></script>
+    
+    <!-- Minimal inline script for remaining functions -->
+    <script>
+        // API configuration
+        const API_URL = '/api/process-note';
+        const SAVE_URL = '/api/save-synthesis';
+        let currentAnalysisData = null;
+        let currentContactId = null;
+        let selectedContactName = null;
+
+        // Note analysis functions
+        async function handleAnalyzeNote() {
+            const noteInput = document.getElementById('note-input');
+            const noteText = noteInput.value.trim();
+            
+            if (!noteText) {
+                alert('Please enter some notes to analyze.');
+                return;
+            }
+            
+            if (!currentContactId) {
+                alert('Please select a contact first.');
+                return;
+            }
+            
+            const analyzeBtn = document.getElementById('analyze-btn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'Analyzing...';
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ note: noteText, contact_id: currentContactId })
+                });
+                
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                
+                currentAnalysisData = data;
+                displayReviewCards(data);
+                showReviewView();
+                
+            } catch (error) {
+                alert('Error analyzing note: ' + error.message);
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'Analyze Note';
+            }
+        }
+
+        async function handleProfileAnalyzeNote() {
+            const noteInput = document.getElementById('profile-note-input');
+            const noteText = noteInput.value.trim();
+            
+            if (!noteText) {
+                alert('Please enter some notes to analyze.');
+                return;
+            }
+            
+            const contactId = document.getElementById('selected-contact-id')?.value;
+            if (!contactId) {
+                alert('Contact ID not found. Please refresh and try again.');
+                return;
+            }
+            
+            const analyzeBtn = document.getElementById('profile-analyze-btn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'Analyzing...';
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ note: noteText, contact_id: contactId })
+                });
+                
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                
+                currentAnalysisData = data;
+                displayReviewCards(data);
+                showReviewView();
+                
+                noteInput.value = '';
+                document.getElementById('profile-note-input-area').style.display = 'none';
+                
+            } catch (error) {
+                alert('Error analyzing note: ' + error.message);
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'Analyze Note';
+            }
+        }
+
+        function displayReviewCards(data) {
+            const reviewContent = document.getElementById('review-content');
+            reviewContent.innerHTML = '';
+            
+            if (!data.synthesis || data.synthesis.length === 0) {
+                reviewContent.innerHTML = '<p>No structured data was extracted from your note.</p>';
+                return;
+            }
+            
+            data.synthesis.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'review-card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="category category-${item.category.toLowerCase().replace('_', '-')}">${item.category.replace('_', ' ')}</span>
+                        <button class="delete-btn" onclick="deleteCard(this)">×</button>
+                    </div>
+                    <div class="card-content">
+                        <textarea class="content-edit" data-index="${index}">${item.content}</textarea>
+                        <div class="confidence-score">Confidence: ${item.confidence_score}</div>
+                    </div>
+                `;
+                reviewContent.appendChild(card);
+            });
+        }
+
+        function deleteCard(button) {
+            const card = button.closest('.review-card');
+            const textarea = card.querySelector('.content-edit');
+            const index = parseInt(textarea.dataset.index);
+            
+            if (currentAnalysisData?.synthesis) {
+                currentAnalysisData.synthesis.splice(index, 1);
+                displayReviewCards(currentAnalysisData);
+            }
+        }
+
+        async function confirmAndSave() {
+            if (!currentAnalysisData) {
+                alert('No analysis data to save.');
+                return;
+            }
+            
+            const editedCards = document.querySelectorAll('.content-edit');
+            editedCards.forEach((textarea, index) => {
+                if (currentAnalysisData.synthesis[index]) {
+                    currentAnalysisData.synthesis[index].content = textarea.value;
+                }
+            });
+            
+            try {
+                const response = await fetch(SAVE_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: currentContactId,
+                        synthesis: currentAnalysisData.synthesis,
+                        original_note: document.getElementById('note-input').value
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert('Analysis saved successfully!');
+                    document.getElementById('note-input').value = '';
+                    document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
+                    document.getElementById('change-contact-btn').style.display = 'none';
+                    document.getElementById('analyze-btn').disabled = true;
+                    currentContactId = null;
+                    currentAnalysisData = null;
+                    showMainView();
+                } else {
+                    throw new Error(result.message || 'Unknown error');
+                }
+            } catch (error) {
+                alert('Error saving analysis: ' + error.message);
+            }
+        }
+
+        function cancelAnalysis() {
+            currentAnalysisData = null;
+            showMainView();
+        }
+
+        function selectContact(contactId, contactName) {
+            currentContactId = contactId;
+            selectedContactName = contactName;
+            
+            document.getElementById('selected-contact-name').textContent = contactName;
+            document.getElementById('change-contact-btn').style.display = 'inline-block';
+            
+            const noteInput = document.getElementById('note-input');
+            const analyzeBtn = document.getElementById('analyze-btn');
+            analyzeBtn.disabled = !noteInput.value.trim();
+            noteInput.disabled = false;
+        }
+
+        // Telegram functions
+        async function handleProfileTelegramSync() {
+            const contactId = document.getElementById('selected-contact-id')?.value;
+            if (!contactId) {
+                alert('Contact ID not found. Please refresh and try again.');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/telegram/start-import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contact_id: contactId, days_back: 30 })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert('Telegram sync started! This may take a few moments.');
+                    pollImportStatus(result.task_id, null, () => loadContactProfile(contactId));
+                } else {
+                    alert('Error starting Telegram sync: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error starting Telegram sync: ' + error.message);
+            }
+        }
+
+        async function checkTelegramStatus() {
+            try {
+                const response = await fetch('/api/telegram/status');
+                const status = await response.json();
+                
+                const statusDiv = document.getElementById('telegram-status');
+                if (statusDiv) {
+                    if (status.authenticated) {
+                        statusDiv.innerHTML = `<span class="status-indicator connected">✓</span>
+                            <span>Connected as ${status.username || status.phone || 'User'}</span>`;
+                    } else {
+                        statusDiv.innerHTML = `<span class="status-indicator disconnected">✗</span>
+                            <span>Not connected</span>`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking Telegram status:', error);
+            }
+        }
+
+        function pollImportStatus(taskId, statusDiv = null, onComplete = null) {
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/telegram/import-status/${taskId}`);
+                    const status = await response.json();
+                    
+                    if (status.status === 'completed') {
+                        clearInterval(pollInterval);
+                        loadContacts();
+                        loadTier1Contacts();
+                        loadTier2Contacts();
+                        if (onComplete) onComplete();
+                    } else if (status.status === 'failed') {
+                        clearInterval(pollInterval);
+                        alert('Import failed: ' + (status.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    clearInterval(pollInterval);
+                    console.error('Error polling import status:', error);
+                }
+            }, 3000);
+        }
+
+        // vCard import
+        async function handleVCardImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('vcf_file', file);
+            
+            try {
+                const response = await fetch('/api/import-vcard', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert(`Successfully imported ${result.contacts_imported} contact(s)!`);
+                    loadContacts();
+                    loadTier1Contacts();
+                    loadTier2Contacts();
+                } else {
+                    alert('Error importing vCard: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error importing vCard: ' + error.message);
+            }
+            
+            event.target.value = '';
+        }
+
+        // Additional event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Core functionality
+            document.getElementById('analyze-btn').addEventListener('click', handleAnalyzeNote);
+            document.getElementById('confirm-btn').addEventListener('click', confirmAndSave);
+            document.getElementById('cancel-btn').addEventListener('click', cancelAnalysis);
+            document.getElementById('back-to-input').addEventListener('click', showMainView);
+            
+            // Note input handling
+            document.getElementById('note-input').addEventListener('input', function() {
+                const analyzeBtn = document.getElementById('analyze-btn');
+                analyzeBtn.disabled = !(this.value.trim() && currentContactId);
+            });
+            
+            // Profile note handling
+            document.getElementById('profile-add-note-btn').addEventListener('click', function() {
+                const noteArea = document.getElementById('profile-note-input-area');
+                noteArea.style.display = noteArea.style.display === 'none' ? 'block' : 'none';
+                if (noteArea.style.display === 'block') {
+                    document.getElementById('profile-note-input').focus();
+                }
+            });
+            
+            document.getElementById('profile-cancel-note-btn').addEventListener('click', function() {
+                document.getElementById('profile-note-input-area').style.display = 'none';
+                document.getElementById('profile-note-input').value = '';
+            });
+            
+            // Change contact
+            document.getElementById('change-contact-btn').addEventListener('click', function() {
+                currentContactId = null;
+                selectedContactName = null;
+                document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
+                this.style.display = 'none';
+                document.getElementById('analyze-btn').disabled = true;
+            });
+            
+            // Navigation
+            document.getElementById('back-to-main-from-profile').addEventListener('click', showMainView);
+            
+            // File imports
+            const vCardInput = document.getElementById('vcf-upload');
+            if (vCardInput) {
+                vCardInput.addEventListener('change', handleVCardImport);
+            }
+            
+            // CSV Download
+            const csvDownloadBtn = document.getElementById('download-csv-btn');
+            if (csvDownloadBtn) {
+                csvDownloadBtn.addEventListener('click', function() {
+                    window.open('/api/export-csv', '_blank');
+                });
+            }
+        });
+    </script>
+</body>
+</html>

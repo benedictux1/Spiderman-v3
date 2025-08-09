@@ -355,6 +355,16 @@ function wireProfileButtons() {
               return;
             }
             if (modal) modal.style.display = 'none';
+            // Show progress bar immediately
+            const progressContainer = document.getElementById('import-progress');
+            const progressBar = document.getElementById('import-progress-bar');
+            const progressStatus = document.getElementById('import-progress-status');
+            if (progressBar) progressBar.style.width = '0%';
+            if (progressStatus) progressStatus.textContent = 'Starting…';
+            if (progressContainer) {
+              progressContainer.style.display = 'block';
+              try { progressContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
+            }
             alert('Telegram sync started. This may take a few moments.');
             if (out.task_id && typeof pollImportStatus === 'function') {
               pollImportStatus(out.task_id, null, () => loadContactProfile(id));

@@ -359,4 +359,205 @@ window.createContactItem = createContactItem;
 window.setLoading = setLoading;
 window.fetchWithToast = fetchWithToast;
 window.selectContact = selectContact;
-window.viewContactProfile = viewContactProfile; 
+window.viewContactProfile = viewContactProfile;
+
+// Enhanced Settings Functions
+function enhanceSettingsPage() {
+    // Add toast notifications to form submissions
+    const mergeForm = document.getElementById('merge-form');
+    if (mergeForm) {
+        mergeForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const submitBtn = document.getElementById('merge-btn');
+            const originalText = submitBtn.textContent;
+            
+            setLoading(submitBtn, true);
+            submitBtn.textContent = 'Processing...';
+            
+            try {
+                // The existing handleMergeImport will be called
+                showToast('Starting merge process...', 'info');
+            } catch (error) {
+                showToast('Merge failed: ' + error.message, 'error');
+            }
+        });
+    }
+    
+    // Enhance contact creation modal
+    const createContactModal = document.getElementById('create-contact-modal');
+    const showModalBtn = document.getElementById('show-create-contact-modal-btn');
+    const closeModalBtn = document.getElementById('close-create-contact-modal-btn');
+    const cancelModalBtn = document.getElementById('cancel-create-contact-btn');
+    const saveContactBtn = document.getElementById('save-contact-btn');
+    
+    if (showModalBtn) {
+        showModalBtn.addEventListener('click', () => {
+            createContactModal.style.display = 'flex';
+            createContactModal.classList.add('show');
+            document.getElementById('new-contact-name').focus();
+            showToast('Fill in contact details', 'info', 2000);
+        });
+    }
+    
+    const closeModal = () => {
+        createContactModal.classList.remove('show');
+        setTimeout(() => {
+            createContactModal.style.display = 'none';
+        }, 300);
+        // Clear form
+        document.getElementById('new-contact-name').value = '';
+        document.getElementById('new-contact-tier').value = '2';
+    };
+    
+    if (closeModalBtn) closeModalBtn.addEventListener('click', closeModal);
+    if (cancelModalBtn) cancelModalBtn.addEventListener('click', closeModal);
+    
+    // Close modal on backdrop click
+    if (createContactModal) {
+        createContactModal.addEventListener('click', (e) => {
+            if (e.target === createContactModal) {
+                closeModal();
+            }
+        });
+    }
+    
+    if (saveContactBtn) {
+        saveContactBtn.addEventListener('click', async () => {
+            const nameInput = document.getElementById('new-contact-name');
+            const tierSelect = document.getElementById('new-contact-tier');
+            
+            const name = nameInput.value.trim();
+            const tier = tierSelect.value;
+            
+            if (!name) {
+                showToast('Please enter a contact name', 'error');
+                nameInput.focus();
+                return;
+            }
+            
+            setLoading(saveContactBtn, true);
+            
+            try {
+                const response = await fetchWithToast('/api/contact', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        full_name: name,
+                        tier: parseInt(tier)
+                    })
+                });
+                
+                showToast(`Contact "${name}" created successfully!`, 'success');
+                closeModal();
+                
+                // Refresh contacts list if the function exists
+                if (typeof loadContacts === 'function') loadContacts();
+                if (typeof loadTier1Contacts === 'function') loadTier1Contacts();
+                if (typeof loadTier2Contacts === 'function') loadTier2Contacts();
+                
+            } catch (error) {
+                // Error already shown by fetchWithToast
+                console.error('Failed to create contact:', error);
+            } finally {
+                setLoading(saveContactBtn, false);
+            }
+        });
+    }
+    
+    // Enhance bulk actions with confirmations
+    const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.addEventListener('click', () => {
+            const selectedCheckboxes = document.querySelectorAll('#contacts-table tbody input[type="checkbox"]:checked');
+            const count = selectedCheckboxes.length;
+            
+            if (count === 0) {
+                showToast('No contacts selected', 'error');
+                return;
+            }
+            
+            if (confirm(`Are you sure you want to delete ${count} contact${count > 1 ? 's' : ''}? This action cannot be undone.`)) {
+                showToast(`Deleting ${count} contact${count > 1 ? 's' : ''}...`, 'info');
+                // The existing bulk delete functionality will handle the rest
+            }
+        });
+    }
+    
+    // Enhance file upload feedback
+    const vCardInput = document.getElementById('vcf-upload');
+    if (vCardInput) {
+        vCardInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const fileName = e.target.files[0].name;
+                showToast(`Selected: ${fileName}`, 'info', 2000);
+            }
+        });
+    }
+    
+    const mergeFileInput = document.getElementById('merge-file-input');
+    if (mergeFileInput) {
+        mergeFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const fileName = e.target.files[0].name;
+                const fileSize = (e.target.files[0].size / 1024 / 1024).toFixed(2);
+                showToast(`Selected: ${fileName} (${fileSize} MB)`, 'info', 2000);
+            }
+        });
+    }
+    
+    // Enhance search with debouncing
+    const contactSearchManage = document.getElementById('contact-search-manage');
+    if (contactSearchManage) {
+        const debouncedSearch = debounce(() => {
+            const searchTerm = contactSearchManage.value.toLowerCase();
+            const rows = document.querySelectorAll('#contacts-table tbody tr');
+            
+            rows.forEach(row => {
+                const name = row.querySelector('td:nth-child(2)')?.textContent.toLowerCase() || '';
+                const visible = !searchTerm || name.includes(searchTerm);
+                row.style.display = visible ? '' : 'none';
+            });
+            
+            const visibleCount = Array.from(rows).filter(row => row.style.display !== 'none').length;
+            if (searchTerm && visibleCount === 0) {
+                showToast('No contacts found', 'info', 2000);
+            }
+        }, 300);
+        
+        contactSearchManage.addEventListener('input', debouncedSearch);
+    }
+    
+    // Enhance tier filter
+    const tierFilterManage = document.getElementById('tier-filter-manage');
+    if (tierFilterManage) {
+        tierFilterManage.addEventListener('change', () => {
+            const selectedTier = tierFilterManage.value;
+            const rows = document.querySelectorAll('#contacts-table tbody tr');
+            
+            rows.forEach(row => {
+                const tierCell = row.querySelector('td:nth-child(3)');
+                const tierText = tierCell?.textContent || '';
+                const visible = !selectedTier || tierText.includes(selectedTier);
+                row.style.display = visible ? '' : 'none';
+            });
+            
+            const visibleCount = Array.from(rows).filter(row => row.style.display !== 'none').length;
+            showToast(`Showing ${visibleCount} contacts`, 'info', 1500);
+        });
+    }
+    
+    // Add keyboard shortcuts for settings
+    document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd + N to create new contact (when in settings)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'n' && document.getElementById('settings-view').style.display !== 'none') {
+            e.preventDefault();
+            showModalBtn?.click();
+        }
+    });
+}
+
+// Initialize settings enhancements when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', enhanceSettingsPage);
+} else {
+    enhanceSettingsPage();
+} 

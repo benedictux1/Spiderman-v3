@@ -147,13 +147,16 @@
 
         <!-- Settings View (Initially hidden) -->
         <div id="settings-view" style="display:none;">
-            <h2>Settings & Management</h2>
+            <div class="settings-header">
+                <h2>Settings & Management</h2>
+                <button id="back-to-main-from-settings">← Back to Main</button>
+            </div>
             
             <!-- Contacts Management -->
             <div class="settings-section">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h3>Manage Contacts</h3>
-                    <button id="show-create-contact-modal-btn">Create Contact</button>
+                    <h3>👥 Manage Contacts</h3>
+                    <button id="show-create-contact-modal-btn">+ Create Contact</button>
                 </div>
                 
                 <!-- Search and Filter -->
@@ -193,13 +196,15 @@
 
             <!-- Import/Export -->
             <div class="settings-section">
-                <h3>Import & Export</h3>
+                <h3>📁 Import & Export</h3>
                 <div class="import-export-controls">
-                    <label for="vcf-upload">Import vCard:</label>
-                    <input type="file" id="vcf-upload" accept=".vcf">
+                    <div>
+                        <label for="vcf-upload">Import vCard:</label>
+                        <input type="file" id="vcf-upload" accept=".vcf">
+                    </div>
                     <a id="download-csv-btn" href="/api/export/csv" download>Download All Data as CSV</a>
                 </div>
-                <div class="restore-area card" style="border-color: #007aff; margin-top: 12px; padding: 10px;">
+                <div class="restore-area card">
                     <h4>Import and Merge from Backup</h4>
                     <div class="info-box">
                         <strong>Note:</strong> This tool will add new contacts and details from your CSV file. Existing data will not be deleted or overwritten.
@@ -207,8 +212,10 @@
                     <form id="merge-form">
                         <input type="file" id="merge-file-input" accept=".csv" required>
                         <div class="form-group">
-                            <label for="merge-dry-run">Dry Run:</label>
-                            <input type="checkbox" id="merge-dry-run">
+                            <label for="merge-dry-run">
+                                <input type="checkbox" id="merge-dry-run">
+                                Dry Run (preview changes without applying)
+                            </label>
                         </div>
                         <div class="form-group">
                             <label for="policy-contact-tier">Policy for Contact Tier Updates:</label>
@@ -225,19 +232,21 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="merge-force">Force Merge (Overwrite):</label>
-                            <input type="checkbox" id="merge-force">
+                            <label for="merge-force">
+                                <input type="checkbox" id="merge-force">
+                                Force Merge (Overwrite existing data)
+                            </label>
                         </div>
-                        <button type="submit" id="merge-btn">Upload & Merge</button>
+                        <button type="submit" id="merge-btn">🔄 Upload & Merge</button>
                     </form>
-                    <div id="merge-preview" class="card" style="display:none; margin-top: 12px; padding: 10px;"></div>
+                    <div id="merge-preview" class="card" style="display:none;"></div>
                     <p id="merge-status"></p>
                 </div>
             </div>
 
             <!-- Telegram Integration -->
             <div class="settings-section">
-                <h3>Telegram Integration</h3>
+                <h3>💬 Telegram Integration</h3>
                 <div id="telegram-status"></div>
                 <div id="import-status" style="display:none;"></div>
             </div>
@@ -245,29 +254,29 @@
 
         <div id="create-contact-modal" style="display:none;">
             <div>
-                <div>
+                <div style="position: relative;">
                     <h2>Create New Contact</h2>
-                    <span id="close-create-contact-modal-btn">&times;</span>
+                    <button id="close-create-contact-modal-btn" type="button">&times;</button>
                 </div>
                 <div>
                     <form id="create-contact-form">
                         <div class="form-group">
                             <label for="new-contact-name">Full Name</label>
-                            <input type="text" id="new-contact-name" required>
+                            <input type="text" id="new-contact-name" required placeholder="Enter full name">
                         </div>
                         <div class="form-group">
                             <label for="new-contact-tier">Tier</label>
                             <select id="new-contact-tier">
-                                <option value="1">Tier 1</option>
-                                <option value="2" selected>Tier 2</option>
-                                <option value="3">Tier 3</option>
+                                <option value="1">Tier 1 - Close contacts</option>
+                                <option value="2" selected>Tier 2 - Regular contacts</option>
+                                <option value="3">Tier 3 - Distant contacts</option>
                             </select>
                         </div>
                     </form>
                 </div>
                 <div>
-                    <button id="save-contact-btn">Save Contact</button>
-                    <button id="cancel-create-contact-btn">Cancel</button>
+                    <button id="save-contact-btn" type="button">💾 Save Contact</button>
+                    <button id="cancel-create-contact-btn" type="button">Cancel</button>
                 </div>
             </div>
         </div>
@@ -937,6 +946,7 @@
             
             // Navigation
             document.getElementById('back-to-main-from-profile').addEventListener('click', showMainView);
+            document.getElementById('back-to-main-from-settings').addEventListener('click', showMainView);
             
             // File imports
             const vCardInput = document.getElementById('vcf-upload');

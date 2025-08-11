@@ -512,6 +512,15 @@ button {
     transform: translateY(-1px);
 }
 
+.profile-actions-bar button#profile-upload-file-btn {
+    background: linear-gradient(135deg, var(--accent-color) 0%, #e68900 100%);
+    color: white;
+}
+.profile-actions-bar button#profile-upload-file-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
 /* Profile Note Input Area */
 #profile-note-input-area {
     background: var(--bg-primary);

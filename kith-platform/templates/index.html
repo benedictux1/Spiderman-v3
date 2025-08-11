@@ -83,11 +83,19 @@
             <div class="profile-actions-bar card">
                 <button id="profile-add-note-btn">Add Note</button>
                 <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
+                
+                <!-- NEW: File Upload -->
+                <form id="file-upload-form" style="display:inline;">
+                    <input type="file" id="file-upload-input" style="display:none;" accept="image/*,.pdf,.txt">
+                    <button type="button" id="profile-upload-file-btn">Upload File</button>
+                </form>
+                
                 <button id="edit-contact-profile-btn">Edit Profile Details</button>
                 <button id="edit-all-categories-btn">Edit Notes</button>
                 <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
                 <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
             </div>
+            <div id="file-upload-status" style="margin-top:8px;"></div>
 
             <!-- Profile Note Input Area (hidden by default) -->
             <div id="profile-note-input-area" class="card" style="display:none;">
@@ -994,6 +1002,51 @@
             const csvDownloadBtn = document.getElementById('download-csv-btn');
             if (csvDownloadBtn) {
                 // The href attribute is now directly on the anchor tag, so no need for event listener here.
+            }
+
+            // Upload file handlers
+            const uploadBtn = document.getElementById('profile-upload-file-btn');
+            const uploadInput = document.getElementById('file-upload-input');
+            const uploadStatus = document.getElementById('file-upload-status');
+            if (uploadBtn && uploadInput) {
+                uploadBtn.addEventListener('click', () => uploadInput.click());
+                uploadInput.addEventListener('change', async () => {
+                    if (!uploadInput.files || uploadInput.files.length === 0) return;
+                    const contactId = document.getElementById('selected-contact-id')?.value;
+                    if (!contactId) { alert('Select a contact first.'); return; }
+                    const f = uploadInput.files[0];
+                    const fd = new FormData();
+                    fd.append('file', f);
+                    fd.append('contact_id', contactId);
+                    uploadStatus.textContent = `Uploading ${f.name}...`;
+                    uploadBtn.disabled = true;
+                    try {
+                        const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
+                        if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+                        const data = await res.json();
+                        uploadStatus.textContent = `Upload complete. Analysis started (Task ${data.task_id}).`;
+                        showToast('Analysis started', 'info', 2000);
+                        pollFileTask(data.task_id, () => { showToast('File analysis complete', 'success'); });
+                    } catch (e) {
+                        uploadStatus.textContent = `Error: ${e.message}`;
+                        showToast(`Upload error: ${e.message}`, 'error');
+                    } finally {
+                        uploadBtn.disabled = false;
+                        uploadInput.value = '';
+                    }
+                });
+            }
+
+            async function pollFileTask(taskId, onComplete) {
+                const iv = setInterval(async () => {
+                    try {
+                        const r = await fetch(`/api/files/status/${taskId}`);
+                        const s = await r.json();
+                        if (s.status_message) uploadStatus.textContent = s.status_message;
+                        if (s.status === 'completed') { clearInterval(iv); onComplete && onComplete(); }
+                        if (s.status === 'failed') { clearInterval(iv); showToast('File task failed', 'error'); }
+                    } catch (e) { /* ignore transient */ }
+                }, 3000);
             }
         });
     </script>

@@ -140,6 +140,23 @@ def ensure_runtime_migrations():
                     completed_at TIMESTAMP
                 )
             ''')
+            # Ensure uploaded_files table exists
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS uploaded_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contact_id INTEGER NOT NULL,
+                    user_id INTEGER DEFAULT 1,
+                    original_filename TEXT NOT NULL,
+                    stored_filename TEXT UNIQUE NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_size_bytes INTEGER NOT NULL,
+                    analysis_task_id TEXT,
+                    generated_raw_note_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_uploaded_files_contact_id ON uploaded_files(contact_id)')
             conn.commit()
         finally:
             conn.close()
@@ -2594,3 +2611,195 @@ def ready():
         return jsonify({'ready': True})
     except Exception as e:
         return jsonify({'ready': False, 'error': str(e)}), 503
+
+# Configure uploads
+UPLOAD_ROOT = os.getenv('UPLOAD_FOLDER') or os.path.join(_PROJECT_ROOT, 'uploads')
+os.makedirs(UPLOAD_ROOT, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_ROOT
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+
+@app.route('/api/notes', methods=['POST'])
+def create_note_endpoint():
+    """Create a raw note for a contact and return its ID."""
+    try:
+        data = request.get_json(force=True)
+        contact_id = validate_input('contact_id', data.get('contact_id'))
+        content = sanitize_text(data.get('content', ''))
+        if not contact_id or not content:
+            return jsonify({"error": "Missing or invalid contact_id/content"}), 400
+        tags = data.get('tags')
+        with with_write_connection() as conn:
+            cur = conn.execute(
+                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                (contact_id, content, json.dumps(tags) if isinstance(tags, (dict, list)) else tags, datetime.now().isoformat())
+            )
+            raw_note_id = cur.lastrowid
+        return jsonify({"status": "success", "raw_note_id": raw_note_id})
+    except Exception as e:
+        logger.error(f"Failed to create note: {e}")
+        return jsonify({"error": f"Failed to create note: {e}"}), 500
+
+# --- File upload + background analysis ---
+try:
+    from werkzeug.utils import secure_filename
+except Exception:
+    secure_filename = None
+
+ALLOWED_UPLOAD_MIME_PREFIXES = ['image/', 'application/pdf', 'text/']
+
+def _is_allowed_mime(m):
+    return any(m == p or m.startswith(p.rstrip('/')) for p in ALLOWED_UPLOAD_MIME_PREFIXES)
+
+@app.route('/api/files/upload', methods=['POST'])
+def upload_file_endpoint():
+    """Accept a file for a given contact and schedule analysis."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part"}), 400
+        file = request.files['file']
+        contact_id = validate_input('contact_id', request.form.get('contact_id'))
+        if not contact_id or not file or file.filename == '':
+            return jsonify({"error": "Missing file or contact_id"}), 400
+        if secure_filename is None:
+            return jsonify({"error": "Upload dependency unavailable"}), 500
+        original_filename = secure_filename(file.filename)
+        _, ext = os.path.splitext(original_filename)
+        stored_filename = f"{uuid.uuid4()}{ext}"
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+        file.save(file_path)
+        mime_type = file.mimetype or 'application/octet-stream'
+        size_bytes = os.path.getsize(file_path)
+        # Create DB records
+        task_id = str(uuid.uuid4())
+        with with_write_connection() as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO import_tasks (id, user_id, contact_id, task_type, status, progress, status_message) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (task_id, 1, contact_id, 'file_analysis', 'pending', 0, 'Queued for analysis')
+            )
+            cur = conn.execute(
+                'INSERT INTO uploaded_files (contact_id, user_id, original_filename, stored_filename, file_path, file_type, file_size_bytes, analysis_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                (contact_id, 1, original_filename, stored_filename, file_path, mime_type, size_bytes, task_id)
+            )
+            file_id = cur.lastrowid
+        # Schedule job
+        try:
+            scheduler.add_job(id=task_id, func=run_file_analysis_job, trigger='date', args=[task_id, file_id])
+        except Exception as e:
+            logger.error(f"Failed to schedule file analysis job: {e}")
+            return jsonify({"error": f"Failed to schedule job: {e}"}), 500
+        return jsonify({"task_id": task_id, "message": "File uploaded and analysis started."}), 202
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        return jsonify({"error": f"Upload failed: {e}"}), 500
+
+@app.route('/api/files/status/<task_id>', methods=['GET'])
+def get_file_task_status(task_id: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.execute('SELECT * FROM import_tasks WHERE id = ?', (task_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"error": "Task not found"}), 404
+        return jsonify({
+            "task_id": row['id'],
+            "status": row['status'],
+            "progress": row['progress'],
+            "status_message": row['status_message'],
+            "error_details": row['error_details'],
+            "created_at": row['created_at'],
+            "completed_at": row['completed_at']
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to get status: {e}"}), 500
+
+# Background worker
+
+def _update_task(task_id: str, status: str, status_message: str = '', progress: int = None, error: str = None):
+    try:
+        with with_write_connection() as conn:
+            fields = ["status = ?", "status_message = ?"]
+            params = [status, status_message]
+            if progress is not None:
+                fields.append("progress = ?")
+                params.append(progress)
+            if error is not None:
+                fields.append("error_details = ?")
+                params.append(error)
+            fields.append("completed_at = CURRENT_TIMESTAMP" if status in ['completed', 'failed'] else "completed_at = completed_at")
+            sql = f"UPDATE import_tasks SET {', '.join(fields)} WHERE id = ?"
+            params.append(task_id)
+            conn.execute(sql, tuple(params))
+    except Exception as e:
+        logger.error(f"Failed to update task {task_id}: {e}")
+
+
+def run_file_analysis_job(task_id: str, file_id: int):
+    """Perform a simple multimodal analysis with optional Gemini fallback."""
+    _update_task(task_id, 'processing', 'Preparing file...')
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute('SELECT * FROM uploaded_files WHERE id = ?', (file_id,)).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            _update_task(task_id, 'failed', 'File record not found')
+            return
+        file_path = row['file_path']
+        mime_type = row['file_type']
+        contact_id = row['contact_id']
+        extracted_text = ''
+        # Attempt Gemini if available
+        used_gemini = False
+        try:
+            import google.generativeai as genai  # type: ignore
+            api_key = os.getenv('GEMINI_API_KEY', '').strip()
+            if api_key:
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                import base64
+                with open(file_path, 'rb') as f:
+                    b64 = base64.b64encode(f.read()).decode('utf-8')
+                prompt = [
+                    "You are an expert relationship intelligence analyst. Extract all text (OCR) and describe any meaningful visual content. Output plaintext facts only.",
+                    {"mime_type": mime_type, "data": b64}
+                ]
+                _update_task(task_id, 'processing', 'Analyzing via Gemini...')
+                resp = model.generate_content(prompt)
+                extracted_text = (resp.text or '').strip()
+                used_gemini = True
+        except Exception as ge:
+            logger.info(f"Gemini not used: {ge}")
+        if not extracted_text:
+            # Fallbacks
+            try:
+                if mime_type.startswith('text/'):
+                    with open(file_path, 'r', errors='ignore') as f:
+                        extracted_text = f.read()[:20000]
+                else:
+                    extracted_text = f"[Auto-generated placeholder analysis for {os.path.basename(file_path)}]"
+            except Exception as fe:
+                extracted_text = f"[Failed to read file: {fe}]"
+        _update_task(task_id, 'processing', 'Creating note...')
+        # Store raw note
+        with with_write_connection() as conn:
+            cur = conn.execute(
+                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                (contact_id, f"--- Analysis of uploaded file ---\n{extracted_text}", json.dumps({"source": "file_upload", "used_gemini": used_gemini}), datetime.now().isoformat())
+            )
+            new_note_id = cur.lastrowid
+            conn.execute('UPDATE uploaded_files SET generated_raw_note_id = ? WHERE id = ?', (new_note_id, file_id))
+        _update_task(task_id, 'processing', 'Sending for categorization...', progress=90)
+        # Send to internal transcript processing
+        try:
+            client = app.test_client()
+            resp = client.post('/api/process-transcript', json={'contact_id': contact_id, 'transcript': extracted_text})
+            if resp.status_code == 200:
+                _update_task(task_id, 'completed', 'File analysis and categorization complete.', progress=100)
+            else:
+                _update_task(task_id, 'failed', f'Categorization failed: {resp.data.decode()}', error='categorization_failed')
+        except Exception as e:
+            _update_task(task_id, 'failed', f'Internal processing error: {e}', error=str(e))
+    except Exception as e:
+        _update_task(task_id, 'failed', 'Unexpected error', error=str(e))

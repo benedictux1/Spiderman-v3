@@ -197,8 +197,31 @@
                     </div>
                     <form id="merge-form">
                         <input type="file" id="merge-file-input" accept=".csv" required>
+                        <div class="form-group">
+                            <label for="merge-dry-run">Dry Run:</label>
+                            <input type="checkbox" id="merge-dry-run">
+                        </div>
+                        <div class="form-group">
+                            <label for="policy-contact-tier">Policy for Contact Tier Updates:</label>
+                            <select id="policy-contact-tier">
+                                <option value="preserve" selected>Preserve existing</option>
+                                <option value="overwrite">Overwrite with CSV</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="policy-details">Policy for Detail Updates:</label>
+                            <select id="policy-details">
+                                <option value="preserve" selected>Preserve (skip duplicates)</option>
+                                <option value="append">Append (allow duplicates)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="merge-force">Force Merge (Overwrite):</label>
+                            <input type="checkbox" id="merge-force">
+                        </div>
                         <button type="submit" id="merge-btn">Upload & Merge</button>
                     </form>
+                    <div id="merge-preview" class="card" style="display:none; margin-top: 12px; padding: 10px;"></div>
                     <p id="merge-status"></p>
                 </div>
             </div>
@@ -495,10 +518,13 @@
                 if (statusDiv) {
                     if (status.authenticated) {
                         statusDiv.innerHTML = `<span class="status-indicator connected">✓</span>
-                            <span>Connected as ${status.username || status.phone || 'User'}</span>`;
+                            <span>Connected${status.username ? ` as ${status.username}` : ''}</span>
+                            ${status.last_sync ? `<span style="margin-left:8px; color:#666;">Last sync: ${new Date(status.last_sync).toLocaleString()}</span>` : ''}
+                            ${status.session_updated_at ? `<span style=\"margin-left:8px; color:#666;\">Session updated: ${status.session_updated_at}</span>` : ''}`;
                     } else {
                         statusDiv.innerHTML = `<span class="status-indicator disconnected">✗</span>
-                            <span>Not connected</span>`;
+                            <span>Not connected</span>
+                            ${status.session_updated_at ? `<span style=\"margin-left:8px; color:#666;\">Session updated: ${status.session_updated_at}</span>` : ''}`;
                     }
                 }
             } catch (error) {
@@ -514,6 +540,16 @@
             const progressBar = document.getElementById('import-progress-bar');
             const progressStatus = document.getElementById('import-progress-status');
             if (progressContainer) progressContainer.style.display = 'block';
+            // Add cancel control
+            let cancelBtn = document.getElementById('import-cancel-btn');
+            if (!cancelBtn && progressContainer) {
+                cancelBtn = document.createElement('button');
+                cancelBtn.id = 'import-cancel-btn';
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.style.marginTop = '8px';
+                cancelBtn.onclick = () => { clearInterval(pollInterval); if (progressContainer) progressContainer.style.display = 'none'; };
+                progressContainer.appendChild(cancelBtn);
+            }
 
             const pollInterval = setInterval(async () => {
                 try {
@@ -586,6 +622,10 @@
             const fileInput = document.getElementById('merge-file-input');
             const mergeStatus = document.getElementById('merge-status');
             const mergeBtn = document.getElementById('merge-btn');
+            const dryRunCheckbox = document.getElementById('merge-dry-run');
+            const policyTier = document.getElementById('policy-contact-tier');
+            const policyDetails = document.getElementById('policy-details');
+            const forceCheckbox = document.getElementById('merge-force');
 
             console.log('Form elements:', { form, fileInput, mergeStatus, mergeBtn }); // Debug log
 
@@ -606,6 +646,10 @@
 
             const formData = new FormData();
             formData.append('backup_file', fileInput.files[0]);
+            formData.append('dry_run', dryRunCheckbox && dryRunCheckbox.checked ? 'true' : 'false');
+            formData.append('force', forceCheckbox && forceCheckbox.checked ? 'true' : 'false');
+            if (policyTier) formData.append('policy_contact_tier', policyTier.value);
+            if (policyDetails) formData.append('policy_details', policyDetails.value);
 
             try {
                 console.log('Sending request to /api/import/merge-from-csv'); // Debug log
@@ -618,12 +662,15 @@
                 const result = await response.json();
                 console.log('Merge result:', result); // Debug log
                 
-                if (response.ok && result.status === 'success') {
+                if (response.ok && (result.status === 'success' || result.status === 'preview')) {
                     const stats = result.details || {};
                     const message = `Merge complete! Added ${stats.contacts_added || 0} new contacts, ${stats.details_added || 0} new details. Skipped ${stats.contacts_skipped || 0} existing contacts, ${stats.details_skipped || 0} duplicate details.`;
                     alert(message);
                     mergeStatus.textContent = message;
                     mergeStatus.style.color = '#28a745';
+                    if (result.status === 'preview' && result.preview) {
+                        renderMergePreview(result.preview);
+                    }
                     
                     // Refresh the UI
                     loadContacts();
@@ -649,6 +696,36 @@
                 mergeBtn.disabled = false;
                 mergeBtn.textContent = originalBtnText;
             }
+        }
+
+        function renderMergePreview(preview) {
+            const container = document.getElementById('merge-preview');
+            if (!container) return;
+            const conflicts = preview.conflicts || [];
+            const isRecordType = preview.is_record_type;
+            let html = '';
+            html += `<div class="preview-header">Dry-Run Preview</div>`;
+            html += `<div class="preview-sub">Record-type CSV: ${isRecordType ? 'Yes' : 'No'}</div>`;
+            if (conflicts.length) {
+                html += `<div class="preview-conflicts">`;
+                html += `<div class="conflict-title">Detected Conflicts / Duplicates (${conflicts.length})</div>`;
+                html += `<ul class="conflict-list">`;
+                conflicts.slice(0, 50).forEach(c => {
+                    if (c.type === 'duplicate_detail') {
+                        html += `<li>Duplicate detail for <strong>${escapeHtml(c.contact_name)}</strong> in <em>${escapeHtml(c.category)}</em>: ${escapeHtml(c.content)}</li>`;
+                    } else if (c.type === 'contact_tier_update') {
+                        html += `<li>Contact tier update for <strong>${escapeHtml(c.name)}</strong> → ${escapeHtml(String(c.to))} (policy: ${escapeHtml(c.policy_applied)})</li>`;
+                    } else if (c.type === 'error') {
+                        html += `<li>Error: ${escapeHtml(c.message || 'Unknown')}</li>`;
+                    }
+                });
+                html += `</ul>`;
+                html += `</div>`;
+            } else {
+                html += `<div class="preview-conflicts">No conflicts detected.</div>`;
+            }
+            container.innerHTML = html;
+            container.style.display = 'block';
         }
 
         async function fetchAndRenderRawLogs(contactId) {

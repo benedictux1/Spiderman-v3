@@ -26,6 +26,10 @@ from constants import (
 import sqlite3
 import time
 from contextlib import contextmanager
+import hashlib
+from uuid import uuid4 as _uuid4
+from flask import g
+from werkzeug.exceptions import HTTPException
 
 # --- INITIALIZATION ---
 load_dotenv()
@@ -48,8 +52,28 @@ logger = logging.getLogger(__name__)
 
 # Configure OpenAI API
 openai.api_key = os.getenv('OPENAI_API_KEY', '')
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)
+OPENAI_MODEL_VERSION = os.getenv('OPENAI_MODEL_VERSION', '')  # optional extra pin
 
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
+# Optional Sentry setup
+try:
+    import sentry_sdk  # type: ignore
+    SENTRY_DSN = os.getenv('SENTRY_DSN', '').strip()
+    if SENTRY_DSN:
+        sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
+        logger.info('Sentry initialized')
+except Exception as _sentry_err:
+    # Sentry is optional; log and continue
+    logger.info(f'Sentry not enabled: {_sentry_err}')
+
+# --- ChromaDB Client Configuration ---
+# Disable anonymized telemetry by default unless explicitly enabled
+os.environ.setdefault('ANONYMIZED_TELEMETRY', 'FALSE')
+# Persist directory can be overridden; default to absolute path under project
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_CHROMA_DIR = os.path.join(_PROJECT_ROOT, 'chroma_db')
+CHROMA_DB_PATH = os.getenv('CHROMA_DB_PATH', _DEFAULT_CHROMA_DIR)
+chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
 # Configure Scheduler
 scheduler = APScheduler()
@@ -86,6 +110,36 @@ def ensure_runtime_migrations():
                     conn.execute('ALTER TABLE raw_notes ADD COLUMN tags TEXT')
             except Exception:
                 pass
+            # Ensure file_imports table (for idempotent imports)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS file_imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1,
+                    import_type TEXT NOT NULL,
+                    file_name TEXT,
+                    file_hash TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    stats_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(import_type, file_hash)
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_file_imports_hash ON file_imports(import_type, file_hash)')
+            # Ensure import_tasks table exists for background jobs
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS import_tasks (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER DEFAULT 1,
+                    contact_id INTEGER,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    progress INTEGER DEFAULT 0,
+                    status_message TEXT,
+                    error_details TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+            ''')
             conn.commit()
         finally:
             conn.close()
@@ -245,6 +299,22 @@ def init_db():
             )
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_contact_time ON contact_audit_log(contact_id, event_timestamp DESC)')
+        
+        # Ensure file_imports table (for idempotent imports)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS file_imports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER DEFAULT 1,
+                import_type TEXT NOT NULL,
+                file_name TEXT,
+                file_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'completed',
+                stats_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(import_type, file_hash)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_file_imports_hash ON file_imports(import_type, file_hash)')
         
         # NOTE: All migration logic for synthesized_entries has been removed and handled by the database_surgeon.py script.
         # The schema is now assumed to be correct upon application start.
@@ -1083,7 +1153,7 @@ def process_note_endpoint():
         try:
             client = openai.OpenAI()
             response = client.chat.completions.create(
-                model=DEFAULT_OPENAI_MODEL,
+                model=OPENAI_MODEL,
                 messages=[{"role": "user", "content": master_prompt}],
                 max_tokens=DEFAULT_MAX_TOKENS,
                 temperature=DEFAULT_AI_TEMPERATURE
@@ -1342,7 +1412,7 @@ def process_transcript_endpoint():
         try:
             client = openai.OpenAI()
             response = client.chat.completions.create(
-                model=DEFAULT_OPENAI_MODEL,
+                model=OPENAI_MODEL,
                 messages=[{"role": "user", "content": master_prompt}],
                 max_tokens=DEFAULT_MAX_TOKENS,
                 temperature=DEFAULT_AI_TEMPERATURE
@@ -1866,25 +1936,82 @@ def merge_from_csv_endpoint():
             return jsonify({"error": "Invalid file type. Please upload a .csv file."}), 400
 
         csv_bytes = file.read()
+        # Idempotency: compute file hash
+        import hashlib
+        file_hash = hashlib.sha256(csv_bytes).hexdigest()
+
+        # Options via multipart form fields
+        dry_run = (request.form.get('dry_run', 'false').lower() == 'true')
+        force = (request.form.get('force', 'false').lower() == 'true')
+        # Conflict policy defaults
+        conflict_policy = {
+            'contact_tier': request.form.get('policy_contact_tier', 'preserve'),  # preserve | overwrite
+            'details': request.form.get('policy_details', 'preserve'),            # preserve | append
+        }
+
+        # Check idempotency store unless dry_run or force
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute('SELECT id, created_at FROM file_imports WHERE import_type = ? AND file_hash = ?', ('csv_merge', file_hash))
+                row = cur.fetchone()
+                if row and not force and not dry_run:
+                    return jsonify({
+                        "status": "skipped",
+                        "message": "This CSV was already imported before (same file hash).",
+                        "import_id": row['id'],
+                        "imported_at": row['created_at']
+                    })
+        except Exception:
+            # Non-fatal: proceed without idempotency if table not available
+            pass
+
         try:
             csv_text = csv_bytes.decode('utf-8')
         except Exception:
             csv_text = csv_bytes.decode('latin-1')
 
-        result = run_merge_process(csv_text)
+        result = run_merge_process(csv_text, options={
+            'dry_run': dry_run,
+            'conflict_policy': conflict_policy,
+            'file_name': file.filename,
+            'file_hash': file_hash
+        })
+
+        # Persist idempotency record on successful non-dry run
+        if not dry_run and result.get('status') == 'success':
+            try:
+                with get_db_connection() as conn:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO file_imports (user_id, import_type, file_name, file_hash, status, stats_json) VALUES (?, ?, ?, ?, ?, ?)',
+                        (1, 'csv_merge', file.filename, file_hash, 'completed', json.dumps(result.get('details', {})))
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist file import record: {e}")
+
         return jsonify(result)
     except Exception as e:
         logger.exception("Merge from CSV failed")
         return jsonify({"error": f"Merge failed: {e}"}), 500
 
 
-def run_merge_process(csv_text: str) -> dict:
+def run_merge_process(csv_text: str, options: dict | None = None) -> dict:
     """Non-destructively merge contacts and synthesized details from CSV text.
     Supports two CSV formats:
       1) Simple columns: Contact Full Name, Contact Tier, Category, Detail/Fact, AI Confidence, Entry Date
       2) Record-type CSV (our export): record_type, contact_full_name, category, detail_content, log_timestamp
     The parser tolerates truncated or variant header names (e.g., 'contact_full', 'detail_conte').
+    Accepts options:
+      - dry_run: bool (no writes, returns preview)
+      - conflict_policy: {contact_tier: 'preserve'|'overwrite', details: 'preserve'|'append'}
+      - file_name, file_hash for echoing back
     """
+    options = options or {}
+    dry_run: bool = bool(options.get('dry_run', False))
+    conflict_policy: dict = options.get('conflict_policy', {}) or {}
+    contact_tier_policy = (conflict_policy.get('contact_tier') or 'preserve').lower()
+    details_policy = (conflict_policy.get('details') or 'preserve').lower()
+
     stats = {
         "contacts_added": 0, "details_added": 0,
         "contacts_skipped": 0, "details_skipped": 0,
@@ -1892,6 +2019,7 @@ def run_merge_process(csv_text: str) -> dict:
         "rows_synth_processed": 0, "rows_skipped_unknown_type": 0,
         "rows_skipped_no_name": 0, "rows_skipped_duplicate": 0
     }
+    conflicts: list[dict] = []
 
     reader = csv.DictReader(StringIO(csv_text))
     raw_fieldnames = reader.fieldnames or []
@@ -1966,11 +2094,12 @@ def run_merge_process(csv_text: str) -> dict:
     from datetime import datetime
     with get_db_connection() as conn:
         # Load existing contacts for user 1 into a case-insensitive map
-        cur = conn.execute('SELECT id, full_name FROM contacts WHERE COALESCE(user_id, 1) = 1')
+        cur = conn.execute('SELECT id, full_name, tier FROM contacts WHERE COALESCE(user_id, 1) = 1')
         name_to_contact_id = { (row['full_name'] or '').strip().lower(): row['id'] for row in cur }
+        contact_tiers: dict[int, int] = { row['id']: row['tier'] for row in cur.fetchall() } if False else {}
 
         # Load existing synthesized detail signatures per contact_id
-        existing_details_map = {}
+        existing_details_map: dict[int, set[str]] = {}
         cur = conn.execute('SELECT contact_id, category, content FROM synthesized_entries')
         for row in cur:
             sig = f"{norm(row['category'])}|{norm(row['content'])}"
@@ -1988,14 +2117,33 @@ def run_merge_process(csv_text: str) -> dict:
                     continue
                 name_key = name.lower()
                 if name_key in name_to_contact_id:
+                    # Potential conflict: tier change
+                    tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                    if contact_tier_policy == 'overwrite' and tier_val in (1, 2, 3):
+                        try:
+                            if not dry_run:
+                                conn.execute('UPDATE contacts SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tier_val, name_to_contact_id[name_key]))
+                            else:
+                                conflicts.append({
+                                    'type': 'contact_tier_update',
+                                    'name': name,
+                                    'from': 'existing',
+                                    'to': tier_val,
+                                    'policy_applied': 'overwrite'
+                                })
+                        except Exception as e:
+                            conflicts.append({'type': 'error', 'message': f"Failed to update tier for {name}: {e}"})
                     stats['contacts_skipped'] += 1
                     continue
                 tier_val = to_int_or(2, get_val(row, 'contact_tier'))
-                conn.execute(
-                    'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
-                    (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
-                )
-                contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
+                    )
+                    contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                else:
+                    contact_id = -(stats['contacts_added'] + 1)  # pseudo id for preview
                 name_to_contact_id[name_key] = contact_id
                 existing_details_map.setdefault(contact_id, set())
                 stats['contacts_added'] += 1
@@ -2041,16 +2189,35 @@ def run_merge_process(csv_text: str) -> dict:
             contact_id = name_to_contact_id.get(name_key)
             if contact_id is None:
                 tier_val = to_int_or(2, r['tier'])
-                conn.execute(
-                    'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
-                    (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
-                )
-                contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
+                    )
+                    contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                else:
+                    contact_id = -(stats['contacts_added'] + 1)
                 name_to_contact_id[name_key] = contact_id
                 existing_details_map.setdefault(contact_id, set())
                 stats['contacts_added'] += 1
                 stats['rows_contact_processed'] += 1
             else:
+                # If contact exists and CSV contains a tier value and policy is overwrite, update
+                tier_val = to_int_or(0, r['tier'])
+                if tier_val in (1, 2, 3) and contact_tier_policy == 'overwrite':
+                    try:
+                        if not dry_run:
+                            conn.execute('UPDATE contacts SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tier_val, contact_id))
+                        else:
+                            conflicts.append({
+                                'type': 'contact_tier_update',
+                                'name': name,
+                                'from': 'existing',
+                                'to': tier_val,
+                                'policy_applied': 'overwrite'
+                            })
+                    except Exception as e:
+                        conflicts.append({'type': 'error', 'message': f"Failed to update tier for {name}: {e}"})
                 stats['contacts_skipped'] += 1
                 stats['rows_synth_processed'] += 1
 
@@ -2059,9 +2226,11 @@ def run_merge_process(csv_text: str) -> dict:
             if not detail_text:
                 continue
             sig = f"{category}|{detail_text}"
-            if sig in existing_details_map.get(contact_id, set()):
+            is_dup = sig in existing_details_map.get(contact_id, set())
+            if is_dup and details_policy == 'preserve':
                 stats['details_skipped'] += 1
                 stats['rows_skipped_duplicate'] += 1
+                conflicts.append({'type': 'duplicate_detail', 'contact_name': name, 'category': category, 'content': detail_text})
                 continue
 
             confidence_val = None
@@ -2078,17 +2247,43 @@ def run_merge_process(csv_text: str) -> dict:
                 except Exception:
                     created_at_val = None
 
-            conn.execute(
-                'INSERT INTO synthesized_entries (contact_id, category, content, confidence_score, created_at) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))',
-                (contact_id, category, detail_text, confidence_val, created_at_val)
-            )
-            existing_details_map[contact_id].add(sig)
+            if not dry_run:
+                conn.execute(
+                    'INSERT INTO synthesized_entries (contact_id, category, content, confidence_score, created_at) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))',
+                    (contact_id, category, detail_text, confidence_val, created_at_val)
+                )
+                existing_details_map.setdefault(contact_id, set()).add(sig)
+            else:
+                # Preview only; virtually add to existing set for subsequent dedupe
+                existing_details_map.setdefault(contact_id, set()).add(sig)
             stats['details_added'] += 1
             stats['rows_synth_processed'] += 1
 
-        conn.commit()
+        if not dry_run:
+            conn.commit()
 
-    return {"status": "success", "message": "Merge complete!", "details": stats}
+    preview = {
+        'fieldnames': fieldnames,
+        'canonical_mappings': canon_to_actual,
+        'is_record_type': has_logical('record_type'),
+        'conflict_policy': {'contact_tier': contact_tier_policy, 'details': details_policy},
+        'conflicts': conflicts[:200]  # cap for response size
+    }
+
+    result: dict = {"status": "success", "message": "Merge complete!", "details": stats}
+    if dry_run:
+        result.update({
+            'status': 'preview',
+            'message': 'Dry-run completed. No changes were written.',
+            'preview': preview
+        })
+    # Echo back file identifiers when provided
+    if options.get('file_name') or options.get('file_hash'):
+        result['file'] = {
+            'name': options.get('file_name'),
+            'hash': options.get('file_hash')
+        }
+    return result
 
 def classify_record_type(value: str) -> str:
     """Classify record type with robust matching."""
@@ -2169,3 +2364,233 @@ if __name__ == '__main__':
     # Ensure bootstrap in direct run mode as well
     bootstrap_database_once()
     app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)
+
+@app.before_request
+def inject_request_id():
+    try:
+        g.request_id = request.headers.get('X-Request-ID') or _uuid4().hex
+    except Exception:
+        g.request_id = _uuid4().hex
+
+@app.after_request
+def attach_request_id(response):
+    try:
+        response.headers['X-Request-ID'] = getattr(g, 'request_id', '')
+    except Exception:
+        pass
+    return response
+
+@app.errorhandler(Exception)
+def handle_exceptions(e):
+    if isinstance(e, HTTPException):
+        code = e.code or 500
+        message = e.description or str(e)
+    else:
+        code = 500
+        message = str(e)
+    error_body = {
+        'error': {
+            'code': code,
+            'message': message,
+            'type': e.__class__.__name__,
+        },
+        'request_id': getattr(g, 'request_id', None)
+    }
+    try:
+        logger.error(json.dumps({
+            'event': 'error',
+            'code': code,
+            'message': message,
+            'type': e.__class__.__name__,
+            'path': request.path,
+            'request_id': getattr(g, 'request_id', None)
+        }))
+    except Exception:
+        logger.error(f"Error: {message} (code={code}) [request_id={getattr(g, 'request_id', None)}]")
+    return jsonify(error_body), code
+
+# ------------------------
+# Background Reindexing API
+# ------------------------
+
+def _collect_reindex_items_for_contact(conn: sqlite3.Connection, contact_id: int):
+    """Gather documents and metadata for a single contact to index."""
+    docs: typing.List[str] = []
+    metas: typing.List[dict] = []
+    ids: typing.List[str] = []
+
+    # Raw notes
+    for row in conn.execute('SELECT id, content, created_at FROM raw_notes WHERE contact_id = ?', (contact_id,)):
+        docs.append(row['content'] or '')
+        metas.append({
+            'type': 'raw_note',
+            'contact_id': str(contact_id),
+            'record_id': str(row['id']),
+            'created_at': row['created_at']
+        })
+        ids.append(f"raw_{row['id']}")
+
+    # Synthesized entries
+    for row in conn.execute('SELECT id, category, content, created_at FROM synthesized_entries WHERE contact_id = ?', (contact_id,)):
+        text_blob = f"[{row['category']}] {row['content']}"
+        docs.append(text_blob)
+        metas.append({
+            'type': 'synthesized',
+            'contact_id': str(contact_id),
+            'record_id': str(row['id']),
+            'category': row['category'],
+            'created_at': row['created_at']
+        })
+        ids.append(f"syn_{row['id']}")
+
+    return ids, docs, metas
+
+
+def _reindex_contacts(task_id: str, specific_contact_id: typing.Optional[int] = None):
+    """Run the reindexing job; updates import_tasks with progress and status."""
+    conn = get_db_connection()
+    try:
+        # Build list of contacts to process
+        if specific_contact_id:
+            contact_rows = [{'id': specific_contact_id}]
+        else:
+            contact_rows = conn.execute('SELECT id FROM contacts WHERE user_id = 1 ORDER BY id').fetchall()
+
+        total = len(contact_rows)
+        processed = 0
+
+        # Prepare master collection
+        master_collection = chroma_client.get_or_create_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+        # Clear master by deleting and recreating for a clean slate
+        try:
+            chroma_client.delete_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+        except Exception:
+            pass
+        master_collection = chroma_client.get_or_create_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+
+        for row in contact_rows:
+            contact_id = int(row['id'] if isinstance(row, sqlite3.Row) else row['id'])
+            try:
+                ids, docs, metas = _collect_reindex_items_for_contact(conn, contact_id)
+
+                # Reset and repopulate contact collection
+                collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+                try:
+                    chroma_client.delete_collection(name=collection_name)
+                except Exception:
+                    pass
+                contact_collection = chroma_client.get_or_create_collection(name=collection_name)
+
+                if docs:
+                    contact_collection.add(ids=ids, documents=docs, metadatas=metas)
+                    # Also add to master
+                    master_collection.add(ids=[f"c{contact_id}_{i}" for i in ids], documents=docs, metadatas=metas)
+
+                status_msg = f"Indexed contact {contact_id} with {len(docs)} documents"
+                with get_db_connection() as wconn:
+                    wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, progress = ? WHERE id = ?', (
+                        'running', status_msg, int((processed / max(total, 1)) * 100), task_id
+                    ))
+                    wconn.commit()
+            except Exception as e:
+                with get_db_connection() as wconn:
+                    wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, error_details = ? WHERE id = ?', (
+                        'failed', f"Failed on contact {contact_id}", str(e), task_id
+                    ))
+                    wconn.commit()
+                return
+            finally:
+                processed += 1
+
+        with get_db_connection() as wconn:
+            wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, progress = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?', (
+                'completed', 'Reindex completed', 100, task_id
+            ))
+            wconn.commit()
+    finally:
+        conn.close()
+
+
+@app.route('/api/reindex/start', methods=['POST'])
+def start_reindex():
+    """Start background reindex of Chroma collections. Optional JSON body: {contact_id?: int}"""
+    try:
+        ensure_runtime_migrations()
+        payload = request.get_json(silent=True) or {}
+        specific_contact_id = payload.get('contact_id')
+
+        with IMPORT_TASK_LOCK:
+            task_id = str(uuid.uuid4())
+            with get_db_connection() as conn:
+                conn.execute('''
+                    INSERT INTO import_tasks (id, user_id, contact_id, task_type, status, status_message)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (task_id, 1, specific_contact_id, 'reindex', 'pending', 'Reindex task created'))
+                conn.commit()
+
+        def _runner():
+            try:
+                _reindex_contacts(task_id, specific_contact_id)
+            except Exception as e:
+                with get_db_connection() as wconn:
+                    wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, error_details = ? WHERE id = ?', (
+                        'failed', 'Reindex failed', str(e), task_id
+                    ))
+                    wconn.commit()
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+
+        return jsonify({
+            'task_id': task_id,
+            'status': 'started'
+        })
+    except Exception as e:
+        return jsonify({'error': f'Failed to start reindex: {e}'}), 500
+
+
+@app.route('/api/reindex/status/<task_id>', methods=['GET'])
+def get_reindex_status(task_id: str):
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute('SELECT * FROM import_tasks WHERE id = ? AND task_type = ?', (task_id, 'reindex')).fetchone()
+            if not row:
+                return jsonify({'error': 'Task not found'}), 404
+            return jsonify({
+                'task_id': row['id'],
+                'status': row['status'],
+                'progress': row['progress'],
+                'status_message': row['status_message'],
+                'error_details': row['error_details'],
+                'created_at': row['created_at'],
+                'completed_at': row['completed_at']
+            })
+    except Exception as e:
+        return jsonify({'error': f'Failed to get reindex status: {e}'}), 500
+
+# ------------------------
+# Health and Readiness
+# ------------------------
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'ok',
+        'chroma_path': CHROMA_DB_PATH,
+        'telemetry': os.getenv('ANONYMIZED_TELEMETRY', 'FALSE')
+    })
+
+@app.route('/api/ready', methods=['GET'])
+def ready():
+    try:
+        # DB check
+        conn = get_db_connection()
+        try:
+            conn.execute('SELECT 1').fetchone()
+        finally:
+            conn.close()
+        # Chroma check
+        _ = chroma_client.list_collections()
+        return jsonify({'ready': True})
+    except Exception as e:
+        return jsonify({'ready': False, 'error': str(e)}), 503

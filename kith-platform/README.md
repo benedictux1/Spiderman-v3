@@ -297,3 +297,70 @@ The app runs in debug mode locally. Check the console for detailed error message
 ## License
 
 Private project - not for distribution. 
+
+# Kith Platform - Developer Guide
+
+## Prerequisites
+- Python 3.11+
+- Virtualenv
+
+## Setup
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Environment
+Create a `.env` file in `kith-platform/`:
+```
+OPENAI_API_KEY=
+KITH_API_TOKEN=dev_token
+CHROMA_DB_PATH=/absolute/path/to/chroma_db  # optional; defaults to kith-platform/chroma_db
+ANONYMIZED_TELEMETRY=FALSE                 # disable Chroma telemetry
+```
+
+## Running (Development)
+```bash
+source .venv/bin/activate
+FLASK_ENV=development python app.py
+```
+The app listens on `http://0.0.0.0:5001` by default (see `constants.py`).
+
+## Running (Production)
+Use gunicorn:
+```bash
+gunicorn -w 2 -k gevent -b 0.0.0.0:5001 app:app
+```
+Or uvicorn workers for ASGI via `uvicorn`/`hypercorn` if needed.
+
+## Background Workers
+- Telegram importer runs via `telegram_worker.py` through `/api/telegram/start-import`.
+- Reindex job: POST `/api/reindex/start` then GET `/api/reindex/status/<task_id>` to poll progress.
+
+## Testing
+```bash
+pytest -q
+```
+
+## Linting & Formatting
+```bash
+flake8
+black --check .
+isort --check-only .
+```
+
+## Pre-commit
+Install and enable hooks locally:
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+```
+
+## Health/Readiness
+- Health endpoint: `GET /api/health` (returns app status)
+- Readiness: `GET /api/ready` (ensures DB and Chroma are reachable)
+
+## CSV Export
+`GET /api/export/csv` returns a record-type CSV with lineage fields. 

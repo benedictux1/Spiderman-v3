@@ -344,19 +344,39 @@ def setup_telegram_routes(app):
             session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
             session_file = f"{session_name}.session"
             
+            extra = {}
+            try:
+                import sqlite3, os, time
+                from flask import g
+                from constants import DEFAULT_DB_NAME
+                db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    cur = conn.execute('SELECT MAX(telegram_last_sync) AS last_sync FROM contacts')
+                    row = cur.fetchone()
+                    extra['last_sync'] = row['last_sync'] if row and row['last_sync'] else None
+                finally:
+                    conn.close()
+                if os.path.exists(session_file):
+                    extra['session_updated_at'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(session_file)))
+            except Exception:
+                pass
+            
             if os.path.exists(session_file):
                 # Session file exists, assume it's authenticated
-                # (In a production environment, you might want to do a more thorough check)
                 return jsonify({
                     'authenticated': True,
                     'status': 'connected',
-                    'message': 'Telegram session authenticated'
+                    'message': 'Telegram session authenticated',
+                    **extra
                 })
             else:
                 return jsonify({
                     'authenticated': False,
                     'status': 'not_authenticated',
-                    'message': 'Telegram session not found. Please run authentication setup.'
+                    'message': 'Telegram session not found. Please run authentication setup.',
+                    **extra
                 })
             
         except Exception as e:

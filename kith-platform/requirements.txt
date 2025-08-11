@@ -115,3 +115,4 @@ zipp==3.23.0
 openai==0.28.1
 schedule==1.2.2
 pyaes==1.6.1
+sentry-sdk==2.19.2

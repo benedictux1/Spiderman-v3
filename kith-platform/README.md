@@ -318,6 +318,7 @@ OPENAI_API_KEY=
 KITH_API_TOKEN=dev_token
 CHROMA_DB_PATH=/absolute/path/to/chroma_db  # optional; defaults to kith-platform/chroma_db
 ANONYMIZED_TELEMETRY=FALSE                 # disable Chroma telemetry
+KITH_DB_PATH=/absolute/path/to/kith_platform.db  # optional; override DB file
 ```
 
 ## Running (Development)

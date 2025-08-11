@@ -164,7 +164,7 @@ IMPORT_TASK_LOCK = threading.Lock()  # Lock for import task operations
 CONTACT_CREATION_LOCK = threading.Lock()  # Lock for contact creation
 
 # Simplified database connection
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
+DB_PATH = os.getenv('KITH_DB_PATH') or os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
 
 def get_db_connection():
     """Get database connection with robust pragmas and timeout."""

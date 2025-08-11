@@ -5,9 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kith - Personal Intelligence Platform</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 </head>
 <body>
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+    
     <div class="container">
+        <!-- Page Title -->
+        <h1>Kith Platform</h1>
         
         <!-- Main Input View -->
         <div id="main-view">
@@ -99,8 +106,10 @@
             <!-- Raw Log Viewer -->
             <div class="raw-logs-section">
                 <details id="raw-logs-details">
-                    <summary>View Detailed Change History</summary>
-                    <div id="raw-logs-content"></div>
+                    <summary>View Raw Logs</summary>
+                    <div id="raw-logs-content">
+                        <!-- Raw logs will be loaded here -->
+                    </div>
                 </details>
             </div>
 
@@ -268,6 +277,7 @@
     </div>
 
     <!-- External JavaScript files -->
+    <script src="/static/js/ui-enhancements.js"></script>
     <script src="/static/js/main.js"></script>
     <script src="/static/js/contacts.js"></script>
     <script src="/static/js/settings.js"></script>

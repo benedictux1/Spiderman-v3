@@ -4,21 +4,34 @@ import requests
 import sqlite3
 import time
 import asyncio
+import logging
 from telethon import TelegramClient
+from telethon.errors.rpcerrorlist import UserNotParticipantError
 from datetime import datetime, timedelta
 from constants import DEFAULT_DB_NAME
+
+# --- LOGGING SETUP ---
+LOG_FILE = os.path.join(os.path.dirname(__file__), 'kith_platform.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
 
 # --- CONFIGURATION (loaded from .env) ---
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 KITH_API_URL = os.getenv('KITH_API_URL', 'http://127.0.0.1:5001')  # Important: Use the local loopback for internal calls
 KITH_API_TOKEN = os.getenv('KITH_API_TOKEN', 'dev_token')
-SESSION_NAME = 'kith_telegram_session_worker'
+SESSION_NAME = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
 
 # Check for required Telegram API credentials
 if not API_ID or not API_HASH:
-    print("ERROR: TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env file")
-    print("Get these credentials from https://my.telegram.org/apps")
+    logging.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env file")
+    logging.error("Get these credentials from https://my.telegram.org/apps")
     exit(1)
 
 def get_db_connection():
@@ -26,9 +39,11 @@ def get_db_connection():
     max_retries = 5
     retry_delay = 1
     
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
+    
     for attempt in range(max_retries):
         try:
-            conn = sqlite3.connect(DEFAULT_DB_NAME, timeout=30.0)
+            conn = sqlite3.connect(db_path, timeout=30.0)
             conn.execute('PRAGMA journal_mode=WAL')  # Better for concurrent access
             conn.execute('PRAGMA synchronous=NORMAL')  # Better performance
             conn.execute('PRAGMA temp_store=memory')  # Use memory for temp tables
@@ -37,18 +52,21 @@ def get_db_connection():
             
             # Test the connection
             conn.execute('SELECT 1').fetchone()
+            logging.info("Database connection successful.")
             return conn
         except sqlite3.OperationalError as e:
             if 'database is locked' in str(e).lower() and attempt < max_retries - 1:
-                print(f"Database locked, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+                logging.warning(f"Database locked, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
                 time.sleep(retry_delay)
                 retry_delay *= 2
             else:
+                logging.error(f"Final attempt to connect to database failed: {e}", exc_info=True)
                 raise
         except Exception as e:
             if attempt == max_retries - 1:
+                logging.error(f"Final attempt to connect to database failed: {e}", exc_info=True)
                 raise e
-            print(f"Database connection error, retrying... (attempt {attempt + 1}/{max_retries}): {e}")
+            logging.warning(f"Database connection error, retrying... (attempt {attempt + 1}/{max_retries}): {e}")
             time.sleep(retry_delay)
             retry_delay *= 2
 
@@ -60,11 +78,15 @@ def update_task_status(task_id, status, message="", error="", progress=None):
     for attempt in range(max_retries):
         try:
             conn = get_db_connection()
+            if not conn:
+                logging.error(f"[Task {task_id}] Could not connect to the database to update status.")
+                return
+                
             try:
                 # First, verify the task exists
                 cursor = conn.execute('SELECT id FROM import_tasks WHERE id = ?', (task_id,))
                 if not cursor.fetchone():
-                    print(f"Warning: Task {task_id} not found in database")
+                    logging.warning(f"Warning: Task {task_id} not found in database for status update.")
                     return
                 
                 # Prepare update parameters
@@ -97,7 +119,7 @@ def update_task_status(task_id, status, message="", error="", progress=None):
                     ''', (task_id,))
                 
                 conn.commit()
-                print(f"[Task {task_id}] Status: {status} ({progress or ''}%) - {message}")
+                logging.info(f"[Task {task_id}] Status: {status} ({progress or ''}%) - {message}")
                 return  # Success, exit retry loop
                 
             finally:
@@ -105,17 +127,19 @@ def update_task_status(task_id, status, message="", error="", progress=None):
                 
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"Error updating task status (attempt {attempt + 1}/{max_retries}): {e}")
+                logging.error(f"Error updating task status (attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
                 time.sleep(retry_delay)
                 retry_delay *= 2
             else:
-                print(f"Failed to update task status after {max_retries} attempts: {e}")
+                logging.error(f"Failed to update task status after {max_retries} attempts: {e}", exc_info=True)
 
 def run_telegram_import(task_id, identifier, contact_id, days_back):
     """
     Sync wrapper to set up the asyncio event loop and run the async import task.
     This is the entry point called by the subprocess.
     """
+    logging.info(f"[Task {task_id}] Starting Telegram import for identifier: '{identifier}', contact_id: {contact_id}, days: {days_back}")
+    
     # Get or create an event loop for the current thread
     try:
         loop = asyncio.get_running_loop()
@@ -127,9 +151,16 @@ def run_telegram_import(task_id, identifier, contact_id, days_back):
         loop.run_until_complete(
             _async_run_telegram_import(task_id, identifier, contact_id, days_back)
         )
+        logging.info(f"[Task {task_id}] Async import task finished.")
     except Exception as e:
         # Catch-all for any unexpected errors during async execution
-        update_task_status(task_id, "failed", "A critical error occurred in the async runner.", str(e), progress=100)
+        error_msg = f"A critical error occurred in the async runner: {e}"
+        logging.error(f"[Task {task_id}] {error_msg}", exc_info=True)
+        update_task_status(task_id, "failed", "A critical error occurred during the import process.", f"Error: {e.__class__.__name__} - {str(e)}", progress=100)
+    finally:
+        if loop.is_running():
+            loop.close()
+        logging.info(f"[Task {task_id}] Event loop closed.")
 
 
 async def _async_run_telegram_import(task_id, identifier, contact_id, days_back):
@@ -138,25 +169,46 @@ async def _async_run_telegram_import(task_id, identifier, contact_id, days_back)
     """
     update_task_status(task_id, "connecting", "Initializing import...", progress=5)
 
-    client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+    client = None
     try:
-        # Connect with a timeout to prevent hangs
+        client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
         update_task_status(task_id, "connecting", "Connecting to Telegram...", progress=10)
-        await asyncio.wait_for(client.connect(), timeout=45.0)
+        
+        # Connect with a timeout to prevent hangs
+        try:
+            await asyncio.wait_for(client.connect(), timeout=45.0)
+            logging.info(f"[Task {task_id}] Successfully connected to Telegram.")
+        except asyncio.TimeoutError:
+            raise ConnectionError("Connection to Telegram timed out after 45 seconds.")
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to Telegram: {e}")
 
         if not await client.is_user_authorized():
+            logging.error(f"[Task {task_id}] Telegram session is not authorized.")
             update_task_status(task_id, "failed", "Telegram authentication required.",
-                               "Session is not authorized. You may need to run an interactive script once to log in.", progress=100)
+                               "Session is not authorized. Run an interactive script to log in.", progress=100)
             return
 
         update_task_status(task_id, "fetching", f"Finding contact '{identifier}'...", progress=20)
-        entity = await client.get_entity(identifier)
+        try:
+            entity = await client.get_entity(identifier)
+            logging.info(f"[Task {task_id}] Found entity for '{identifier}': {entity.id}")
+        except ValueError:
+             # This error is often thrown for incorrect usernames or non-existent entities.
+            raise ValueError(f"Could not find user or channel '{identifier}'. Please check the username/handle.")
+        except Exception as e:
+            raise RuntimeError(f"An unexpected error occurred while fetching entity '{identifier}': {e}")
+
 
         conn = get_db_connection()
+        if not conn:
+            raise sqlite3.OperationalError("Could not establish database connection to fetch last sync time.")
+            
         try:
             cursor = conn.execute('SELECT telegram_last_sync FROM contacts WHERE id = ?', (contact_id,))
             result = cursor.fetchone()
             last_sync_timestamp = result['telegram_last_sync'] if result and result['telegram_last_sync'] else None
+            logging.info(f"[Task {task_id}] Last sync for contact {contact_id} was: {last_sync_timestamp}")
         finally:
             conn.close()
         
@@ -164,57 +216,96 @@ async def _async_run_telegram_import(task_id, identifier, contact_id, days_back)
             since_date = datetime.fromisoformat(last_sync_timestamp)
             status_msg = f"Fetching new messages since last sync: {since_date.strftime('%Y-%m-%d %H:%M')}..."
         else:
-            since_date = datetime.now() - timedelta(days=days_back)
+            since_date = datetime.now() - timedelta(days=int(days_back))
             status_msg = f"Fetching messages from last {days_back} days..."
         update_task_status(task_id, "fetching", status_msg, progress=30)
 
         transcript = []
         message_count = 0
-        # Add a reasonable limit to prevent fetching too many messages
-        async for message in client.iter_messages(entity, offset_date=since_date, reverse=True, limit=2000):
-            if message.text:
-                sender_name = "Me" if message.out else (entity.first_name or entity.username or str(entity.id))
-                formatted_message = f"[{message.date.strftime('%Y-%m-%d %H:%M')}] {sender_name}: {message.text}"
-                transcript.append(formatted_message)
-                message_count += 1
-                if message_count % 20 == 0:
-                    update_task_status(task_id, "fetching", f"Fetched {message_count} messages...", progress=min(80, 30 + (message_count // 50)))
+        total_fetched = 0
+        limit = 2000 # Safety limit
+        
+        update_task_status(task_id, "fetching", "Starting message retrieval...", progress=35)
+        
+        try:
+            # Add a reasonable limit to prevent fetching too many messages
+            async for message in client.iter_messages(entity, offset_date=since_date, reverse=True, limit=limit):
+                total_fetched += 1
+                if message and message.text:
+                    sender_name = "Me" if message.out else (entity.first_name or entity.username or str(entity.id))
+                    formatted_message = f"[{message.date.strftime('%Y-%m-%d %H:%M')}] {sender_name}: {message.text}"
+                    transcript.append(formatted_message)
+                    message_count += 1
+                    
+                    if message_count % 20 == 0:
+                        progress = min(80, 35 + int((total_fetched / limit) * 45))
+                        update_task_status(task_id, "fetching", f"Fetched {message_count} messages...", progress=progress)
+
+            logging.info(f"[Task {task_id}] Fetched a total of {message_count} messages with text content.")
+
+        except UserNotParticipantError:
+            raise PermissionError(f"You are not a participant of the chat with '{identifier}'. Cannot fetch messages.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while fetching messages for '{identifier}': {e}")
+
 
         if not transcript:
             update_task_status(task_id, "completed", "No new messages found.", progress=100)
+            logging.info(f"[Task {task_id}] No new messages to process for '{identifier}'.")
             return
 
         full_transcript = "\n".join(transcript)
         update_task_status(task_id, "processing", f"Sending {message_count} messages for AI analysis...", progress=85)
+        logging.info(f"[Task {task_id}] Sending {message_count} messages for analysis.")
 
-        headers = {'Authorization': f'Bearer {KITH_API_TOKEN}', 'Content-Type': 'application/json'}
-        payload = {'contact_id': contact_id, 'transcript': full_transcript}
-        
-        response = requests.post(f"{KITH_API_URL}/api/process-transcript", headers=headers, json=payload, timeout=300)
+        try:
+            headers = {'Authorization': f'Bearer {KITH_API_TOKEN}', 'Content-Type': 'application/json'}
+            payload = {'contact_id': contact_id, 'transcript': full_transcript}
+            
+            response = requests.post(f"{KITH_API_URL}/api/process-transcript", headers=headers, json=payload, timeout=300)
+            response.raise_for_status() # Raise an exception for bad status codes
 
-        if response.status_code == 200:
-            conn = get_db_connection()
+            logging.info(f"[Task {task_id}] Successfully processed transcript via API.")
+        except requests.exceptions.RequestException as e:
+            error_details = f"API request failed: {e}. "
+            if e.response:
+                error_details += f"Status: {e.response.status_code}, Body: {e.response.text}"
+            raise ConnectionError(error_details)
+        except Exception as e:
+            raise RuntimeError(f"An unexpected error occurred during API call: {e}")
+
+
+        conn = get_db_connection()
+        if not conn:
+            # Log the error but don't fail the entire task, as processing is complete.
+            logging.error(f"[Task {task_id}] Could not connect to DB to update last_sync, but import was successful.")
+        else:
             try:
                 # Use ISO format for timezone-aware compatibility
                 conn.execute('UPDATE contacts SET telegram_last_sync = ? WHERE id = ?', (datetime.now().isoformat(), contact_id))
                 conn.commit()
+                logging.info(f"[Task {task_id}] Successfully updated last_sync for contact {contact_id}.")
+            except Exception as e:
+                logging.error(f"[Task {task_id}] Failed to update last_sync timestamp for contact {contact_id}: {e}", exc_info=True)
             finally:
                 conn.close()
-            update_task_status(task_id, "completed", f"Successfully imported and analyzed {message_count} messages.", progress=100)
-        else:
-            error_detail = response.text
-            try:
-                error_detail = response.json().get('error', response.text)
-            except:
-                pass
-            update_task_status(task_id, "failed", f"API processing failed: HTTP {response.status_code}", error_detail, progress=100)
+                
+        update_task_status(task_id, "completed", f"Successfully imported and analyzed {message_count} messages.", progress=100)
 
-    except asyncio.TimeoutError:
-        update_task_status(task_id, "failed", "Connection to Telegram timed out.", "Could not connect to Telegram servers within 45 seconds.", progress=100)
-    except ValueError as e:
-        update_task_status(task_id, "failed", f"Could not find user '{identifier}'", f"Telegram entity not found: {str(e)}", progress=100)
+    except (ValueError, PermissionError) as e:
+        # User-facing errors (e.g., bad username, not in chat)
+        logging.warning(f"[Task {task_id}] Import failed with a user-correctable error: {e}")
+        update_task_status(task_id, "failed", str(e), str(e), progress=100)
+    except (ConnectionError, sqlite3.OperationalError) as e:
+        # System-level errors (e.g., can't connect to Telegram/DB)
+        logging.error(f"[Task {task_id}] Import failed due to a connection or database error: {e}", exc_info=True)
+        update_task_status(task_id, "failed", "A system error occurred.", str(e), progress=100)
     except Exception as e:
-        update_task_status(task_id, "failed", "An unexpected error occurred during import.", str(e), progress=100)
+        # All other unexpected errors
+        logging.critical(f"[Task {task_id}] An unexpected critical error occurred during import: {e}", exc_info=True)
+        update_task_status(task_id, "failed", "An unexpected error occurred.", str(e), progress=100)
     finally:
-        if client.is_connected():
-            await client.disconnect() 
+        if client and client.is_connected():
+            await client.disconnect()
+            logging.info(f"[Task {task_id}] Disconnected from Telegram.")
+        logging.info(f"[Task {task_id}] Import task for '{identifier}' concluded.") 

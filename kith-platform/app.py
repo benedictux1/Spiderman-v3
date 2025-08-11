@@ -7,6 +7,7 @@ import chromadb
 import vobject
 import uuid
 import re
+import typing
 import csv
 from io import StringIO
 from flask import Flask, request, jsonify, render_template, Response
@@ -29,6 +30,10 @@ import time
 load_dotenv()
 app = Flask(__name__)
 
+# Ensure templates and static assets reflect latest changes during dev
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -48,8 +53,43 @@ chroma_client = chromadb.PersistentClient(path="./chroma_db")
 # Configure Scheduler
 scheduler = APScheduler()
 
-# Initialize database
-init_db()
+# Initialize database after all functions are defined
+# init_db()  # Commented out - causing NameError
+# ensure_runtime_migrations()  # Commented out - causing NameError
+
+def ensure_runtime_migrations():
+    try:
+        conn = get_db_connection()
+        try:
+            # Ensure contact_audit_log exists
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS contact_audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contact_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    event_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    before_state TEXT,
+                    after_state TEXT,
+                    raw_input TEXT,
+                    FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_contact_time ON contact_audit_log(contact_id, event_timestamp DESC)')
+            # Ensure raw_notes has tags column
+            try:
+                cols = [row[1] for row in conn.execute('PRAGMA table_info(raw_notes)').fetchall()]
+                if 'tags' not in cols:
+                    conn.execute('ALTER TABLE raw_notes ADD COLUMN tags TEXT')
+            except Exception:
+                pass
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Runtime migrations failed: {e}")
 
 # Initialize analytics
 analytics = RelationshipAnalytics()
@@ -69,9 +109,11 @@ IMPORT_TASK_LOCK = threading.Lock()  # Lock for import task operations
 CONTACT_CREATION_LOCK = threading.Lock()  # Lock for contact creation
 
 # Simplified database connection
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
+
 def get_db_connection():
     """Get database connection with basic timeout."""
-    conn = sqlite3.connect(DEFAULT_DB_NAME, timeout=30.0)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.row_factory = sqlite3.Row
     return conn
@@ -89,9 +131,13 @@ def init_db():
                 telegram_id TEXT,
                 telegram_username TEXT,
                 telegram_phone TEXT,
+                telegram_handle TEXT,
                 is_verified BOOLEAN DEFAULT FALSE,
                 is_premium BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER,
+                vector_collection_id TEXT,
                 telegram_last_sync TIMESTAMP
             )
         ''')
@@ -136,6 +182,45 @@ def init_db():
                 FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE
             )
         ''')
+
+        # Ensure raw_notes table exists (needed by /api/contact/<id>/raw-logs)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS raw_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tags TEXT,
+                FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Migration: ensure raw_notes has 'tags' column for detailed payloads
+        try:
+            cur = conn.execute("PRAGMA table_info(raw_notes)")
+            rn_cols = [row[1] for row in cur.fetchall()]
+            if 'tags' not in rn_cols:
+                conn.execute('ALTER TABLE raw_notes ADD COLUMN tags TEXT')
+        except Exception as raw_notes_mig_err:
+            print(f"⚠️ raw_notes migration warning: {raw_notes_mig_err}")
+
+        # Ensure contact_audit_log table exists (immutable ledger)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS contact_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                before_state TEXT,
+                after_state TEXT,
+                raw_input TEXT,
+                FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_contact_time ON contact_audit_log(contact_id, event_timestamp DESC)')
         
         # NOTE: All migration logic for synthesized_entries has been removed and handled by the database_surgeon.py script.
         # The schema is now assumed to be correct upon application start.
@@ -150,6 +235,8 @@ def init_db():
                 conn.execute("ALTER TABLE contacts ADD COLUMN telegram_username TEXT")
             if 'telegram_phone' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN telegram_phone TEXT")
+            if 'telegram_handle' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN telegram_handle TEXT")
             if 'is_verified' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN is_verified BOOLEAN DEFAULT FALSE")
             if 'is_premium' not in contact_columns:
@@ -160,6 +247,11 @@ def init_db():
                 conn.execute("ALTER TABLE contacts ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
             if 'telegram_last_sync' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN telegram_last_sync TIMESTAMP")
+            if 'user_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN user_id INTEGER")
+                conn.execute("UPDATE contacts SET user_id = 1 WHERE user_id IS NULL")
+            if 'vector_collection_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN vector_collection_id TEXT")
         except Exception as contacts_mig_err:
             print(f"⚠️ Contacts migration warning: {contacts_mig_err}")
 
@@ -203,6 +295,33 @@ def init_db():
     except Exception as e:
         logger.error(f"❌ Error initializing database: {e}")
         raise e
+
+def log_audit_event(contact_id: int, user_id: int, event_type: str, source: str,
+                    before_state: typing.Optional[dict] = None,
+                    after_state: typing.Optional[dict] = None,
+                    raw_input: typing.Optional[str] = None) -> None:
+    """Append an immutable audit log row for a contact."""
+    try:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                'INSERT INTO contact_audit_log (contact_id, user_id, event_type, source, before_state, after_state, raw_input) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (
+                    contact_id,
+                    user_id,
+                    sanitize_text(event_type or ''),
+                    sanitize_text(source or ''),
+                    json.dumps(before_state) if before_state is not None else None,
+                    json.dumps(after_state) if after_state is not None else None,
+                    raw_input
+                )
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        logger.info(f"Audit event logged for contact {contact_id}: {event_type}")
+    except Exception as e:
+        logger.error(f"CRITICAL: Failed to log audit event: {e}")
 
 # Initialize scheduler after app creation
 scheduler.init_app(app)
@@ -436,6 +555,16 @@ def health_check():
         "version": "1.0.0"
     })
 
+@app.after_request
+def add_no_cache_headers(response):
+    try:
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    except Exception:
+        pass
+    return response
+
 @app.route('/api/contacts', methods=['GET'])
 def get_contacts():
     """Get all contacts."""
@@ -445,14 +574,21 @@ def get_contacts():
             # Optimized query with user filtering and limit
             limit = min(int(request.args.get('limit', 1000)), 1000)  # Max 1000 contacts
             offset = max(int(request.args.get('offset', 0)), 0)
-            
-            cursor = conn.execute('''
+            tier_param = request.args.get('tier')
+            params = [1]
+            where_clause = 'WHERE user_id = ?'
+            if tier_param and tier_param.isdigit():
+                where_clause += ' AND tier = ?'
+                params.append(int(tier_param))
+
+            params.extend([limit, offset])
+            cursor = conn.execute(f'''
                 SELECT id, full_name, tier, telegram_username, is_verified, is_premium, created_at
                 FROM contacts 
-                WHERE user_id = 1 
+                {where_clause}
                 ORDER BY full_name COLLATE NOCASE
                 LIMIT ? OFFSET ?
-            ''', (limit, offset))
+            ''', params)
             contacts = [dict(row) for row in cursor.fetchall()]
             
             return jsonify(contacts)
@@ -768,22 +904,28 @@ def get_raw_logs_for_contact(contact_id):
             if not cursor.fetchone():
                 return jsonify({"error": "Contact not found"}), 404
             
-            # Get all raw notes for this contact
+            # Get all raw notes for this contact, include tags for details
             cursor = conn.execute('''
-                SELECT content, created_at 
+                SELECT content, created_at, tags 
                 FROM raw_notes 
                 WHERE contact_id = ? 
                 ORDER BY created_at DESC
             ''', (contact_id,))
             
             raw_logs = cursor.fetchall()
-            formatted_logs = [
-                {
-                    "content": log['content'], 
-                    "date": log['created_at']
-                } 
-                for log in raw_logs
-            ]
+            formatted_logs = []
+            for log in raw_logs:
+                details = None
+                try:
+                    if log['tags']:
+                        details = json.loads(log['tags'])
+                except Exception:
+                    details = None
+                formatted_logs.append({
+                    "content": log['content'],
+                    "date": log['created_at'],
+                    "details": details
+                })
             
             return jsonify(formatted_logs)
         finally:
@@ -892,7 +1034,8 @@ def process_note_endpoint():
             return jsonify(normalize_ai_output(mock))
 
         try:
-            response = openai.ChatCompletion.create(
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
                 model=DEFAULT_OPENAI_MODEL,
                 messages=[{"role": "user", "content": master_prompt}],
                 max_tokens=DEFAULT_MAX_TOKENS,
@@ -929,6 +1072,8 @@ def save_synthesis_endpoint():
         contact_id = data.get('contact_id')
         raw_note_text = data.get('raw_note')
         synthesis_data = data.get('synthesis')
+        ai_synthesis = data.get('ai_synthesis')
+        user_edited_synthesis = data.get('user_edited_synthesis')
         
         if not contact_id or not synthesis_data:
             return jsonify({"error": "Missing required data"}), 400
@@ -936,6 +1081,18 @@ def save_synthesis_endpoint():
         try:
             conn = get_db_connection()
             try:
+                # Log the raw note with full details
+                if isinstance(raw_note_text, str) and raw_note_text.strip():
+                    tags_obj = {
+                        "type": "manual_note",
+                        "raw_note": raw_note_text.strip(),
+                        "categorized_updates": synthesis_data.get('categorized_updates', [])
+                    }
+                    conn.execute(
+                        'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                        (contact_id, 'Manual note analyzed and saved', json.dumps(tags_obj), datetime.now().isoformat())
+                    )
+
                 # Save synthesized entries
                 for category_data in synthesis_data.get('categorized_updates', []):
                     for detail in category_data.get('details', []):
@@ -946,6 +1103,43 @@ def save_synthesis_endpoint():
                 conn.commit()
             finally:
                 conn.close()
+
+            # Audit logging
+            try:
+                user_id = 1
+                if ai_synthesis:
+                    log_audit_event(
+                        contact_id=contact_id,
+                        user_id=user_id,
+                        event_type='AI_ANALYSIS_CREATED',
+                        source='AI_ANALYSIS',
+                        before_state=None,
+                        after_state=ai_synthesis,
+                        raw_input=raw_note_text
+                    )
+                if ai_synthesis and user_edited_synthesis and ai_synthesis != user_edited_synthesis:
+                    log_audit_event(
+                        contact_id=contact_id,
+                        user_id=user_id,
+                        event_type='SYNTHESIS_EDITED',
+                        source='MANUAL_USER',
+                        before_state=ai_synthesis,
+                        after_state=user_edited_synthesis,
+                        raw_input=None
+                    )
+                if not ai_synthesis and not user_edited_synthesis:
+                    # Fallback: single note added record
+                    log_audit_event(
+                        contact_id=contact_id,
+                        user_id=1,
+                        event_type='NOTE_ADDED',
+                        source='MANUAL_USER',
+                        before_state=None,
+                        after_state=synthesis_data,
+                        raw_input=raw_note_text
+                    )
+            except Exception:
+                pass
             return jsonify({"status": "success", "message": "Analysis saved successfully."})
         except sqlite3.OperationalError as e:
             if "no such column: content" in str(e):
@@ -960,6 +1154,16 @@ def save_synthesis_endpoint():
                     # Retry the operation
                     conn = get_db_connection()
                     try:
+                        if isinstance(raw_note_text, str) and raw_note_text.strip():
+                            tags_obj = {
+                                "type": "manual_note",
+                                "raw_note": raw_note_text.strip(),
+                                "categorized_updates": synthesis_data.get('categorized_updates', [])
+                            }
+                            conn.execute(
+                                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                                (contact_id, 'Manual note analyzed and saved', json.dumps(tags_obj), datetime.now().isoformat())
+                            )
                         for category_data in synthesis_data.get('categorized_updates', []):
                             for detail in category_data.get('details', []):
                                 conn.execute(
@@ -970,6 +1174,16 @@ def save_synthesis_endpoint():
                     finally:
                         conn.close()
                     logger.info("✅ On-the-fly migration successful. Manual analysis saved.")
+                    try:
+                        user_id = 1
+                        if ai_synthesis:
+                            log_audit_event(contact_id, user_id, 'AI_ANALYSIS_CREATED', 'AI_ANALYSIS', None, ai_synthesis, raw_note_text)
+                        if ai_synthesis and user_edited_synthesis and ai_synthesis != user_edited_synthesis:
+                            log_audit_event(contact_id, user_id, 'SYNTHESIS_EDITED', 'MANUAL_USER', ai_synthesis, user_edited_synthesis, None)
+                        if not ai_synthesis and not user_edited_synthesis:
+                            log_audit_event(contact_id, user_id, 'NOTE_ADDED', 'MANUAL_USER', None, synthesis_data, raw_note_text)
+                    except Exception:
+                        pass
                     return jsonify({"status": "success", "message": "Analysis saved successfully after migration."})
                 except Exception as retry_e:
                     logger.error(f"❌ Error saving manual analysis even after migration attempt: {retry_e}")
@@ -1066,16 +1280,21 @@ def process_transcript_endpoint():
             return jsonify({"error": "Missing transcript or contact_id"}), 400
 
         # --- RAG PIPELINE ---
-        collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
-        collection = chroma_client.get_or_create_collection(name=collection_name)
-        query_text = " ".join(transcript.split()[:30])
-        results = collection.query(query_texts=[query_text], n_results=3)
-        retrieved_history = "\n---\n".join(results['documents'][0]) if results['documents'] else "No relevant history found."
+        try:
+            collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+            collection = chroma_client.get_or_create_collection(name=collection_name)
+            query_text = " ".join(transcript.split()[:30])
+            results = collection.query(query_texts=[query_text], n_results=3)
+            retrieved_history = "\n---\n".join(results['documents'][0]) if results['documents'] else "No relevant history found."
+        except Exception as rag_err:
+            logger.warning(f"RAG pipeline unavailable, proceeding without retrieved history: {rag_err}")
+            retrieved_history = "No relevant history found."
 
         master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=transcript, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
         
         try:
-            response = openai.ChatCompletion.create(
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
                 model=DEFAULT_OPENAI_MODEL,
                 messages=[{"role": "user", "content": master_prompt}],
                 max_tokens=DEFAULT_MAX_TOKENS,
@@ -1101,7 +1320,7 @@ def process_transcript_endpoint():
         
         normalized = normalize_ai_output(ai_json_response)
 
-        # Auto-save the analysis
+        # Auto-save the analysis and log raw transcript + AI output
         try:
             with get_db_connection() as conn:
                 for category_data in normalized.get('categorized_updates', []):
@@ -1110,8 +1329,22 @@ def process_transcript_endpoint():
                             'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
                             (contact_id, category_data['category'], detail)
                         )
-        
+                # Log raw transcript with categorized result
+                tags_obj = {
+                    "type": "telegram_sync",
+                    "transcript": transcript,
+                    "categorized_updates": normalized.get('categorized_updates', [])
+                }
+                conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+                    contact_id, 'Telegram transcript processed and saved', json.dumps(tags_obj), datetime.now().isoformat()
+                ))
+ 
             logger.info(f"✅ Successfully processed and saved transcript for contact {contact_id}")
+            try:
+                log_audit_event(contact_id, 1, 'TELEGRAM_SYNC_APPLIED', 'TELEGRAM_IMPORT', None, {"message_count": transcript.count('\n') + 1}, transcript)
+                log_audit_event(contact_id, 1, 'AI_ANALYSIS_CREATED', 'AI_ANALYSIS', None, normalized, transcript)
+            except Exception:
+                pass
             return jsonify({
                 "status": "success", 
                 "message": "Transcript processed and saved successfully",
@@ -1129,6 +1362,14 @@ def process_transcript_endpoint():
                                     'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
                                     (contact_id, category_data['category'], detail)
                                 )
+                        tags_obj = {
+                            "type": "telegram_sync",
+                            "transcript": transcript,
+                            "categorized_updates": normalized.get('categorized_updates', [])
+                        }
+                        conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+                            contact_id, 'Telegram transcript processed and saved', json.dumps(tags_obj), datetime.now().isoformat()
+                        ))
                     return jsonify({
                         "status": "success", 
                         "message": "Transcript processed and saved successfully after migration.",
@@ -1178,9 +1419,9 @@ def start_telegram_import():
             conn = get_db_connection()
             try:
                 conn.execute('''
-                    INSERT INTO import_tasks (id, user_id, contact_id, status, status_message)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (task_id, 1, contact_id, 'pending', 'Task created, waiting to start...'))
+                    INSERT INTO import_tasks (id, user_id, contact_id, task_type, status, status_message)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (task_id, 1, contact_id, 'telegram_import', 'pending', 'Task created, waiting to start...'))
                 conn.commit()
             finally:
                 conn.close()
@@ -1192,9 +1433,19 @@ def start_telegram_import():
         def run_import_subprocess():
             """Run the import in a subprocess to avoid threading issues."""
             try:
+                # Determine the correct python executable from the virtualenv
+                # This makes the assumption that the venv is in the project root.
+                project_root = os.path.dirname(os.path.abspath(__file__))
+                python_executable = os.path.join(project_root, '.venv', 'bin', 'python')
+
+                # Fallback to sys.executable if venv python not found
+                if not os.path.exists(python_executable):
+                    python_executable = sys.executable
+
                 # Create a simple script to run the import
                 script_content = f'''
 import sys
+import os
 sys.path.insert(0, "{os.path.dirname(os.path.abspath(__file__))}")
 from telegram_worker import run_telegram_import
 run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 'None'}, {days_back})
@@ -1202,7 +1453,7 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 
                 
                 # Write script to temp file
                 import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
                     f.write(script_content)
                     script_path = f.name
                 
@@ -1214,8 +1465,8 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 
                 env['KITH_API_TOKEN'] = os.getenv('KITH_API_TOKEN', 'dev_token')
                 
                 process = subprocess.Popen([
-                    sys.executable, script_path
-                ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    python_executable, script_path
+                ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
                 
                 try:
                     stdout, stderr = process.communicate(timeout=600)  # 10 minute timeout
@@ -1223,7 +1474,7 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-                    stdout, stderr, result_code = '', 'Timeout', 1
+                    stdout, stderr, result_code = '', 'Timeout expired after 10 minutes.', 1
                 
                 # Clean up temp file
                 try:
@@ -1234,43 +1485,59 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 
                 conn = get_db_connection()
                 try:
                     if result_code != 0:
+                        error_details = f"Subprocess failed with code {result_code}.\n"
+                        if stdout:
+                            error_details += f"--- STDOUT ---\n{stdout}\n"
+                        if stderr:
+                            error_details += f"--- STDERR ---\n{stderr}\n"
+                        
                         conn.execute('''
                             UPDATE import_tasks 
                             SET status = ?, status_message = ?, error_details = ?
                             WHERE id = ?
-                        ''', ('failed', 'Import process failed', stderr, task_id))
+                        ''', ('failed', 'Import process exited unexpectedly', error_details, task_id))
                     else:
-                        conn.execute('''
-                            UPDATE import_tasks 
-                            SET status = ?, status_message = ?, progress = 100, completed_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        ''', ('completed', 'Import completed', task_id))
+                        # Final check: if status is still running, it means the worker finished
+                        # but didn't set a final state. Mark as completed.
+                        current_status_row = conn.execute('SELECT status FROM import_tasks WHERE id = ?', (task_id,)).fetchone()
+                        if current_status_row and current_status_row['status'] not in ['completed', 'failed']:
+                            conn.execute('''
+                                UPDATE import_tasks 
+                                SET status = ?, status_message = ?, completed_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            ''', ('completed', 'Import process finished.', task_id))
+                            
                     conn.commit()
                 finally:
                     conn.close()
+
             except Exception as e:
+                # This outer catch is for errors in setting up the subprocess itself
+                conn = get_db_connection()
                 try:
-                    conn = get_db_connection()
                     conn.execute('''
                         UPDATE import_tasks 
-                        SET status = ?, status_message = ?, error_details = ?
+                        SET status = 'failed', status_message = 'Failed to start subprocess', error_details = ?
                         WHERE id = ?
-                    ''', ('failed', 'Subprocess execution error', str(e), task_id))
+                    ''', (str(e), task_id))
                     conn.commit()
+                finally:
                     conn.close()
-                except:
-                    pass
-        
+
+        # Execute in a background thread to avoid blocking the request
         import threading
         thread = threading.Thread(target=run_import_subprocess)
-        thread.daemon = True
         thread.start()
-
-        return jsonify({"task_id": task_id, "status": "pending"}), 202
         
-    except Exception as e:
-        return jsonify({"error": f"Failed to start import: {e}"}), 500
+        return jsonify({
+            "success": True, 
+            "message": "Telegram import started.",
+            "task_id": task_id
+        })
 
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+        
 @app.route('/api/telegram/import-status/<task_id>', methods=['GET'])
 def get_import_status(task_id):
     """Polls for the status of a background import task."""
@@ -1336,65 +1603,472 @@ def get_or_create_contact_by_identifier(identifier):
 
 @app.route('/api/export/csv', methods=['GET'])
 def export_all_data_csv():
-    """Streams all contact data, raw notes, and synthesized entries as a CSV file."""
+    """Streams all user data as a single, comprehensive CSV file using a Record-Type CSV format."""
     def generate_csv():
-        # Use StringIO to build the CSV in memory
         output = StringIO()
         writer = csv.writer(output)
-
-        # Define Header Row
+        # Master header covering all record types
         header = [
-            'Contact ID', 'Contact Full Name', 'Contact Tier',
-            'Category', 'Detail/Fact', 'AI Confidence', 'Entry Date',
-            'Source Note ID', 'Raw Note Content', 'Raw Note Date'
+            'record_type', 'record_id', 'contact_id', 'contact_full_name', 'contact_tier',
+            'category', 'detail_content', 'raw_note_content',
+            'log_event_type', 'log_source', 'log_timestamp', 'log_before_state', 'log_after_state', 'log_raw_input'
         ]
         writer.writerow(header)
-        yield output.getvalue()
-        output.seek(0)
-        output.truncate(0)
+        yield output.getvalue(); output.seek(0); output.truncate(0)
 
-        # Single efficient SQL query that JOINS contacts, synthesized_entries, and raw_notes
         try:
             with get_db_connection() as conn:
-                cursor = conn.execute('''
-                    SELECT 
-                        c.id as contact_id,
-                        c.full_name,
-                        c.tier,
-                        se.category,
-                        se.content as detail_fact,
-                        se.confidence_score as ai_confidence,
-                        se.created_at as entry_date,
-                        '' as source_note_id,
-                        '' as raw_note_content,
-                        '' as raw_note_date
-                    FROM contacts c
-                    LEFT JOIN synthesized_entries se ON c.id = se.contact_id
-                    WHERE c.user_id = 1
-                    ORDER BY c.id, se.created_at DESC
+                # CONTACT rows
+                cur = conn.execute('''
+                    SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = 1 ORDER BY id
                 ''')
-                
-                for row in cursor:
+                for row in cur:
                     writer.writerow([
-                        row['contact_id'], row['full_name'], row['tier'],
-                        row['category'] or '', row['detail_fact'] or '', 
-                        row['ai_confidence'] or '', row['entry_date'] or '',
-                        row['source_note_id'] or '', row['raw_note_content'] or '', 
-                        row['raw_note_date'] or ''
+                        'CONTACT', row['id'], row['id'], row['full_name'], row['tier'],
+                        '', '', '', '', '', row['created_at'] or '', '', '', ''
                     ])
-                    yield output.getvalue()
-                    output.seek(0)
-                    output.truncate(0)
-        except Exception as e:
-            logger.error(f"Error generating CSV: {e}")
-            writer.writerow(['ERROR', f'Failed to export data: {e}', '', '', '', '', '', '', '', ''])
-            yield output.getvalue()
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
 
-    # Create a streaming response
+                # SYNTHESIZED_DETAIL rows
+                cur = conn.execute('''
+                    SELECT se.id as se_id, se.contact_id, c.full_name, c.tier, se.category, se.content, se.created_at as created_at
+                    FROM synthesized_entries se
+                    JOIN contacts c ON c.id = se.contact_id
+                    WHERE c.user_id = 1
+                    ORDER BY se.id
+                ''')
+                for row in cur:
+                    writer.writerow([
+                        'SYNTHESIZED_DETAIL', row['se_id'], row['contact_id'], row['full_name'], row['tier'],
+                        row['category'], row['content'], '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # RAW_NOTE rows (include extracted raw content from tags when available)
+                cur = conn.execute('''
+                    SELECT rn.id as rn_id, rn.contact_id, c.full_name, c.tier, rn.content as note_summary, rn.tags, rn.created_at
+                    FROM raw_notes rn
+                    JOIN contacts c ON c.id = rn.contact_id
+                    WHERE c.user_id = 1
+                    ORDER BY rn.id
+                ''')
+                for row in cur:
+                    raw_content = ''
+                    try:
+                        if row['tags']:
+                            t = json.loads(row['tags'])
+                            if isinstance(t, dict):
+                                # Prefer raw_note if present, else transcript for telegram, otherwise stringify tags
+                                raw_content = t.get('raw_note') or t.get('transcript') or ''
+                                if not raw_content:
+                                    raw_content = json.dumps(t, ensure_ascii=False)
+                    except Exception:
+                        raw_content = ''
+                    writer.writerow([
+                        'RAW_NOTE', row['rn_id'], row['contact_id'], row['full_name'], row['tier'],
+                        '', '', raw_content or row['note_summary'] or '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # AUDIT_LOG rows
+                cur = conn.execute('''
+                    SELECT id, contact_id, event_type, source, event_timestamp, before_state, after_state, raw_input
+                    FROM contact_audit_log
+                    WHERE user_id = 1
+                    ORDER BY id
+                ''')
+                for row in cur:
+                    writer.writerow([
+                        'AUDIT_LOG', row['id'], row['contact_id'], '', '',
+                        '', '', '',
+                        row['event_type'] or '', row['source'] or '',
+                        row['event_timestamp'] or '',
+                        row['before_state'] or '', row['after_state'] or '', row['raw_input'] or ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+        except Exception as e:
+            # Surface an error row to the CSV for visibility
+            writer.writerow(['ERROR', '', '', '', '', '', '', '', '', '', '', '', '', str(e)])
+            yield output.getvalue(); output.seek(0); output.truncate(0)
+
     response = Response(generate_csv(), mimetype='text/csv')
-    response.headers.set("Content-Disposition", "attachment", filename="kith_export.csv")
+    response.headers.set("Content-Disposition", "attachment", filename="kith_full_export.csv")
     return response
+
+@app.route('/api/contact/<int:contact_id>/categories', methods=['PUT'])
+def replace_contact_categories(contact_id: int):
+    """Replace all synthesized category entries for a contact with provided updates and log the change."""
+    try:
+        payload = request.get_json() or {}
+        updates = payload.get('categorized_updates', [])
+        raw_note = payload.get('raw_note')
+        if not isinstance(updates, list):
+            return jsonify({"error": "categorized_updates must be a list"}), 400
+        # Validate categories and normalize structure
+        cleaned = []
+        for item in updates:
+            cat = canonicalize_category(item.get('category'))
+            details = [sanitize_text(d) for d in (item.get('details') or []) if sanitize_text(d)]
+            if not details:
+                continue
+            cleaned.append({"category": cat, "details": details})
+        conn = get_db_connection()
+        try:
+            # Snapshot before state
+            before = {}
+            cur = conn.execute('SELECT category, content FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+            for row in cur.fetchall():
+                before.setdefault(row['category'], []).append(row['content'])
+
+            # Replace within a transaction
+            conn.execute('BEGIN')
+            conn.execute('DELETE FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+            for item in cleaned:
+                for detail in item['details']:
+                    conn.execute(
+                        'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
+                        (contact_id, item['category'], detail)
+                    )
+            # Snapshot after state
+            after = {}
+            cur2 = conn.execute('SELECT category, content FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+            for row in cur2.fetchall():
+                after.setdefault(row['category'], []).append(row['content'])
+ 
+            # Build dynamic summary for log content based on real changes
+            changed_categories = []
+            added_count = 0
+            removed_count = 0
+            for category in set(list(before.keys()) + list(after.keys())):
+                before_items = before.get(category, []) or []
+                after_items = after.get(category, []) or []
+                if before_items != after_items:
+                    changed_categories.append(category)
+                    added_count += sum(1 for x in after_items if x not in before_items)
+                    removed_count += sum(1 for x in before_items if x not in after_items)
+
+            if changed_categories:
+                if len(changed_categories) == 1:
+                    cats_part = changed_categories[0].replace('_', ' ')
+                    summary = f"Edited 1 category via UI: {cats_part}"
+                else:
+                    preview = ', '.join([c.replace('_', ' ') for c in changed_categories[:3]])
+                    ellipsis = '…' if len(changed_categories) > 3 else ''
+                    summary = f"Edited {len(changed_categories)} categories via UI: {preview}{ellipsis}"
+                summary += f" (+{added_count} added, -{removed_count} removed)"
+            else:
+                summary = 'Saved categories with no changes'
+
+            # Prefer dynamic summary over any client-provided note
+            log_text = summary
+            tags_obj = {"type": "category_edit", "before": before, "after": after}
+            conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+                contact_id, log_text, json.dumps(tags_obj), datetime.now().isoformat()
+            ))
+
+            conn.commit()
+            try:
+                log_audit_event(contact_id, 1, 'SYNTHESIS_EDITED', 'MANUAL_USER', before, after, raw_note)
+            except Exception:
+                pass
+            return jsonify({"status": "success", "message": "Categories updated"})
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to replace categories: {e}")
+        return jsonify({"error": f"Failed to replace categories: {e}"}), 500
+
+@app.route('/api/contact/<int:contact_id>/audit-log', methods=['GET'])
+def get_audit_log_for_contact(contact_id: int):
+    """Fetch complete, ordered audit history for a contact."""
+    try:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute('SELECT event_timestamp, event_type, source, before_state, after_state, raw_input FROM contact_audit_log WHERE contact_id = ? ORDER BY event_timestamp DESC', (contact_id,))
+            rows = cur.fetchall()
+            result = []
+            for r in rows:
+                try:
+                    before_obj = json.loads(r['before_state']) if r['before_state'] else None
+                    after_obj = json.loads(r['after_state']) if r['after_state'] else None
+                except Exception:
+                    before_obj, after_obj = r['before_state'], r['after_state']
+                result.append({
+                    'event_timestamp': r['event_timestamp'],
+                    'event_type': r['event_type'],
+                    'source': r['source'],
+                    'before_state': before_obj,
+                    'after_state': after_obj,
+                    'raw_input': r['raw_input']
+                })
+            return jsonify(result)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to fetch audit log: {e}")
+        return jsonify({"error": f"Failed to fetch audit log: {e}"}), 500
+
+# --- Merge from CSV (non-destructive) ---
+@app.route('/api/import/merge-from-csv', methods=['POST'])
+def merge_from_csv_endpoint():
+    try:
+        if 'backup_file' not in request.files:
+            return jsonify({"error": "No backup file provided"}), 400
+        file = request.files['backup_file']
+        if not file or not file.filename.lower().endswith('.csv'):
+            return jsonify({"error": "Invalid file type. Please upload a .csv file."}), 400
+
+        csv_bytes = file.read()
+        try:
+            csv_text = csv_bytes.decode('utf-8')
+        except Exception:
+            csv_text = csv_bytes.decode('latin-1')
+
+        result = run_merge_process(csv_text)
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("Merge from CSV failed")
+        return jsonify({"error": f"Merge failed: {e}"}), 500
+
+
+def run_merge_process(csv_text: str) -> dict:
+    """Non-destructively merge contacts and synthesized details from CSV text.
+    Supports two CSV formats:
+      1) Simple columns: Contact Full Name, Contact Tier, Category, Detail/Fact, AI Confidence, Entry Date
+      2) Record-type CSV (our export): record_type, contact_full_name, category, detail_content, log_timestamp
+    The parser tolerates truncated or variant header names (e.g., 'contact_full', 'detail_conte').
+    """
+    stats = {
+        "contacts_added": 0, "details_added": 0,
+        "contacts_skipped": 0, "details_skipped": 0,
+        "rows_total": 0, "rows_contact_processed": 0,
+        "rows_synth_processed": 0, "rows_skipped_unknown_type": 0,
+        "rows_skipped_no_name": 0, "rows_skipped_duplicate": 0
+    }
+
+    reader = csv.DictReader(StringIO(csv_text))
+    raw_fieldnames = reader.fieldnames or []
+    fieldnames = [f.strip() for f in raw_fieldnames]
+    rows = list(reader)
+
+    def norm(s: typing.Any) -> str:
+        return (s or '').strip()
+
+    def canon(name: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', (name or '').lower())
+
+    # Build a lookup from canonical header token to actual header
+    canon_to_actual = {canon(h): h for h in fieldnames}
+
+    def has_logical(logical_key: str) -> bool:
+        candidates = {
+            'record_type': ['record_type', 'record_t', 'type']
+        }.get(logical_key, [logical_key])
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return True
+        return False
+
+    def get_val(row: dict, logical_key: str, *, default: str = '') -> str:
+        """Get value from row with flexible header matching."""
+        # Direct mapping for exact matches from user's CSV
+        header_mappings = {
+            'record_type': ['record_type'],
+            'contact_full_name': ['contact_full_name', 'contact_full', 'full_name', 'name'],
+            'contact_tier': ['contact_tier', 'tier'],
+            'category': ['category'],
+            'detail_content': ['detail_content', 'detail_conte', 'content'],
+            'entry_date': ['log_timestamp', 'created_at', 'entry_date', 'timestamp'],
+            'raw_note_content': ['raw_note_content', 'raw_note', 'note_content', 'note']
+        }
+        
+        candidates = header_mappings.get(logical_key, [logical_key])
+        
+        # First try exact matches
+        for header in fieldnames:
+            if header in candidates:
+                return norm(row.get(header, default))
+        
+        # Then try case-insensitive exact matches
+        for header in fieldnames:
+            header_lower = header.lower()
+            for cand in candidates:
+                if header_lower == cand.lower():
+                    return norm(row.get(header, default))
+        
+        # Finally try prefix/substring matching
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return norm(row.get(header, default))
+        
+        return default
+
+    def to_int_or(default: int, val: typing.Any) -> int:
+        try:
+            v = str(val).strip()
+            return int(v) if v else default
+        except Exception:
+            return default
+
+    from datetime import datetime
+    with get_db_connection() as conn:
+        # Load existing contacts for user 1 into a case-insensitive map
+        cur = conn.execute('SELECT id, full_name FROM contacts WHERE COALESCE(user_id, 1) = 1')
+        name_to_contact_id = { (row['full_name'] or '').strip().lower(): row['id'] for row in cur }
+
+        # Load existing synthesized detail signatures per contact_id
+        existing_details_map = {}
+        cur = conn.execute('SELECT contact_id, category, content FROM synthesized_entries')
+        for row in cur:
+            sig = f"{norm(row['category'])}|{norm(row['content'])}"
+            existing_details_map.setdefault(row['contact_id'], set()).add(sig)
+
+        # If record-type CSV, pre-create contacts from CONTACT rows even if no details exist
+        if has_logical('record_type'):
+            for row in rows:
+                stats['rows_total'] += 1
+                if classify_record_type(get_val(row, 'record_type')) != 'CONTACT':
+                    continue
+                name = norm(get_val(row, 'contact_full_name'))
+                if not name:
+                    stats['rows_skipped_no_name'] += 1
+                    continue
+                name_key = name.lower()
+                if name_key in name_to_contact_id:
+                    stats['contacts_skipped'] += 1
+                    continue
+                tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                conn.execute(
+                    'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                    (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
+                )
+                contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                name_to_contact_id[name_key] = contact_id
+                existing_details_map.setdefault(contact_id, set())
+                stats['contacts_added'] += 1
+                stats['rows_contact_processed'] += 1
+
+        # Helper: iterate normalized synthesized-detail rows
+        def iter_normalized_rows():
+            is_record_type = has_logical('record_type')
+            if is_record_type:
+                for row in rows:
+                    rt = classify_record_type(get_val(row, 'record_type'))
+                    if not rt:
+                        stats['rows_skipped_unknown_type'] += 1
+                        continue
+                    if rt != 'SYNTHESIZED_DETAIL':
+                        continue
+                    yield {
+                        'name': norm(get_val(row, 'contact_full_name')),
+                        'tier': get_val(row, 'contact_tier') or '2',
+                        'category': norm(get_val(row, 'category')),
+                        'detail': norm(get_val(row, 'detail_content')),
+                        'confidence': None,
+                        'entry_date': norm(get_val(row, 'log_timestamp')),
+                    }
+            else:
+                for row in rows:
+                    yield {
+                        'name': norm(row.get('Contact Full Name') or row.get('contact_full_name')),
+                        'tier': row.get('Contact Tier') or row.get('contact_tier') or '2',
+                        'category': norm(row.get('Category') or row.get('category')),
+                        'detail': norm(row.get('Detail/Fact') or row.get('detail_content')),
+                        'confidence': row.get('AI Confidence') or row.get('confidence_score'),
+                        'entry_date': norm(row.get('Entry Date') or row.get('created_at')),
+                    }
+
+        # Now process synthesized details (and create contacts on-the-fly if needed)
+        for r in iter_normalized_rows():
+            name = r['name']
+            if not name:
+                stats['rows_skipped_no_name'] += 1
+                continue
+            name_key = name.lower()
+            contact_id = name_to_contact_id.get(name_key)
+            if contact_id is None:
+                tier_val = to_int_or(2, r['tier'])
+                conn.execute(
+                    'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                    (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
+                )
+                contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                name_to_contact_id[name_key] = contact_id
+                existing_details_map.setdefault(contact_id, set())
+                stats['contacts_added'] += 1
+                stats['rows_contact_processed'] += 1
+            else:
+                stats['contacts_skipped'] += 1
+                stats['rows_synth_processed'] += 1
+
+            detail_text = r['detail']
+            category = r['category'] or 'Uncategorized'
+            if not detail_text:
+                continue
+            sig = f"{category}|{detail_text}"
+            if sig in existing_details_map.get(contact_id, set()):
+                stats['details_skipped'] += 1
+                stats['rows_skipped_duplicate'] += 1
+                continue
+
+            confidence_val = None
+            if r['confidence'] not in (None, ''):
+                try:
+                    confidence_val = float(r['confidence'])
+                except ValueError:
+                    confidence_val = None
+
+            created_at_val = None
+            if r['entry_date']:
+                try:
+                    created_at_val = datetime.fromisoformat(r['entry_date'].replace('Z', '+00:00')).isoformat()
+                except Exception:
+                    created_at_val = None
+
+            conn.execute(
+                'INSERT INTO synthesized_entries (contact_id, category, content, confidence_score, created_at) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))',
+                (contact_id, category, detail_text, confidence_val, created_at_val)
+            )
+            existing_details_map[contact_id].add(sig)
+            stats['details_added'] += 1
+            stats['rows_synth_processed'] += 1
+
+        conn.commit()
+
+    return {"status": "success", "message": "Merge complete!", "details": stats}
+
+def classify_record_type(value: str) -> str:
+    """Classify record type with robust matching."""
+    if not value:
+        return ''
+    
+    # Clean and normalize the value
+    v = value.strip().upper()
+    
+    # Direct matches first
+    if v == 'CONTACT':
+        return 'CONTACT'
+    if v == 'SYNTHESIZED_DETAIL':
+        return 'SYNTHESIZED_DETAIL'
+    if v == 'RAW_NOTE':
+        return 'RAW_NOTE'
+        
+    # Partial matches for robustness
+    if 'CONTACT' in v:
+        return 'CONTACT'
+    if 'SYNTHESIZED' in v or 'DETAIL' in v:
+        return 'SYNTHESIZED_DETAIL'
+    if 'RAW' in v and 'NOTE' in v:
+        return 'RAW_NOTE'
+        
+    return ''
 
 # Initialize database on startup
 if __name__ == '__main__':
-    app.run(debug=True, host=DEFAULT_HOST, port=DEFAULT_PORT)
+    app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)

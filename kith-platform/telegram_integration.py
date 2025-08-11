@@ -335,17 +335,33 @@ def setup_telegram_routes(app):
             
             if not api_id or not api_hash:
                 return jsonify({
+                    'authenticated': False,
                     'status': 'not_configured',
                     'message': 'Telegram API credentials not configured'
                 })
             
-            return jsonify({
-                'status': 'configured',
-                'message': 'Telegram integration ready'
-            })
+            # Check if session file exists
+            session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+            session_file = f"{session_name}.session"
+            
+            if os.path.exists(session_file):
+                # Session file exists, assume it's authenticated
+                # (In a production environment, you might want to do a more thorough check)
+                return jsonify({
+                    'authenticated': True,
+                    'status': 'connected',
+                    'message': 'Telegram session authenticated'
+                })
+            else:
+                return jsonify({
+                    'authenticated': False,
+                    'status': 'not_authenticated',
+                    'message': 'Telegram session not found. Please run authentication setup.'
+                })
             
         except Exception as e:
             return jsonify({
+                'authenticated': False,
                 'status': 'error',
                 'message': f'Error checking status: {e}'
             }), 500

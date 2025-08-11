@@ -11,7 +11,23 @@ function setupEventListeners() {
     const addNoteBtn = document.getElementById('profile-add-note-btn');
     if (addNoteBtn) {
         addNoteBtn.addEventListener('click', function() {
-            handleProfileAnalyzeNote();
+            const noteArea = document.getElementById('profile-note-input-area');
+            noteArea.style.display = 'block';
+            document.getElementById('profile-note-input').focus();
+        });
+    }
+
+    // Wire Back to Main buttons
+    const backToMainFromProfileBtn = document.getElementById('back-to-main-from-profile');
+    if (backToMainFromProfileBtn) {
+        backToMainFromProfileBtn.addEventListener('click', function() {
+            showMainView();
+        });
+    }
+    const backToMainFromSettingsBtn = document.getElementById('back-to-main-from-settings');
+    if (backToMainFromSettingsBtn) {
+        backToMainFromSettingsBtn.addEventListener('click', function() {
+            showMainView();
         });
     }
 
@@ -62,6 +78,17 @@ function setupEventListeners() {
     }
 }
 
+// Add missing checkbox listeners for main table
+function setupCheckboxListeners() {
+  const tbody = document.querySelector('#contacts-table tbody');
+  if (!tbody) return;
+  tbody.addEventListener('change', (e) => {
+    if (e.target && e.target.name === 'contact_ids') {
+      updateDeleteSelectedButtonState();
+    }
+  });
+}
+
 // Helper function to get selected contacts
 function getSelectedContacts() {
     const checkboxes = document.querySelectorAll('input[name="contact_ids"]:checked');
@@ -77,13 +104,13 @@ function deleteSelectedContacts(contactIds) {
         },
         body: JSON.stringify({ contact_ids: contactIds })
     })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
+    .then(response => response.json().then(data => ({ ok: response.ok, data })))
+    .then(({ ok, data }) => {
+        if (ok && !data.error) {
             alert(`Successfully deleted ${contactIds.length} contact(s)`);
             loadContacts(); // Reload the contact list
         } else {
-            alert('Error deleting contacts: ' + data.message);
+            alert('Error deleting contacts: ' + (data.error || data.message || 'Unknown error'));
         }
     })
     .catch(error => {
@@ -95,36 +122,39 @@ function deleteSelectedContacts(contactIds) {
 // Helper function to edit contact profile
 function editContactProfile(contactId) {
     // Find the contact data
-    fetch(`/api/contacts/${contactId}`)
+    fetch(`/api/contact/${contactId}`)
     .then(response => response.json())
     .then(contact => {
-        const newName = prompt('Enter new name:', contact.name || '');
-        if (newName !== null && newName.trim() !== '') {
-            // Update the contact
-            fetch(`/api/contact/${contactId}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ 
-                    name: newName.trim(),
-                    telegram_handle: contact.telegram_handle 
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Contact updated successfully');
-                    loadContacts(); // Reload the contact list
-                } else {
-                    alert('Error updating contact: ' + data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('An error occurred while updating contact');
-            });
-        }
+        const newName = prompt('Enter new name:', contact?.contact_info?.full_name || '');
+        const newHandle = prompt('Enter Telegram @username (without @, optional):', contact?.contact_info?.telegram_username || '');
+        if (newName === null && newHandle === null) return;
+        const payload = {};
+        if (newName && newName.trim()) payload.full_name = newName.trim();
+        if (newHandle !== null) payload.telegram_username = (newHandle || '').replace(/^@/, '').trim();
+        if (Object.keys(payload).length === 0) return;
+        // Update the contact
+        fetch(`/api/contact/${contactId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json().then(data => ({ ok: response.ok, data })))
+        .then(({ ok, data }) => {
+            if (ok && !data.error) {
+                alert('Contact updated successfully');
+                loadContacts(); // Reload the contact list
+                loadTier1Contacts();
+                loadTier2Contacts();
+            } else {
+                alert('Error updating contact: ' + (data.error || data.message || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while updating contact');
+        });
     })
     .catch(error => {
         console.error('Error:', error);
@@ -183,6 +213,64 @@ async function loadContactProfile(contactId) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     renderContactProfile(data);
+    // Preload raw logs
+    try {
+        // Prefer the detailed renderer if available
+        if (typeof window.fetchAndRenderRawLogs === 'function') {
+          await window.fetchAndRenderRawLogs(contactId);
+        } else {
+          // Fallback: render with basic table logic
+          const logsRes = await fetch(`/api/contact/${contactId}/raw-logs`);
+          const entries = await logsRes.json();
+          const box = document.getElementById('raw-logs-content');
+          if (!box) return;
+          if (!Array.isArray(entries) || entries.length === 0) {
+            box.innerHTML = '<div class="empty">No history found for this contact.</div>';
+            return;
+          }
+          let html = '<div class="change-history">';
+          entries.forEach(e => {
+            const date = e.date || '';
+            html += `<div class="change-entry">`;
+            html += `<div class="change-header">`;
+            html += `<div class="change-date">${date}</div>`;
+            html += `<div class="change-description">${e.content}</div>`;
+            html += `</div>`;
+            const d = e.details;
+            // Before/After table if present
+            if (d && typeof d === 'object' && !Array.isArray(d) && d.before && d.after) {
+              html += `<div class="change-details">`;
+              const before = d.before || {}; const after = d.after || {};
+              const cats = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+              html += `<h4>📋 Changes Made</h4>`;
+              html += `<table class="comparison-table"><thead><tr><th>Category</th><th>Before</th><th>After</th></tr></thead><tbody>`;
+              cats.forEach(cat => {
+                const b = before[cat] || []; const a = after[cat] || [];
+                if (JSON.stringify(b) === JSON.stringify(a)) return;
+                html += `<tr>`;
+                html += `<td class="category-name"><strong>${cat.replaceAll('_',' ')}</strong></td>`;
+                html += `<td class="before-column">` + (b.length ? b.map(item => `<div class="item-row ${a.includes(item)?'unchanged-item':'removed-item'}">${item}</div>`).join('') : `<em class="empty-state">Nothing</em>`) + `</td>`;
+                html += `<td class="after-column">` + (a.length ? a.map(item => `<div class="item-row ${b.includes(item)?'unchanged-item':'added-item'}">${item}</div>`).join('') : `<em class="empty-state">Nothing</em>`) + `</td>`;
+                html += `</tr>`;
+              });
+              html += `</tbody></table></div>`;
+            } else if (d && typeof d === 'object' && !Array.isArray(d) && Array.isArray(d.categorized_updates)) {
+              html += `<div class="change-details">`;
+              html += `<h4>✏️ Information Added</h4>`;
+              html += `<table class="categorization-table"><thead><tr><th>Category</th><th>New Information</th></tr></thead><tbody>`;
+              d.categorized_updates.forEach(u => {
+                html += `<tr><td class="category-name"><strong>${(u.category||'').replaceAll('_',' ')}</strong></td><td class="items-column">` + (u.details||[]).map(it => `<div class="item-row added-item">${it}</div>`).join('') + `</td></tr>`;
+              });
+              html += `</tbody></table></div>`;
+            } else {
+              html += `<div class="change-details-simple"><p>Basic event - no detailed changes available</p></div>`;
+            }
+            html += `</div>`;
+          });
+          html += '</div>';
+          box.innerHTML = html;
+        }
+      } catch (e) { /* no-op */ }
   } catch (err) {
     console.error('Error loading contact profile:', err);
     alert('Failed to load contact profile.');
@@ -211,7 +299,7 @@ function renderContactProfile(profileData) {
   `;
   container.appendChild(meta);
 
-  // Categories grid
+  // Categories grid with editable textareas (disabled by default)
   const categoriesWrapper = document.createElement('div');
   categoriesWrapper.className = 'categories-grid';
 
@@ -224,21 +312,21 @@ function renderContactProfile(profileData) {
         <h3>${category.replaceAll('_',' ')}</h3>
       </div>
       <div class="card-content">
-        ${items.length === 0 ? '<div class="empty">No entries yet.</div>' : ''}
+        <textarea class="category-edit" data-category="${category}" disabled style="width:100%; min-height: 100px;">${(items || []).join('\n')}</textarea>
       </div>
     `;
-
-    const content = section.querySelector('.card-content');
-    items.forEach(text => {
-      const p = document.createElement('p');
-      p.textContent = text;
-      content.appendChild(p);
-    });
-
     categoriesWrapper.appendChild(section);
   });
 
   container.appendChild(categoriesWrapper);
+
+  // Control Edit/Save button visibility
+  const editAllBtn = document.getElementById('edit-all-categories-btn');
+  const saveAllBtn = document.getElementById('save-all-categories-btn');
+  if (editAllBtn && saveAllBtn) {
+    editAllBtn.style.display = 'inline-block';
+    saveAllBtn.style.display = 'none';
+  }
 }
 
 // Expose for other scripts
@@ -253,12 +341,14 @@ function wireProfileButtons() {
   const syncBtn = document.getElementById('profile-sync-telegram-btn');
   const editBtn = document.getElementById('edit-contact-profile-btn');
   const deleteBtn = document.getElementById('delete-contact-btn');
+  const editAllBtn = document.getElementById('edit-all-categories-btn');
+  const saveAllBtn = document.getElementById('save-all-categories-btn');
 
   if (addBtn) {
     addBtn.onclick = () => {
       const noteArea = document.getElementById('profile-note-input-area');
-      noteArea.style.display = noteArea.style.display === 'none' ? 'block' : 'none';
-      if (noteArea.style.display === 'block') document.getElementById('profile-note-input').focus();
+      noteArea.style.display = 'block';
+      document.getElementById('profile-note-input').focus();
     };
   }
   if (cancelNoteBtn) {
@@ -282,7 +372,6 @@ function wireProfileButtons() {
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        // Auto-save synthesized details
         await fetch('/api/save-synthesis', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -301,6 +390,43 @@ function wireProfileButtons() {
       }
     };
   }
+
+  // Global edit/save for categories
+  if (editAllBtn) {
+    editAllBtn.onclick = () => {
+      document.querySelectorAll('textarea.category-edit').forEach(ta => ta.removeAttribute('disabled'));
+      // toggle buttons
+      editAllBtn.style.display = 'none';
+      if (saveAllBtn) saveAllBtn.style.display = 'inline-block';
+    };
+  }
+  if (saveAllBtn) {
+    saveAllBtn.onclick = async () => {
+      const id = parseInt(document.getElementById('selected-contact-id').value, 10);
+      const payload = { categorized_updates: [], raw_note: 'Edited multiple categories via UI' };
+      document.querySelectorAll('textarea.category-edit').forEach(ta => {
+        const cat = ta.getAttribute('data-category');
+        const lines = ta.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        payload.categorized_updates.push({ category: cat, details: lines });
+      });
+      try {
+        const res = await fetch(`/api/contact/${id}/categories`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const out = await res.json();
+        if (!res.ok || out.error) throw new Error(out.error || out.message || 'Failed to save');
+        await loadContactProfile(id);
+        // after reload, buttons reset via renderContactProfile
+        alert('All categories saved.');
+      } catch (e) {
+        console.error(e);
+        alert('Failed to save all categories: ' + (e.message || e));
+      }
+    };
+  }
+
   if (syncBtn) {
     syncBtn.onclick = async () => {
       const id = parseInt(document.getElementById('selected-contact-id').value, 10);

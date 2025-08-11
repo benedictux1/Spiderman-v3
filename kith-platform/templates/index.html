@@ -8,7 +8,6 @@
 </head>
 <body>
     <div class="container">
-        <h1>Kith Platform</h1>
         
         <!-- Main Input View -->
         <div id="main-view">
@@ -78,6 +77,8 @@
                 <button id="profile-add-note-btn">Add Note</button>
                 <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
                 <button id="edit-contact-profile-btn">Edit Profile Details</button>
+                <button id="edit-all-categories-btn">Edit Notes</button>
+                <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
                 <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
             </div>
 
@@ -98,7 +99,7 @@
             <!-- Raw Log Viewer -->
             <div class="raw-logs-section">
                 <details id="raw-logs-details">
-                    <summary>View Raw Input History</summary>
+                    <summary>View Detailed Change History</summary>
                     <div id="raw-logs-content"></div>
                 </details>
             </div>
@@ -187,7 +188,18 @@
                 <div class="import-export-controls">
                     <label for="vcf-upload">Import vCard:</label>
                     <input type="file" id="vcf-upload" accept=".vcf">
-                    <button id="download-csv-btn">Download All Data as CSV</button>
+                    <a id="download-csv-btn" href="/api/export/csv" download>Download All Data as CSV</a>
+                </div>
+                <div class="restore-area card" style="border-color: #007aff; margin-top: 12px; padding: 10px;">
+                    <h4>Import and Merge from Backup</h4>
+                    <div class="info-box">
+                        <strong>Note:</strong> This tool will add new contacts and details from your CSV file. Existing data will not be deleted or overwritten.
+                    </div>
+                    <form id="merge-form">
+                        <input type="file" id="merge-file-input" accept=".csv" required>
+                        <button type="submit" id="merge-btn">Upload & Merge</button>
+                    </form>
+                    <p id="merge-status"></p>
                 </div>
             </div>
 
@@ -243,8 +255,23 @@
         const API_URL = '/api/process-note';
         const SAVE_URL = '/api/save-synthesis';
         let currentAnalysisData = null;
-        let currentContactId = null;
         let selectedContactName = null;
+
+        // Wire search input
+        document.addEventListener('DOMContentLoaded', () => {
+          const search = document.getElementById('contact-search');
+          if (search) search.addEventListener('input', handleContactSearch);
+        });
+
+        // Normalize analysis response to synthesis array for review UI
+        function transformToSynthesis(data) {
+          const updates = data.categorized_updates || [];
+          return updates.flatMap(u => (u.details || []).map(d => ({
+            category: u.category,
+            content: d,
+            confidence_score: data.confidence_score ?? 10.0
+          })));
+        }
 
         // Note analysis functions
         async function handleAnalyzeNote() {
@@ -274,9 +301,9 @@
                 
                 const data = await response.json();
                 if (data.error) throw new Error(data.error);
-                
                 currentAnalysisData = data;
-                displayReviewCards(data);
+                const synthesis = transformToSynthesis(data);
+                displayReviewCards({ synthesis });
                 showReviewView();
                 
             } catch (error) {
@@ -315,9 +342,9 @@
                 
                 const data = await response.json();
                 if (data.error) throw new Error(data.error);
-                
                 currentAnalysisData = data;
-                displayReviewCards(data);
+                const synthesis = transformToSynthesis(data);
+                displayReviewCards({ synthesis });
                 showReviewView();
                 
                 noteInput.value = '';
@@ -375,10 +402,9 @@
             }
             
             const editedCards = document.querySelectorAll('.content-edit');
+            const synthesis = transformToSynthesis(currentAnalysisData);
             editedCards.forEach((textarea, index) => {
-                if (currentAnalysisData.synthesis[index]) {
-                    currentAnalysisData.synthesis[index].content = textarea.value;
-                }
+                if (synthesis[index]) synthesis[index].content = textarea.value;
             });
             
             try {
@@ -387,13 +413,18 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         contact_id: currentContactId,
-                        synthesis: currentAnalysisData.synthesis,
-                        original_note: document.getElementById('note-input').value
+                        raw_note: document.getElementById('note-input').value,
+                        synthesis: { categorized_updates: Object.entries(synthesis.reduce((acc, item) => {
+                          const cat = item.category;
+                          if (!acc[cat]) acc[cat] = [];
+                          acc[cat].push(item.content);
+                          return acc;
+                        }, {})).map(([category, details]) => ({ category, details })) }
                     })
                 });
                 
                 const result = await response.json();
-                if (result.success) {
+                if (response.ok && (result.status === 'success' || result.message)) {
                     alert('Analysis saved successfully!');
                     document.getElementById('note-input').value = '';
                     document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
@@ -403,7 +434,7 @@
                     currentAnalysisData = null;
                     showMainView();
                 } else {
-                    throw new Error(result.message || 'Unknown error');
+                    throw new Error(result.error || result.message || 'Unknown error');
                 }
             } catch (error) {
                 alert('Error saving analysis: ' + error.message);
@@ -474,6 +505,9 @@
                 console.error('Error checking Telegram status:', error);
             }
         }
+        
+        // Make function globally accessible
+        window.checkTelegramStatus = checkTelegramStatus;
 
         function pollImportStatus(taskId, statusDiv = null, onComplete = null) {
             const progressContainer = document.getElementById('import-progress');
@@ -521,7 +555,7 @@
             if (!file) return;
             
             const formData = new FormData();
-            formData.append('vcf_file', file);
+            formData.append('vcard_file', file);
             
             try {
                 const response = await fetch('/api/import-vcard', {
@@ -530,19 +564,234 @@
                 });
                 
                 const result = await response.json();
-                if (result.success) {
-                    alert(`Successfully imported ${result.contacts_imported} contact(s)!`);
+                if (response.ok && !result.error) {
+                    alert(result.message || 'vCard processed.');
                     loadContacts();
                     loadTier1Contacts();
                     loadTier2Contacts();
                 } else {
-                    alert('Error importing vCard: ' + result.message);
+                    alert('Error importing vCard: ' + (result.error || result.message || 'Unknown error'));
                 }
             } catch (error) {
                 alert('Error importing vCard: ' + error.message);
             }
             
             event.target.value = '';
+        }
+
+        async function handleMergeImport(event) {
+            console.log('handleMergeImport called'); // Debug log
+            event.preventDefault();
+            const form = document.getElementById('merge-form');
+            const fileInput = document.getElementById('merge-file-input');
+            const mergeStatus = document.getElementById('merge-status');
+            const mergeBtn = document.getElementById('merge-btn');
+
+            console.log('Form elements:', { form, fileInput, mergeStatus, mergeBtn }); // Debug log
+
+            if (!fileInput.files.length) {
+                alert('Please select a CSV file to merge.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            console.log('Selected file:', file.name, file.type, file.size); // Debug log
+
+            // Show loading state
+            const originalBtnText = mergeBtn.textContent;
+            mergeBtn.disabled = true;
+            mergeBtn.textContent = 'Processing...';
+            mergeStatus.textContent = 'Uploading and processing CSV file...';
+            mergeStatus.style.color = '#007aff';
+
+            const formData = new FormData();
+            formData.append('backup_file', fileInput.files[0]);
+
+            try {
+                console.log('Sending request to /api/import/merge-from-csv'); // Debug log
+                const response = await fetch('/api/import/merge-from-csv', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                console.log('Response status:', response.status); // Debug log
+                const result = await response.json();
+                console.log('Merge result:', result); // Debug log
+                
+                if (response.ok && result.status === 'success') {
+                    const stats = result.details || {};
+                    const message = `Merge complete! Added ${stats.contacts_added || 0} new contacts, ${stats.details_added || 0} new details. Skipped ${stats.contacts_skipped || 0} existing contacts, ${stats.details_skipped || 0} duplicate details.`;
+                    alert(message);
+                    mergeStatus.textContent = message;
+                    mergeStatus.style.color = '#28a745';
+                    
+                    // Refresh the UI
+                    loadContacts();
+                    loadTier1Contacts();
+                    loadTier2Contacts();
+                    
+                    // Clear the file input
+                    fileInput.value = '';
+                } else {
+                    const errorMsg = result.error || result.message || 'Unknown error';
+                    console.error('Merge failed:', errorMsg); // Debug log
+                    alert('Error merging data: ' + errorMsg);
+                    mergeStatus.textContent = 'Merge failed: ' + errorMsg;
+                    mergeStatus.style.color = '#dc3545';
+                }
+            } catch (error) {
+                console.error('Merge error:', error);
+                alert('Error merging data: ' + error.message);
+                mergeStatus.textContent = 'Merge failed: ' + error.message;
+                mergeStatus.style.color = '#dc3545';
+            } finally {
+                // Restore button state
+                mergeBtn.disabled = false;
+                mergeBtn.textContent = originalBtnText;
+            }
+        }
+
+        async function fetchAndRenderRawLogs(contactId) {
+          try {
+            const res = await fetch(`/api/contact/${contactId}/raw-logs`);
+            const entries = await res.json();
+            const box = document.getElementById('raw-logs-content');
+            if (!box) return;
+            
+            if (!Array.isArray(entries) || entries.length === 0) {
+              box.innerHTML = '<div class="empty">No history found for this contact.</div>';
+              return;
+            }
+            
+            let html = '<div class="change-history">';
+            
+            entries.forEach((entry, index) => {
+              let date = 'Unknown date';
+              if (entry.date) {
+                try {
+                  date = new Date(entry.date).toLocaleString();
+                } catch (e) {
+                  date = entry.date;
+                }
+              }
+              const details = entry.details;
+              
+              html += `<div class="change-entry">`;
+              html += `<div class="change-header">`;
+              html += `<div class="change-date">${date}</div>`;
+              html += `<div class="change-description">${entry.content}</div>`;
+              html += `</div>`;
+              
+              // Only show detailed tables for entries with before/after data
+              if (details && typeof details === 'object' && !Array.isArray(details) && details.before && details.after) {
+                html += `<div class="change-details">`;
+                html += createBeforeAfterTable(details.before, details.after);
+                html += `</div>`;
+              } else if (details && typeof details === 'object' && !Array.isArray(details) && details.categorized_updates) {
+                html += `<div class="change-details">`;
+                html += createCategorizationTable(details.categorized_updates, details.type);
+                html += `</div>`;
+              } else {
+                html += `<div class="change-details-simple">`;
+                html += `<p>Basic event - no detailed changes available</p>`;
+                html += `</div>`;
+              }
+              
+              html += `</div>`;
+            });
+            
+            html += '</div>';
+            box.innerHTML = html;
+            
+          } catch (e) {
+            console.error('Failed to load history', e);
+            document.getElementById('raw-logs-content').innerHTML = '<div class="error">Failed to load history.</div>';
+          }
+        }
+
+        function createBeforeAfterTable(beforeData, afterData) {
+          const allCategories = new Set([...Object.keys(beforeData), ...Object.keys(afterData)]);
+          
+          let html = `<h4>📋 Changes Made</h4>`;
+          html += `<table class="comparison-table">`;
+          html += `<thead>`;
+          html += `<tr><th>Category</th><th>Before</th><th>After</th></tr>`;
+          html += `</thead><tbody>`;
+          
+          allCategories.forEach(category => {
+            const beforeItems = beforeData[category] || [];
+            const afterItems = afterData[category] || [];
+            
+            // Only show categories that actually changed
+            if (JSON.stringify(beforeItems) !== JSON.stringify(afterItems)) {
+              html += `<tr>`;
+              html += `<td class="category-name"><strong>${category.replace('_', ' ')}</strong></td>`;
+              
+              // Before column
+              html += `<td class="before-column">`;
+              if (beforeItems.length === 0) {
+                html += `<em class="empty-state">Nothing</em>`;
+              } else {
+                beforeItems.forEach(item => {
+                  const isRemoved = !afterItems.includes(item);
+                  html += `<div class="item-row ${isRemoved ? 'removed-item' : 'unchanged-item'}">${escapeHtml(item)}</div>`;
+                });
+              }
+              html += `</td>`;
+              
+              // After column
+              html += `<td class="after-column">`;
+              if (afterItems.length === 0) {
+                html += `<em class="empty-state">Nothing</em>`;
+              } else {
+                afterItems.forEach(item => {
+                  const isAdded = !beforeItems.includes(item);
+                  html += `<div class="item-row ${isAdded ? 'added-item' : 'unchanged-item'}">${escapeHtml(item)}</div>`;
+                });
+              }
+              html += `</td>`;
+              
+              html += `</tr>`;
+            }
+          });
+          
+          html += `</tbody></table>`;
+          return html;
+        }
+
+        function createCategorizationTable(categorizedUpdates, eventType) {
+          let html = `<h4>`;
+          if (eventType === 'telegram_sync') {
+            html += `💬 Information Added from Telegram`;
+          } else {
+            html += `✏️ Information Added`;
+          }
+          html += `</h4>`;
+          
+          html += `<table class="categorization-table">`;
+          html += `<thead>`;
+          html += `<tr><th>Category</th><th>New Information</th></tr>`;
+          html += `</thead><tbody>`;
+          
+          categorizedUpdates.forEach(update => {
+            html += `<tr>`;
+            html += `<td class="category-name"><strong>${update.category.replace('_', ' ')}</strong></td>`;
+            html += `<td class="items-column">`;
+            (update.details || []).forEach(detail => {
+              html += `<div class="item-row added-item">${escapeHtml(detail)}</div>`;
+            });
+            html += `</td>`;
+            html += `</tr>`;
+          });
+          
+          html += `</tbody></table>`;
+          return html;
+        }
+
+        function escapeHtml(text) {
+          const div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
         }
 
         // Additional event listeners
@@ -578,6 +827,17 @@
                 document.getElementById('profile-note-input-area').style.display = 'none';
                 document.getElementById('profile-note-input').value = '';
             });
+
+            // Load raw logs when expanded
+            const rawLogs = document.getElementById('raw-logs-details');
+            if (rawLogs) {
+              rawLogs.addEventListener('toggle', async function() {
+                if (rawLogs.open) {
+                  const id = document.getElementById('selected-contact-id').value;
+                  fetchAndRenderRawLogs(id);
+                }
+              });
+            }
             
             // Change contact
             document.getElementById('change-contact-btn').addEventListener('click', function() {
@@ -596,13 +856,35 @@
             if (vCardInput) {
                 vCardInput.addEventListener('change', handleVCardImport);
             }
+
+            // Merge import
+            const mergeForm = document.getElementById('merge-form');
+            if (mergeForm) {
+                console.log('Setting up merge form event listener'); // Debug log
+                mergeForm.addEventListener('submit', handleMergeImport);
+                
+                // Also add a click handler to the button as a fallback
+                const mergeBtn = document.getElementById('merge-btn');
+                if (mergeBtn) {
+                    mergeBtn.addEventListener('click', function(e) {
+                        console.log('Merge button clicked'); // Debug log
+                        if (e.target.type === 'submit') {
+                            // Let the form submit handler take care of it
+                            return;
+                        }
+                        // If for some reason this isn't a submit button, handle it manually
+                        e.preventDefault();
+                        handleMergeImport(e);
+                    });
+                }
+            } else {
+                console.error('Merge form not found!'); // Debug log
+            }
             
             // CSV Download
             const csvDownloadBtn = document.getElementById('download-csv-btn');
             if (csvDownloadBtn) {
-                csvDownloadBtn.addEventListener('click', function() {
-                    window.open('/api/export-csv', '_blank');
-                });
+                // The href attribute is now directly on the anchor tag, so no need for event listener here.
             }
         });
     </script>

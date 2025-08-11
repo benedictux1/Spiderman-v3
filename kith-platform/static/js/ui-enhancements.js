@@ -363,6 +363,49 @@ window.viewContactProfile = viewContactProfile;
 
 // Enhanced Settings Functions
 function enhanceSettingsPage() {
+    // Add toggle functionality for contacts list
+    const toggleBtn = document.getElementById('toggle-contacts-list');
+    const contactsContainer = document.getElementById('contacts-container');
+    const toggleIcon = document.getElementById('toggle-icon');
+    const toggleText = document.getElementById('toggle-text');
+    
+    if (toggleBtn && contactsContainer) {
+        // Set initial state (expanded by default)
+        let isCollapsed = false;
+        
+        toggleBtn.addEventListener('click', () => {
+            isCollapsed = !isCollapsed;
+            
+            if (isCollapsed) {
+                // Collapse
+                contactsContainer.classList.add('collapsed');
+                toggleBtn.classList.add('collapsed');
+                toggleIcon.textContent = '👁️‍🗨️';
+                toggleText.textContent = 'Show List';
+                showToast('Contacts list hidden', 'info', 2000);
+            } else {
+                // Expand
+                contactsContainer.classList.remove('collapsed');
+                toggleBtn.classList.remove('collapsed');
+                toggleIcon.textContent = '👁️';
+                toggleText.textContent = 'Hide List';
+                showToast('Contacts list shown', 'info', 2000);
+            }
+            
+            // Store preference in localStorage
+            localStorage.setItem('contactsListCollapsed', isCollapsed.toString());
+        });
+        
+        // Restore previous state from localStorage
+        const savedState = localStorage.getItem('contactsListCollapsed');
+        if (savedState === 'true') {
+            // Trigger collapse without animation on initial load
+            setTimeout(() => {
+                toggleBtn.click();
+            }, 100);
+        }
+    }
+    
     // Add toast notifications to form submissions
     const mergeForm = document.getElementById('merge-form');
     if (mergeForm) {
@@ -504,7 +547,7 @@ function enhanceSettingsPage() {
         });
     }
     
-    // Enhance search with debouncing
+    // Enhanced search with debouncing
     const contactSearchManage = document.getElementById('contact-search-manage');
     if (contactSearchManage) {
         const debouncedSearch = debounce(() => {
@@ -518,6 +561,8 @@ function enhanceSettingsPage() {
             });
             
             const visibleCount = Array.from(rows).filter(row => row.style.display !== 'none').length;
+            updateContactCount(visibleCount, rows.length);
+            
             if (searchTerm && visibleCount === 0) {
                 showToast('No contacts found', 'info', 2000);
             }
@@ -526,7 +571,7 @@ function enhanceSettingsPage() {
         contactSearchManage.addEventListener('input', debouncedSearch);
     }
     
-    // Enhance tier filter
+    // Enhanced tier filter
     const tierFilterManage = document.getElementById('tier-filter-manage');
     if (tierFilterManage) {
         tierFilterManage.addEventListener('change', () => {
@@ -541,9 +586,29 @@ function enhanceSettingsPage() {
             });
             
             const visibleCount = Array.from(rows).filter(row => row.style.display !== 'none').length;
+            updateContactCount(visibleCount, rows.length);
             showToast(`Showing ${visibleCount} contacts`, 'info', 1500);
         });
     }
+    
+    // Function to update contact count display
+    function updateContactCount(visible, total) {
+        const countElement = document.getElementById('contacts-count');
+        if (countElement) {
+            if (visible === total) {
+                countElement.textContent = `${total} contact${total !== 1 ? 's' : ''}`;
+            } else {
+                countElement.textContent = `${visible} of ${total} contact${total !== 1 ? 's' : ''} shown`;
+            }
+        }
+    }
+    
+    // Initialize contact count when page loads
+    setTimeout(() => {
+        const rows = document.querySelectorAll('#contacts-table tbody tr');
+        const totalCount = rows.length;
+        updateContactCount(totalCount, totalCount);
+    }, 1000);
     
     // Add keyboard shortcuts for settings
     document.addEventListener('keydown', (e) => {
@@ -551,6 +616,16 @@ function enhanceSettingsPage() {
         if ((e.ctrlKey || e.metaKey) && e.key === 'n' && document.getElementById('settings-view').style.display !== 'none') {
             e.preventDefault();
             showModalBtn?.click();
+        }
+        
+        // Ctrl/Cmd + H to toggle contacts list (when in settings)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'h' && document.getElementById('settings-view').style.display !== 'none') {
+            e.preventDefault();
+            const toggleBtn = document.getElementById('toggle-contacts-list');
+            if (toggleBtn) {
+                toggleBtn.click();
+                showToast('Keyboard shortcut: Ctrl+H to toggle list', 'info', 2000);
+            }
         }
     });
 }

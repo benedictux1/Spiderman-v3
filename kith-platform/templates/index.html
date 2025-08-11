@@ -155,43 +155,55 @@
             <!-- Contacts Management -->
             <div class="settings-section">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h3>👥 Manage Contacts</h3>
-                    <button id="show-create-contact-modal-btn">+ Create Contact</button>
+                    <div>
+                        <h3>👥 Manage Contacts</h3>
+                        <div id="contacts-count" class="contacts-count">Loading contacts...</div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <button id="toggle-contacts-list" class="toggle-btn" data-tooltip="Show/Hide contact list">
+                            <span id="toggle-icon">👁️</span>
+                            <span id="toggle-text">Hide List</span>
+                        </button>
+                        <button id="show-create-contact-modal-btn">+ Create Contact</button>
+                    </div>
                 </div>
                 
-                <!-- Search and Filter -->
-                <div class="management-controls">
-                    <input type="text" id="contact-search-manage" placeholder="Search contacts...">
-                    <select id="tier-filter-manage">
-                        <option value="">All Tiers</option>
-                        <option value="1">Tier 1</option>
-                        <option value="2">Tier 2</option>
-                        <option value="3">Tier 3</option>
-                    </select>
+                <!-- Collapsible Contacts Container -->
+                <div id="contacts-container" class="contacts-container">
+                    <!-- Search and Filter -->
+                    <div class="management-controls">
+                        <input type="text" id="contact-search-manage" placeholder="Search contacts...">
+                        <select id="tier-filter-manage">
+                            <option value="">All Tiers</option>
+                            <option value="1">Tier 1</option>
+                            <option value="2">Tier 2</option>
+                            <option value="3">Tier 3</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Bulk Actions -->
+                    <div class="bulk-actions">
+                        <button id="select-all-btn">Select All</button>
+                        <button id="deselect-all-btn">Deselect All</button>
+                        <button id="delete-selected-btn" class="danger-btn" disabled>Delete Selected</button>
+                    </div>
+                    
+                    <!-- Contacts Table -->
+                    <table id="contacts-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="select-all-header"></th>
+                                <th>Name</th>
+                                <th>Tier</th>
+                                <th>Telegram Handle</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Contacts will be dynamically inserted here -->
+                        </tbody>
+                    </table>
                 </div>
-                
-                <!-- Bulk Actions -->
-                <div class="bulk-actions">
-                    <button id="select-all-btn">Select All</button>
-                    <button id="deselect-all-btn">Deselect All</button>
-                    <button id="delete-selected-btn" class="danger-btn" disabled>Delete Selected</button>
-                </div>
-                
-                <!-- Contacts Table -->
-                <table id="contacts-table">
-                    <thead>
-                        <tr>
-                            <th><input type="checkbox" id="select-all-header"></th>
-                            <th>Name</th>
-                            <th>Tier</th>
-                            <th>Telegram Handle</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Contacts will be dynamically inserted here -->
-                    </tbody>
-                </table>
             </div>
 
             <!-- Import/Export -->

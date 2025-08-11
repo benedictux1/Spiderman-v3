@@ -512,6 +512,98 @@ button {
     transform: translateY(-1px);
 }
 
+/* Profile Note Input Area */
+#profile-note-input-area {
+    background: var(--bg-primary);
+    border-radius: var(--radius-xl);
+    padding: 2rem;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
+    margin-bottom: 2rem;
+}
+
+#profile-note-input-area h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#profile-note-input-area h3::before {
+    content: "📝";
+    font-size: 1rem;
+}
+
+#profile-note-input {
+    width: 100%;
+    min-height: 300px;
+    padding: 1.25rem;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    font-size: 1rem;
+    line-height: 1.6;
+    resize: vertical;
+    transition: var(--transition);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+#profile-note-input:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+#profile-note-input::placeholder {
+    color: var(--text-muted);
+}
+
+.note-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.note-actions button {
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-lg);
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: var(--transition);
+    border: none;
+}
+
+#profile-analyze-btn {
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
+    color: white;
+    box-shadow: var(--shadow-sm);
+}
+
+#profile-analyze-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+#profile-cancel-note-btn {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+#profile-cancel-note-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-1px);
+}
+
 /* Loading States */
 .loading {
     opacity: 0.6;

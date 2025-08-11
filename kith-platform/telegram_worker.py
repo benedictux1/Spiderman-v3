@@ -44,10 +44,11 @@ def get_db_connection():
     for attempt in range(max_retries):
         try:
             conn = sqlite3.connect(db_path, timeout=30.0)
+            conn.execute('PRAGMA foreign_keys=ON')
             conn.execute('PRAGMA journal_mode=WAL')  # Better for concurrent access
             conn.execute('PRAGMA synchronous=NORMAL')  # Better performance
             conn.execute('PRAGMA temp_store=memory')  # Use memory for temp tables
-            conn.execute('PRAGMA busy_timeout=30000')  # 30 second busy timeout
+            conn.execute('PRAGMA busy_timeout=5000')  # 5 second busy timeout
             conn.row_factory = sqlite3.Row  # Enable dict-like access
             
             # Test the connection

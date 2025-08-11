@@ -25,6 +25,7 @@ from constants import (
 )
 import sqlite3
 import time
+from contextlib import contextmanager
 
 # --- INITIALIZATION ---
 load_dotenv()
@@ -112,11 +113,34 @@ CONTACT_CREATION_LOCK = threading.Lock()  # Lock for contact creation
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
 
 def get_db_connection():
-    """Get database connection with basic timeout."""
+    """Get database connection with robust pragmas and timeout."""
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    conn.execute('PRAGMA journal_mode=WAL')
+    # Pragmas for better concurrency and integrity
+    try:
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA busy_timeout=5000')  # ms
+    except Exception:
+        pass
     conn.row_factory = sqlite3.Row
     return conn
+
+@contextmanager
+def with_write_connection():
+    """Context manager to serialize writes and ensure proper cleanup."""
+    DB_LOCK.acquire()
+    conn = None
+    try:
+        conn = get_db_connection()
+        yield conn
+        conn.commit()
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        finally:
+            DB_LOCK.release()
 
 def init_db():
     """Initialize database with retry logic and migration."""
@@ -300,32 +324,55 @@ def log_audit_event(contact_id: int, user_id: int, event_type: str, source: str,
                     before_state: typing.Optional[dict] = None,
                     after_state: typing.Optional[dict] = None,
                     raw_input: typing.Optional[str] = None) -> None:
-    """Append an immutable audit log row for a contact."""
-    try:
-        conn = get_db_connection()
+    """Append an immutable audit log row for a contact. Safe with fallback."""
+    payload = (
+        contact_id,
+        user_id,
+        sanitize_text(event_type or ''),
+        sanitize_text(source or ''),
+        json.dumps(before_state) if before_state is not None else None,
+        json.dumps(after_state) if after_state is not None else None,
+        raw_input
+    )
+    # Try once; if table missing, ensure migrations and retry once
+    for attempt in range(2):
         try:
-            conn.execute(
-                'INSERT INTO contact_audit_log (contact_id, user_id, event_type, source, before_state, after_state, raw_input) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                (
-                    contact_id,
-                    user_id,
-                    sanitize_text(event_type or ''),
-                    sanitize_text(source or ''),
-                    json.dumps(before_state) if before_state is not None else None,
-                    json.dumps(after_state) if after_state is not None else None,
-                    raw_input
+            with with_write_connection() as conn:
+                conn.execute(
+                    'INSERT INTO contact_audit_log (contact_id, user_id, event_type, source, before_state, after_state, raw_input) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    payload
                 )
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        logger.info(f"Audit event logged for contact {contact_id}: {event_type}")
-    except Exception as e:
-        logger.error(f"CRITICAL: Failed to log audit event: {e}")
+            logger.info(f"Audit event logged for contact {contact_id}: {event_type}")
+            return
+        except Exception as e:
+            if attempt == 0:
+                logger.warning(f"Audit insert failed, attempting migration then retry: {e}")
+                try:
+                    ensure_runtime_migrations()
+                except Exception:
+                    pass
+                time.sleep(0.05)
+                continue
+            logger.error(f"CRITICAL: Failed to log audit event after retry: {e}")
+            return
 
 # Initialize scheduler after app creation
-scheduler.init_app(app)
-scheduler.start()
+# Ensure bootstrap is executed before starting background jobs
+def initialize_runtime():
+    """Run configuration validation, bootstrap DB, and start scheduler."""
+    try:
+        validate_config()
+    except Exception:
+        pass
+    try:
+        bootstrap_database_once()
+    except Exception as e:
+        logger.error(f"Bootstrap failed during runtime init: {e}")
+    try:
+        scheduler.init_app(app)
+        scheduler.start()
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
 
 # --- VALIDATION HELPERS ---
 def validate_input(data_type, value, **kwargs):
@@ -2069,6 +2116,56 @@ def classify_record_type(value: str) -> str:
         
     return ''
 
+# --- BOOTSTRAP: run DB init and migrations once, early ---
+_BOOTSTRAPPED = False
+
+def validate_config():
+    missing = []
+    # Only warn for now to avoid blocking local usage
+    if not os.getenv('OPENAI_API_KEY'):
+        logger.warning('OPENAI_API_KEY is not set; AI synthesis may fail.')
+    # Telegram creds required for imports
+    for key in ['TELEGRAM_API_ID', 'TELEGRAM_API_HASH']:
+        if not os.getenv(key):
+            missing.append(key)
+    if missing:
+        logger.warning(f"Missing Telegram config keys: {', '.join(missing)}. Telegram import may be limited.")
+
+
+def bootstrap_database_once():
+    global _BOOTSTRAPPED
+    if _BOOTSTRAPPED:
+        return
+    try:
+        init_db()
+        ensure_runtime_migrations()
+        # Minimal backfill: seed one marker event per up to 5 most recent contacts if audit log is empty
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute('SELECT COUNT(1) FROM contact_audit_log')
+                (cnt,) = cur.fetchone()
+                if cnt == 0:
+                    cur = conn.execute('SELECT id FROM contacts ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 5')
+                    rows = [r[0] for r in cur.fetchall()]
+                    for cid in rows:
+                        conn.execute(
+                            'INSERT INTO contact_audit_log (contact_id, user_id, event_type, source, before_state, after_state, raw_input) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                            (cid, 1, 'AUDIT_INIT', 'SYSTEM', None, json.dumps({'initialized_at': datetime.utcnow().isoformat()}), None)
+                        )
+                    conn.commit()
+        except Exception:
+            # Backfill is best-effort
+            pass
+        _BOOTSTRAPPED = True
+        logger.info('✅ Bootstrap complete: DB initialized and migrations ensured')
+    except Exception as e:
+        logger.error(f'❌ Bootstrap failed: {e}')
+
+# Initialize runtime when module is imported (safe now that defs exist)
+initialize_runtime()
+
 # Initialize database on startup
 if __name__ == '__main__':
+    # Ensure bootstrap in direct run mode as well
+    bootstrap_database_once()
     app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)

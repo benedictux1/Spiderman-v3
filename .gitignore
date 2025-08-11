@@ -29,3 +29,9 @@ node_modules/
 
 # Misc
 *.swp
+
+# Secrets/Sessions
+*.session
+
+# Process outputs
+nohup.out

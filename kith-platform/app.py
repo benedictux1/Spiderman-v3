@@ -31,6 +31,13 @@ from uuid import uuid4 as _uuid4
 from flask import g
 from werkzeug.exceptions import HTTPException
 
+# Optional: Google Vision client import (lazy)
+try:
+    from google.cloud import vision  # type: ignore
+    _GCV_AVAILABLE = True
+except Exception:
+    _GCV_AVAILABLE = False
+
 # --- INITIALIZATION ---
 load_dotenv()
 app = Flask(__name__)
@@ -54,6 +61,34 @@ logger = logging.getLogger(__name__)
 openai.api_key = os.getenv('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)
 OPENAI_MODEL_VERSION = os.getenv('OPENAI_MODEL_VERSION', '')  # optional extra pin
+OPENAI_VISION_MODEL = os.getenv('OPENAI_VISION_MODEL', 'gpt-5')  # used for image/PDF processing
+
+# OpenAI SDK compatibility helper
+_openai_client_v1 = None
+
+def _openai_chat(**kwargs):
+    """
+    Compatibility helper for OpenAI chat completions.
+    Supports both legacy SDK (<=0.28.x) and new SDK (>=1.0.0).
+    """
+    global _openai_client_v1
+    
+    # Handle parameter differences for different models
+    model = kwargs.get('model', '')
+    if 'gpt-5' in model or ('gpt-4' in model and 'vision' in model):
+        # Vision models use max_completion_tokens instead of max_tokens
+        if 'max_tokens' in kwargs:
+            kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+        # gpt-5 only supports default temperature (1.0)
+        if 'temperature' in kwargs:
+            kwargs.pop('temperature')
+    
+    if hasattr(openai, 'OpenAI'):  # New SDK (>=1.0.0)
+        if _openai_client_v1 is None:
+            _openai_client_v1 = openai.OpenAI()
+        return _openai_client_v1.chat.completions.create(**kwargs).choices[0].message.content
+    else:  # Old SDK (<=0.28.x)
+        return openai.ChatCompletion.create(**kwargs).choices[0].message.content
 
 # Optional Sentry setup
 try:
@@ -495,43 +530,105 @@ VALID_CATEGORY_SET = set(CATEGORY_ORDER)
 # Broad keyword heuristics for fallback categorization
 KEYWORD_CATEGORY_MAP = [
     # Actionable
-    (Categories.ACTIONABLE, ["todo", "follow up", "follow-up", "next week", "schedule", "remind", "arrange", "set up", "book", "plan", "meet", "call", "email"]),
+    (Categories.ACTIONABLE, [
+        "todo", "follow up", "follow-up", "next week", "schedule", "remind",
+        "arrange", "set up", "book", "plan", "meet", "call", "email",
+        "action item", "due", "deadline", "ASAP", "to-do"
+    ]),
     # Goals
-    (Categories.GOALS, ["goal", "aim", "objective", "wants to", "plans to", "hopes to", "target"]),
+    (Categories.GOALS, [
+        "goal", "aim", "objective", "wants to", "plans to", "hopes to", "target",
+        "ambition", "aspire", "intend to"
+    ]),
     # Relationship Strategy
-    (Categories.RELATIONSHIP_STRATEGY, ["approach", "keep in touch", "build", "nurture", "stay connected", "check in", "best to", "strategy"]),
+    (Categories.RELATIONSHIP_STRATEGY, [
+        "approach", "keep in touch", "build", "nurture", "stay connected",
+        "check in", "best to", "strategy", "reach out", "touch base"
+    ]),
     # Social
-    (Categories.SOCIAL, ["party", "event", "dinner", "drinks", "hang out", "friends", "club", "wedding"]),
+    (Categories.SOCIAL, [
+        "party", "event", "dinner", "drinks", "hang out", "friends", "club",
+        "wedding", "celebration", "gathering", "meetup", "bbt party"
+    ]),
     # Wellbeing
-    (Categories.WELLBEING, ["health", "exercise", "stress", "anxiety", "sleep", "diet", "mental", "wellbeing", "well-being", "therapy"]),
+    (Categories.WELLBEING, [
+        "health", "exercise", "stress", "anxiety", "sleep", "diet", "mental",
+        "wellbeing", "well-being", "therapy", "gym", "workout"
+    ]),
     # Avocation
-    (Categories.AVOCATION, ["likes", "enjoys", "hobby", "hobbies", "interest", "interests", "favorite", "favourite", "music", "sport", "movie", "hiking", "food", "cuisine", "travel"]),
+    (Categories.AVOCATION, [
+        "likes", "enjoys", "hobby", "hobbies", "interest", "interests",
+        "favorite", "favourite", "music", "sport", "movie", "hiking",
+        "food", "cuisine", "travel", "coffee", "tea", "bubble tea",
+        "bbt", "nasi lemak", "sashimi", "strawberries", "mint ice cream"
+    ]),
     # Professional Background
-    (Categories.PROFESSIONAL_BACKGROUND, ["work", "job", "career", "role", "company", "employer", "startup", "industry", "boss", "colleague", "dentist", "engineer", "founder"]),
+    (Categories.PROFESSIONAL_BACKGROUND, [
+        "work", "job", "career", "role", "company", "employer", "startup",
+        "industry", "boss", "colleague", "dentist", "engineer", "founder",
+        "managed", "organized", "organised", "led", "lead", "committee",
+        "aiesec", "internship", "intern", "cv", "resume", "position",
+        "experience", "project", "orientation", "data collection", "research"
+    ]),
     # Environment & Lifestyle
-    (Categories.ENVIRONMENT_AND_LIFESTYLE, ["lives", "living", "apartment", "house", "city", "singapore", "commute", "car", "pet", "lifestyle"]),
+    (Categories.ENVIRONMENT_AND_LIFESTYLE, [
+        "lives", "living", "apartment", "house", "city", "singapore",
+        "commute", "car", "pet", "lifestyle", "neighborhood", "neighbourhood"
+    ]),
     # Psychology & Values
-    (Categories.PSYCHOLOGY_AND_VALUES, ["values", "belief", "personality", "introvert", "extrovert", "principle", "priority"]),
+    (Categories.PSYCHOLOGY_AND_VALUES, [
+        "values", "belief", "personality", "introvert", "extrovert",
+        "principle", "priority", "ethos", "mindset"
+    ]),
     # Communication Style
-    (Categories.COMMUNICATION_STYLE, ["prefers text", "prefers call", "communication", "responds", "reply", "tone", "style", "email vs", "whatsapp"]),
+    (Categories.COMMUNICATION_STYLE, [
+        "prefers text", "prefers call", "communication", "responds", "reply",
+        "tone", "style", "email vs", "whatsapp", "fast reply", "slow to reply"
+    ]),
     # Challenges & Development
-    (Categories.CHALLENGES_AND_DEVELOPMENT, ["challenge", "difficulty", "struggle", "learning", "improve", "development"]),
+    (Categories.CHALLENGES_AND_DEVELOPMENT, [
+        "challenge", "difficulty", "struggle", "learning", "improve",
+        "development", "working on", "needs help"
+    ]),
     # Deeper Insights
-    (Categories.DEEPER_INSIGHTS, ["pattern", "tends to", "usually", "often", "underlying", "insight"]),
+    (Categories.DEEPER_INSIGHTS, [
+        "pattern", "tends to", "usually", "often", "underlying", "insight",
+        "tendency"
+    ]),
     # Financial Situation
-    (Categories.FINANCIAL_SITUATION, ["salary", "income", "bonus", "money", "finance", "budget", "savings", "debt"]),
+    (Categories.FINANCIAL_SITUATION, [
+        "salary", "income", "bonus", "money", "finance", "budget",
+        "savings", "debt", "expenses"
+    ]),
     # Admin Matters
-    (Categories.ADMIN_MATTERS, ["address", "email", "phone", "birthday", "contact", "handle", "passport", "booking ref", "reservation", "logistics"]),
+    (Categories.ADMIN_MATTERS, [
+        "address", "email", "phone", "birthday", "contact", "handle",
+        "passport", "booking ref", "reservation", "logistics", "linkedin",
+        "url", "website"
+    ]),
     # Established Patterns
-    (Categories.ESTABLISHED_PATTERNS, ["always", "every", "habit", "routine", "pattern"]),
+    (Categories.ESTABLISHED_PATTERNS, [
+        "always", "every", "habit", "routine", "pattern", "regularly",
+        "weekly", "daily"
+    ]),
     # Core Identity
-    (Categories.CORE_IDENTITY, ["identity", "who he is", "who she is", "self", "core"]),
+    (Categories.CORE_IDENTITY, [
+        "identity", "who he is", "who she is", "self", "core", "background"
+    ]),
     # Information Gaps
-    (Categories.INFORMATION_GAPS, ["unknown", "not sure", "need to find", "unclear", "missing"]),
+    (Categories.INFORMATION_GAPS, [
+        "unknown", "not sure", "need to find", "unclear", "missing",
+        "TBD", "to be decided"
+    ]),
     # Memory Anchors
-    (Categories.MEMORY_ANCHORS, ["remember", "note", "key detail", "anchor"]),
+    (Categories.MEMORY_ANCHORS, [
+        "remember", "note", "key detail", "anchor", "remember to"
+    ]),
     # Positionality
-    (Categories.POSITIONALITY, ["status", "role in", "position", "senior", "junior"]),
+    (Categories.POSITIONALITY, [
+        "status", "role in", "position", "senior", "junior", "cpo",
+        "vp", "vice-president", "president"
+    ]),
     # Others
     (Categories.OTHERS, ["misc", "other"])
 ]
@@ -545,6 +642,7 @@ SYNONYM_TO_CATEGORY = {
     "contact_info": Categories.ADMIN_MATTERS,
     "logistics": Categories.ADMIN_MATTERS,
     "health": Categories.WELLBEING,
+    "habits": Categories.ESTABLISHED_PATTERNS,
 }
 
 def canonicalize_category(category_name: str) -> str:
@@ -568,9 +666,48 @@ import itertools
 
 def infer_category_from_text(text: str) -> str:
     t = (text or '').lower()
+    if not t:
+        return Categories.OTHERS
+
+    # 1) Explicit URL/email → Admin_Matters
+    try:
+        if re.search(r"\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b", t):
+            return Categories.ADMIN_MATTERS
+        if re.search(r"\bhttps?://\S+", t) or "linkedin.com" in t or t.startswith("linkedin:"):
+            return Categories.ADMIN_MATTERS
+    except Exception:
+        pass
+
+    # 2) Resume/experience cues → Professional_Background
+    resume_terms = [
+        "intern", "research assistant", "assistant", "ui/ux", "ux", "adobe xd",
+        "organising committee", "organizing committee", "vice-president", "aiesec",
+        "conducted", "headed", "orientation", "data collection", "projects", "experience",
+        "member of", "marketing", "engineer", "manager", "school", "university",
+        "managed", "organized", "organised", "led", "lead", "committee", "position"
+    ]
+    if any(term in t for term in resume_terms):
+        return Categories.PROFESSIONAL_BACKGROUND
+
+    # 3) Actionable only for imperative/future phrasing (avoid past tense like "planned", "conducted")
+    actionable_patterns = [
+        r"\bto\s+do\b", r"\bfollow[- ]up\b", r"\bneed to\b", r"\bplan to\b",
+        r"\bschedule\b", r"\bremind\b", r"\blet's\b", r"\bplease\b", r"\bnext week\b",
+        r"^action( item)?:", r"\bETA\b", r"\bdue\b"
+    ]
+    if any(re.search(p, t) for p in actionable_patterns):
+        return Categories.ACTIONABLE
+
+    # 4) Fallback to broad keyword map with word-boundary matching
     for cat, keywords in KEYWORD_CATEGORY_MAP:
-        if any(kw in t for kw in keywords):
-            return cat
+        for kw in keywords:
+            try:
+                if re.search(rf"\b{re.escape(kw)}\b", t):
+                    return cat
+            except re.error:
+                if kw in t:
+                    return cat
+
     return Categories.OTHERS
 
 
@@ -594,14 +731,16 @@ def normalize_ai_output(ai_json: dict) -> dict:
                 final_cat = cat if inferred == cat or inferred == Categories.OTHERS else inferred
                 normalized_updates.append({"category": final_cat, "details": [d]})
 
-    # Merge same-category entries
+    # Merge same-category entries and de-duplicate details (case-insensitive)
     merged = {}
     for entry in normalized_updates:
         c = entry['category']
-        merged.setdefault(c, []).extend(entry['details'])
-    result_updates = [{"category": c, "details": ds} for c, ds in merged.items()]
+        existed = merged.setdefault(c, [])
+        for d in entry['details']:
+            if all(d.strip().lower() != e.strip().lower() for e in existed):
+                existed.append(d)
 
-    ai_json['categorized_updates'] = result_updates
+    ai_json['categorized_updates'] = [{"category": c, "details": ds} for c, ds in merged.items()]
     return ai_json
 
 # --- MASTER PROMPT (The AI's Brain) ---
@@ -1055,10 +1194,25 @@ def get_raw_logs_for_contact(contact_id):
                         details = json.loads(log['tags'])
                 except Exception:
                     details = None
+                # Compute engine badge info when applicable
+                engine = None
+                try:
+                    if isinstance(details, dict) and details.get('source') == 'file_upload':
+                        if details.get('used_google_ocr'):
+                            engine = 'vision'
+                        elif details.get('used_openai_mm'):
+                            engine = 'openai'
+                        elif details.get('used_gemini'):
+                            engine = 'gemini'
+                        else:
+                            engine = 'local'
+                except Exception:
+                    engine = None
                 formatted_logs.append({
                     "content": log['content'],
                     "date": log['created_at'],
-                    "details": details
+                    "details": details,
+                    "engine": engine
                 })
             
             return jsonify(formatted_logs)
@@ -1168,14 +1322,12 @@ def process_note_endpoint():
             return jsonify(normalize_ai_output(mock))
 
         try:
-            client = openai.OpenAI()
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+            response_content = _openai_chat(
                 messages=[{"role": "user", "content": master_prompt}],
+                model=OPENAI_MODEL,
                 max_tokens=DEFAULT_MAX_TOKENS,
-                temperature=DEFAULT_AI_TEMPERATURE
+                temperature=DEFAULT_AI_TEMPERATURE,
             )
-            response_content = response.choices[0].message.content.strip()
         except Exception as openai_error:
             return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
         
@@ -1427,14 +1579,12 @@ def process_transcript_endpoint():
         master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=transcript, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
         
         try:
-            client = openai.OpenAI()
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+            response_content = _openai_chat(
                 messages=[{"role": "user", "content": master_prompt}],
+                model=OPENAI_MODEL,
                 max_tokens=DEFAULT_MAX_TOKENS,
-                temperature=DEFAULT_AI_TEMPERATURE
+                temperature=DEFAULT_AI_TEMPERATURE,
             )
-            response_content = response.choices[0].message.content.strip()
         except Exception as openai_error:
             return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
         
@@ -2376,12 +2526,6 @@ def bootstrap_database_once():
 # Initialize runtime when module is imported (safe now that defs exist)
 initialize_runtime()
 
-# Initialize database on startup
-if __name__ == '__main__':
-    # Ensure bootstrap in direct run mode as well
-    bootstrap_database_once()
-    app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)
-
 @app.before_request
 def inject_request_id():
     try:
@@ -2733,6 +2877,29 @@ def _update_task(task_id: str, status: str, status_message: str = '', progress: 
     except Exception as e:
         logger.error(f"Failed to update task {task_id}: {e}")
 
+def google_ocr_image(file_path: str) -> str:
+    """OCR an image with Google Cloud Vision (DOCUMENT_TEXT_DETECTION)."""
+    if not _GCV_AVAILABLE:
+        return ""
+    client = vision.ImageAnnotatorClient()
+    with open(file_path, "rb") as f:
+        content = f.read()
+    image = vision.Image(content=content)
+    resp = client.document_text_detection(image=image)
+    if getattr(resp, "error", None) and getattr(resp.error, "message", None):
+        raise RuntimeError(resp.error.message)
+    text = ""
+    try:
+        # Prefer full_text_annotation when present
+        text = (resp.full_text_annotation.text or "").strip()
+    except Exception:
+        pass
+    if not text and getattr(resp, "text_annotations", None):
+        try:
+            text = (resp.text_annotations[0].description or "").strip()
+        except Exception:
+            pass
+    return text or ""
 
 def run_file_analysis_job(task_id: str, file_id: int):
     """Perform a simple multimodal analysis with optional Gemini fallback."""
@@ -2750,25 +2917,100 @@ def run_file_analysis_job(task_id: str, file_id: int):
         mime_type = row['file_type']
         contact_id = row['contact_id']
         extracted_text = ''
-        # Attempt Gemini if available
-        used_gemini = False
+        used_google_ocr = False
+        # Google Vision OCR for images if enabled
         try:
-            import google.generativeai as genai  # type: ignore
-            api_key = os.getenv('GEMINI_API_KEY', '').strip()
-            if api_key:
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            if os.getenv('KITH_VISION_OCR_ENABLED', 'false').lower() == 'true' and mime_type.startswith('image/'):
+                _update_task(task_id, 'processing', 'Google Vision OCR…')
+                text = google_ocr_image(file_path)
+                if isinstance(text, str) and len(text.strip()) >= 20:
+                    extracted_text = text.strip()[:50000]
+                    used_google_ocr = True
+        except Exception as gerr:
+            logger.info(f"Google Vision OCR not used: {gerr}")
+
+        # Attempt OpenAI multimodal first (user requested gpt-5)
+        used_openai_mm = False
+        try:
+            if openai.api_key and OPENAI_VISION_MODEL and not mime_type.startswith('text/') and not used_google_ocr:
                 import base64
                 with open(file_path, 'rb') as f:
                     b64 = base64.b64encode(f.read()).decode('utf-8')
-                prompt = [
-                    "You are an expert relationship intelligence analyst. Extract all text (OCR) and describe any meaningful visual content. Output plaintext facts only.",
-                    {"mime_type": mime_type, "data": b64}
-                ]
-                _update_task(task_id, 'processing', 'Analyzing via Gemini...')
-                resp = model.generate_content(prompt)
-                extracted_text = (resp.text or '').strip()
-                used_gemini = True
+                # PDF: attempt text extraction locally first to avoid unsupported mime on image_url
+                if mime_type == 'application/pdf':
+                    _update_task(task_id, 'processing', 'Extracting PDF text...')
+                    try:
+                        import PyPDF2  # type: ignore
+                        text_chunks = []
+                        with open(file_path, 'rb') as pf:
+                            reader = PyPDF2.PdfReader(pf)
+                            for page in reader.pages:
+                                t = page.extract_text() or ''
+                                if t.strip():
+                                    text_chunks.append(t)
+                        if text_chunks:
+                            extracted_text = '\n'.join(text_chunks)[:50000]
+                    except Exception:
+                        pass
+                    # Fallback: pdfminer.six for tougher PDFs
+                    if not extracted_text:
+                        try:
+                            from pdfminer.high_level import extract_text  # type: ignore
+                            t = extract_text(file_path) or ''
+                            if t.strip():
+                                extracted_text = t.strip()[:50000]
+                        except Exception:
+                            pass
+                if not extracted_text and mime_type.startswith('image/'):
+                    # Use image-style content for OpenAI vision-capable models
+                    data_uri = f"data:{mime_type};base64,{b64}"
+                    _update_task(task_id, 'processing', f'Analyzing via {OPENAI_VISION_MODEL}...')
+                    prompt_content = [
+                        {"type": "text", "text": "You are an expert relationship intelligence analyst. OCR all visible text and describe meaningful visual content. Output plaintext facts only."}
+                    ]
+                    prompt_content.append({"type": "image_url", "image_url": {"url": data_uri}})
+                    # Call chat with multimodal content (works for both SDK versions)
+                    try:
+                        response_content = _openai_chat(
+                            messages=[{"role": "user", "content": prompt_content}],
+                            model=OPENAI_VISION_MODEL,
+                            max_tokens=DEFAULT_MAX_TOKENS,
+                            temperature=DEFAULT_AI_TEMPERATURE,
+                        )
+                        if response_content:
+                            _text = response_content.strip()
+                            # Guard against instruction-like replies asking for image/URL
+                            if re.search(r"no image|provide (a )?url|upload the image|image needs to be attached|attach (the )?image|OCR and visual description processing", _text, re.IGNORECASE):
+                                logger.info("Vision response indicated missing image/URL; falling back to alternate extraction")
+                                extracted_text = ''
+                            else:
+                                extracted_text = _text
+                                used_openai_mm = True
+                    except Exception as oe:
+                        logger.info(f"OpenAI multimodal analysis failed: {oe}")
+        except Exception as oe:
+            logger.info(f"OpenAI multimodal not used: {oe}")
+
+        # Attempt Gemini if OpenAI MM not used or produced no content
+        used_gemini = False
+        try:
+            if not extracted_text and not mime_type.startswith('text/'):
+                import google.generativeai as genai  # type: ignore
+                api_key = os.getenv('GEMINI_API_KEY', '').strip()
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                    import base64
+                    with open(file_path, 'rb') as f:
+                        b64 = base64.b64encode(f.read()).decode('utf-8')
+                    prompt = [
+                        "You are an expert relationship intelligence analyst. Extract all text (OCR) and describe any meaningful visual content. Output plaintext facts only.",
+                        {"mime_type": mime_type, "data": b64}
+                    ]
+                    _update_task(task_id, 'processing', 'Analyzing via Gemini...')
+                    resp = model.generate_content(prompt)
+                    extracted_text = (resp.text or '').strip()
+                    used_gemini = True
         except Exception as ge:
             logger.info(f"Gemini not used: {ge}")
         if not extracted_text:
@@ -2777,6 +3019,8 @@ def run_file_analysis_job(task_id: str, file_id: int):
                 if mime_type.startswith('text/'):
                     with open(file_path, 'r', errors='ignore') as f:
                         extracted_text = f.read()[:20000]
+                elif mime_type == 'application/pdf':
+                    extracted_text = '[PDF content could not be fully extracted automatically.]'
                 else:
                     extracted_text = f"[Auto-generated placeholder analysis for {os.path.basename(file_path)}]"
             except Exception as fe:
@@ -2786,7 +3030,7 @@ def run_file_analysis_job(task_id: str, file_id: int):
         with with_write_connection() as conn:
             cur = conn.execute(
                 'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
-                (contact_id, f"--- Analysis of uploaded file ---\n{extracted_text}", json.dumps({"source": "file_upload", "used_gemini": used_gemini}), datetime.now().isoformat())
+                (contact_id, f"--- Analysis of uploaded file ---\n{extracted_text}", json.dumps({"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini}), datetime.now().isoformat())
             )
             new_note_id = cur.lastrowid
             conn.execute('UPDATE uploaded_files SET generated_raw_note_id = ? WHERE id = ?', (new_note_id, file_id))
@@ -2803,3 +3047,43 @@ def run_file_analysis_job(task_id: str, file_id: int):
             _update_task(task_id, 'failed', f'Internal processing error: {e}', error=str(e))
     except Exception as e:
         _update_task(task_id, 'failed', 'Unexpected error', error=str(e))
+
+@app.route('/api/transcribe-audio', methods=['POST'])
+def transcribe_audio_endpoint():
+    try:
+        if 'audio_file' not in request.files:
+            return jsonify({"error": "No audio file part"}), 400
+        audio_file = request.files['audio_file']
+        tmp_dir = '/tmp'
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f"temp_audio_{uuid.uuid4()}.webm")
+        audio_file.save(tmp_path)
+        transcript_text = ''
+        try:
+            # Prefer new SDK if available
+            if hasattr(openai, 'OpenAI'):
+                client = getattr(openai, 'OpenAI')()
+                with open(tmp_path, 'rb') as f:
+                    resp = client.audio.transcriptions.create(model='whisper-1', file=f)
+                transcript_text = (getattr(resp, 'text', None) or '')
+            else:
+                with open(tmp_path, 'rb') as f:
+                    resp = openai.Audio.transcribe(model='whisper-1', file=f)
+                transcript_text = (resp.get('text') if isinstance(resp, dict) else '')
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+        if not transcript_text:
+            return jsonify({"error": "Transcription returned no text"}), 502
+        return jsonify({"transcript": transcript_text})
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        return jsonify({"error": "Failed to transcribe audio."}), 500
+
+# Initialize database on startup (moved to end to ensure all routes are registered first)
+if __name__ == '__main__':
+    bootstrap_database_once()
+    app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)

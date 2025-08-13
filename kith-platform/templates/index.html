@@ -34,7 +34,10 @@
                     <span id="selected-contact-name">Select a contact to add notes...</span>
                     <button id="change-contact-btn" style="display:none;">Change Contact</button>
                 </div>
-                <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
+                <div class="note-container">
+                    <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
+                    <button id="record-btn" class="mic-btn" title="Start Recording" disabled>🎤</button>
+                </div>
                 <button id="analyze-btn" disabled>Analyze Note</button>
             </div>
             
@@ -100,7 +103,10 @@
             <!-- Profile Note Input Area (hidden by default) -->
             <div id="profile-note-input-area" class="card" style="display:none;">
                 <h3>Add New Note</h3>
-                <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
+                <div class="note-container">
+                    <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
+                    <button id="profile-record-btn" class="mic-btn" title="Start Recording" disabled>🎤</button>
+                </div>
                 <div class="note-actions">
                     <button id="profile-analyze-btn">Analyze Note</button>
                     <button id="profile-cancel-note-btn">Cancel</button>
@@ -791,12 +797,21 @@
                 }
               }
               const details = entry.details;
+              const engine = entry.engine;
               
               html += `<div class="change-entry">`;
               html += `<div class="change-header">`;
               html += `<div class="change-date">${date}</div>`;
+              html += `<div class="change-meta">`;
+              if (engine) {
+                const label = engine === 'vision' ? 'Google Vision' : engine === 'openai' ? 'OpenAI' : engine === 'gemini' ? 'Gemini' : 'Local';
+                const icon = engine === 'vision' ? '👁️' : engine === 'openai' ? '🤖' : engine === 'gemini' ? '✨' : '📄';
+                html += `<span class="engine-badge ${engine}" title="Processed by ${label}">${icon} ${label}</span>`;
+              }
+              html += `</div>`; // change-meta
+              html += `</div>`; // change-header
+              
               html += `<div class="change-description">${entry.content}</div>`;
-              html += `</div>`;
               
               // Only show detailed tables for entries with before/after data
               if (details && typeof details === 'object' && !Array.isArray(details) && details.before && details.after) {

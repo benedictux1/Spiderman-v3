@@ -2663,4 +2663,270 @@ This comprehensive brief provides a complete, robust, and developer-ready plan t
 
 
 
+Kith Voice Memo & Transcription - Implementation Brief (V3.6)
+
+Version: 3.6
+
+Date: August 12, 2025
+
+Status: New Feature Implementation Plan
+
+Author: Gemini
+
+1. Executive Overview & Architectural Rationale
+
+This document details the complete technical specifications for a Direct Voice Recording & Transcription feature for the Kith platform. The goal is to provide a seamless, hands-free method for capturing unstructured notes by recording audio directly in the web application.
+
+The architecture is designed for efficiency and quality:
+
+Frontend Recording: The feature will use the browser's standard and widely supported MediaRecorder API to capture audio, ensuring no special plugins or software are needed for the user.
+
+Backend Transcription: The recorded audio will be sent to a dedicated backend endpoint that leverages OpenAI's Whisper API for state-of-the-art, highly accurate transcription.
+
+Seamless Integration: The transcribed text is returned to the user's browser and populated into the note textarea. From there, it enters the existing AI analysis and raw log pipeline, ensuring every voice note is fully categorized and archived.
+
+This brief provides all necessary code snippets and logic for a developer to implement this feature.
+
+2. User Experience (UX) Flow
+
+The workflow is designed to be intuitive and integrated directly into the primary note-taking screen.
+
+Initiate Recording: The user selects a contact. A new microphone icon (🎤) is now visible next to the note input area. The user clicks this icon.
+
+Grant Permission: The browser will prompt the user for microphone access (this typically happens only once per session or per site).
+
+Recording State: Once permission is granted, the microphone icon turns red and changes to a stop icon (🛑) to indicate that recording is active.
+
+Stop Recording: The user speaks their note and clicks the stop icon. The icon changes to a processing state (...) to show that the audio is being uploaded and transcribed.
+
+Populate Text: After a few seconds, the highly accurate transcript from Whisper appears in the note textarea.
+
+Analyze: The user can now review or edit the transcribed text. The workflow from this point is identical to a typed note. The user clicks "Analyze Note," and the text is sent for categorization and saved to the raw logs.
+
+3. Database Schema Changes
+
+No database schema changes are required. This is a key benefit of this design. The output of this feature is text, which is then saved as a standard raw_note. The audio itself is treated as a temporary file and is not stored permanently, thus requiring no new tables.
+
+4. Backend Implementation
+
+The backend requires a single new endpoint to handle the audio file and communicate with the Whisper API.
+
+A. New API Endpoint (/api/transcribe-audio)
+
+This endpoint will receive the audio data, save it temporarily, send it to OpenAI, and return the transcript.
+
+# Add to app.py
+import openai
+import os
+import uuid
+
+# Ensure OpenAI API key is configured from .env file
+# openai.api_key = os.getenv("OPENAI_API_KEY")
+
+@app.route('/api/transcribe-audio', methods=['POST'])
+def transcribe_audio_endpoint():
+    """Receives an audio file, transcribes it using Whisper, and returns the text."""
+    if 'audio_file' not in request.files:
+        return jsonify({"error": "No audio file part"}), 400
+    
+    audio_file = request.files['audio_file']
+    
+    # Use a secure, temporary location for the file. 
+    # The /tmp directory is standard for this.
+    temp_filename = f"temp_audio_{uuid.uuid4()}.webm"
+    temp_filepath = os.path.join('/tmp', temp_filename)
+    
+    try:
+        audio_file.save(temp_filepath)
+
+        # Open the saved file and send to Whisper API
+        with open(temp_filepath, "rb") as f:
+            # The Whisper API client automatically handles the file object
+            transcript_response = openai.Audio.transcribe(
+                model="whisper-1", 
+                file=f
+            )
+        
+        transcript = transcript_response['text']
+        
+        # The raw log for this will be created when the user clicks "Analyze Note"
+        # and this transcript is saved as a raw_note. The audio file itself is temporary.
+        
+        return jsonify({"transcript": transcript})
+
+    except Exception as e:
+        # Log the specific error for debugging
+        print(f"Whisper API or file error: {e}")
+        return jsonify({"error": "Failed to transcribe audio."}), 500
+    finally:
+        # CRITICAL: Always clean up the temporary file
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+
+
+5. Frontend Implementation
+
+The frontend will use the MediaRecorder API to capture audio.
+
+A. HTML Changes
+
+Add a microphone button to the input-area in your index.html. It should be positioned neatly next to the textarea.
+
+<!-- In templates/index.html -->
+<div id="input-area">
+    <div class="selected-contact">
+        <span id="selected-contact-name">Select a contact to add notes...</span>
+    </div>
+    <div class="note-container">
+        <textarea id="note-input" placeholder="Enter notes or start recording..." disabled></textarea>
+        <button id="record-btn" class="mic-btn" title="Start Recording" disabled>🎤</button>
+    </div>
+    <button id="analyze-btn" disabled>Analyze Note</button>
+</div>
+
+B. CSS Styling
+
+Add some basic styles for the new button and its states.
+
+/* Add to static/style.css */
+.note-container {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+}
+
+#note-input {
+    flex-grow: 1;
+}
+
+.mic-btn {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 5px;
+    opacity: 0.7;
+}
+
+.mic-btn:hover {
+    opacity: 1;
+}
+
+.mic-btn.recording {
+    color: red;
+}
+
+.mic-btn.processing {
+    color: #007aff;
+    cursor: not-allowed;
+}
+
+C. JavaScript Logic
+
+This new logic will manage the recording state and communication with the backend.
+
+// Add to your main JavaScript file
+const recordBtn = document.getElementById('record-btn');
+const noteInput = document.getElementById('note-input');
+
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
+
+// This function should be called when a contact is selected
+function enableRecording() {
+    recordBtn.disabled = false;
+}
+
+recordBtn.addEventListener('click', async () => {
+    if (isRecording) {
+        // --- STOP RECORDING ---
+        mediaRecorder.stop();
+        recordBtn.textContent = '...';
+        recordBtn.classList.add('processing');
+        recordBtn.disabled = true; // Disable while processing
+        isRecording = false;
+    } else {
+        // --- START RECORDING ---
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            alert('Your browser does not support audio recording.');
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = handleAudioStop;
+
+            audioChunks = [];
+            mediaRecorder.start();
+            recordBtn.textContent = '🛑';
+            recordBtn.classList.add('recording');
+            isRecording = true;
+        } catch (err) {
+            console.error("Error accessing microphone:", err);
+            alert("Could not access microphone. Please grant permission in your browser settings.");
+        }
+    }
+});
+
+async function handleAudioStop() {
+    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+    
+    // Send the audio to the backend for transcription
+    const formData = new FormData();
+    formData.append('audio_file', audioBlob, 'recording.webm');
+    
+    try {
+        const response = await fetch('/api/transcribe-audio', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Transcription failed.');
+        }
+        
+        const data = await response.json();
+        
+        // Append the new transcript to any existing text, with a newline for separation
+        noteInput.value += (noteInput.value.trim() ? '\n\n' : '') + data.transcript;
+
+    } catch (error) {
+        console.error("Error during transcription:", error);
+        alert(`Transcription Error: ${error.message}`);
+    } finally {
+        // Reset button state after processing
+        recordBtn.textContent = '🎤';
+        recordBtn.classList.remove('recording', 'processing');
+        recordBtn.disabled = false; // Re-enable for another recording
+    }
+}
+
+6. Integration with "View Raw Logs"
+
+This new feature integrates perfectly with your existing raw log system without any changes.
+
+Voice to Text: The user records their voice note.
+
+Transcription: The audio is sent to Whisper and a pure text transcript is returned.
+
+Population: This text is placed into the <textarea id="note-input">.
+
+Analysis & Saving: When the user clicks "Analyze Note," the content of the textarea (the transcript) is sent to the backend. The /api/save-synthesis endpoint saves this text as a new entry in the raw_notes table.
+
+Viewing: The "View Raw Logs" feature on the contact's profile page reads directly from this raw_notes table.
+
+Therefore, the full, accurate transcript of the user's voice note will be automatically and permanently archived, viewable in the raw logs just like any other note they've typed.
+
+
+
 

@@ -204,6 +204,10 @@ function openContactProfile(contactId, contactName) {
   if (header) header.textContent = contactName || '';
   showProfileView();
   loadContactProfile(contactId);
+  const mainBtn = document.getElementById('record-btn');
+  const profileBtn = document.getElementById('profile-record-btn');
+  if (mainBtn) mainBtn.disabled = false;
+  if (profileBtn) profileBtn.disabled = false;
 }
 
 // Fetch and render a contact profile, including all categories
@@ -234,8 +238,16 @@ async function loadContactProfile(contactId) {
             html += `<div class="change-entry">`;
             html += `<div class="change-header">`;
             html += `<div class="change-date">${date}</div>`;
+            const engine = e.engine;
+            html += `<div class="change-meta">`;
+            if (engine) {
+              const label = engine === 'vision' ? 'Google Vision' : engine === 'openai' ? 'OpenAI' : engine === 'gemini' ? 'Gemini' : 'Local';
+              const icon = engine === 'vision' ? '👁️' : engine === 'openai' ? '🤖' : engine === 'gemini' ? '✨' : '📄';
+              html += `<span class="engine-badge ${engine}" title="Processed by ${label}">${icon} ${label}</span>`;
+            }
+            html += `</div>`; // change-meta
+            html += `</div>`; // change-header
             html += `<div class="change-description">${e.content}</div>`;
-            html += `</div>`;
             const d = e.details;
             // Before/After table if present
             if (d && typeof d === 'object' && !Array.isArray(d) && d.before && d.after) {
@@ -258,8 +270,10 @@ async function loadContactProfile(contactId) {
               html += `<div class="change-details">`;
               html += `<h4>✏️ Information Added</h4>`;
               html += `<table class="categorization-table"><thead><tr><th>Category</th><th>New Information</th></tr></thead><tbody>`;
-              d.categorized_updates.forEach(u => {
-                html += `<tr><td class="category-name"><strong>${(u.category||'').replaceAll('_',' ')}</strong></td><td class="items-column">` + (u.details||[]).map(it => `<div class="item-row added-item">${it}</div>`).join('') + `</td></tr>`;
+              d.categorized_updates.forEach(row => {
+                const cat = row.category || 'UNKNOWN';
+                const items = row.items || [];
+                html += `<tr><td class="category-name"><strong>${cat.replaceAll('_',' ')}</strong></td><td>` + (items.length ? items.map(item => `<div class="item-row added-item">${item}</div>`).join('') : `<em class="empty-state">Nothing</em>`) + `</td></tr>`;
               });
               html += `</tbody></table></div>`;
             } else {
@@ -570,6 +584,107 @@ showProfileView = function() {
   wireProfileButtons();
 };
 
+// Voice memo & transcription (V3.6)
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
+
+async function handleAudioStop() {
+  const noteInput = document.getElementById('note-input');
+  const recordBtn = document.getElementById('record-btn');
+  const blob = new Blob(audioChunks, { type: 'audio/webm' });
+  const formData = new FormData();
+  formData.append('audio_file', blob, 'recording.webm');
+  try {
+    recordBtn.textContent = '...';
+    recordBtn.classList.add('processing');
+    recordBtn.disabled = true;
+    const res = await fetch('/api/transcribe-audio', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || 'Transcription failed');
+    }
+    const data = await res.json();
+    const existing = noteInput.value.trim();
+    noteInput.value = existing ? existing + '\n\n' + (data.transcript || '') : (data.transcript || '');
+    // Enable analyze button if transcript exists
+    const analyzeBtn = document.getElementById('analyze-btn');
+    if (analyzeBtn) analyzeBtn.disabled = !(noteInput.value.trim().length > 0);
+  } catch (err) {
+    alert('Transcription error: ' + err.message);
+  } finally {
+    const recordBtn2 = document.getElementById('record-btn');
+    recordBtn2.textContent = '🎤';
+    recordBtn2.classList.remove('recording', 'processing');
+    recordBtn2.disabled = false;
+  }
+}
+
+function wireVoiceRecorder() {
+  const mainBtn = document.getElementById('record-btn');
+  const profileBtn = document.getElementById('profile-record-btn');
+  const bind = (btn, getNoteEl) => {
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (isRecording) {
+        try { mediaRecorder && mediaRecorder.stop(); } catch (e) {}
+        btn.textContent = '...';
+        btn.classList.add('processing');
+        btn.disabled = true;
+        isRecording = false;
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Your browser does not support audio recording.');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+          // Directly handle stop for the specific button context
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          const formData = new FormData();
+          formData.append('audio_file', blob, 'recording.webm');
+          try {
+            btn.textContent = '...';
+            btn.classList.add('processing');
+            btn.disabled = true;
+            const res = await fetch('/api/transcribe-audio', { method: 'POST', body: formData });
+            if (!res.ok) {
+              const e = await res.json().catch(() => ({}));
+              throw new Error(e.error || 'Transcription failed');
+            }
+            const data = await res.json();
+            const noteEl = getNoteEl();
+            const existing = (noteEl.value || '').trim();
+            noteEl.value = existing ? existing + '\n\n' + (data.transcript || '') : (data.transcript || '');
+            const analyzeBtn = document.getElementById('analyze-btn') || document.getElementById('profile-analyze-btn');
+            if (analyzeBtn) analyzeBtn.disabled = !(noteEl.value.trim().length > 0);
+          } catch (err) {
+            alert('Transcription error: ' + err.message);
+          } finally {
+            btn.textContent = '🎤';
+            btn.classList.remove('recording', 'processing');
+            btn.disabled = false;
+          }
+        };
+        mediaRecorder.start();
+        btn.textContent = '🛑';
+        btn.classList.add('recording');
+        isRecording = true;
+      } catch (err) {
+        console.error('Mic access error', err);
+        alert('Could not access microphone. Please grant permission.');
+      }
+    });
+  };
+  bind(mainBtn, () => document.getElementById('note-input'));
+  bind(profileBtn, () => document.getElementById('profile-note-input'));
+}
+
 // Fallback poller if inline definition is not present
 if (typeof window.pollImportStatus !== 'function') {
   window.pollImportStatus = function(taskId, _statusDiv = null, onComplete = null) {
@@ -616,3 +731,12 @@ document.addEventListener('DOMContentLoaded', function() {
     setupCheckboxListeners();
     checkTelegramStatus();
 });
+
+// after DOM ready
+(function(){
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireVoiceRecorder);
+  } else {
+    wireVoiceRecorder();
+  }
+})();

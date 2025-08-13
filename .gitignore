@@ -35,3 +35,18 @@ node_modules/
 
 # Process outputs
 nohup.out
+# Root ignores
+.DS_Store
+*.env
+supercal-*.json
+
+# App ignores
+kith-platform/.venv/
+kith-platform/uploads/
+kith-platform/server.out
+kith-platform/chroma_db/
+kith-platform/*.db
+
+# Misc
+**/__pycache__/
+*.pyc

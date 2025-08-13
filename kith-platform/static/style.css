@@ -222,19 +222,40 @@ h3 {
     color: var(--primary-color);
 }
 
+/* Voice memo input controls */
+.note-container {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+}
+
 #note-input {
-    width: 100%;
-    min-height: 200px;
-    padding: 1.25rem;
-    border: 2px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    font-size: 1rem;
-    line-height: 1.6;
-    resize: vertical;
-    transition: var(--transition);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-family: inherit;
+    flex-grow: 1;
+}
+
+.mic-btn {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    background: none;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    padding: 4px;
+    opacity: 0.75;
+}
+
+.mic-btn:hover {
+    opacity: 1;
+}
+
+.mic-btn.recording {
+    color: var(--danger-color);
+}
+
+.mic-btn.processing {
+    color: var(--primary-color);
+    cursor: not-allowed;
 }
 
 #note-input:focus {
@@ -1473,4 +1494,50 @@ button {
     #create-contact-modal > div > div:last-child {
         flex-direction: column;
     }
+}
+
+/* Engine badges */
+.engine-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+.engine-badge.vision {
+    border-color: #0ea5e9;
+    background: rgba(14,165,233,0.1);
+    color: #0369a1;
+}
+.engine-badge.openai {
+    border-color: #6366f1;
+    background: rgba(99,102,241,0.1);
+    color: #3730a3;
+}
+.engine-badge.gemini {
+    border-color: #10b981;
+    background: rgba(16,185,129,0.1);
+    color: #065f46;
+}
+.engine-badge.local {
+    border-color: #9ca3af;
+    background: rgba(156,163,175,0.12);
+    color: #374151;
+}
+/* Placement in raw logs */
+.change-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+.change-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }

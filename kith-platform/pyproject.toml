@@ -1,0 +1,8 @@
+[tool.black]
+line-length = 120
+exclude = '\\.(venv|venv|git|pytest_cache)'
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip = [".venv", "venv", "__pycache__", ".git", ".pytest_cache"] 

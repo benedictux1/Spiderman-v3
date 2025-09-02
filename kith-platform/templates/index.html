@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kith - Personal Intelligence Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+</head>
+<body>
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+    
+    <!-- Floating Settings Button -->
+    <button class="settings-btn" id="floating-settings-btn" title="Settings">⚙️</button>
+    
+    <div class="container">
+        <!-- Page Title -->
+        <h1>Kith Platform</h1>
+        
+        <!-- Navigation -->
+        <div class="navigation">
+            <button id="main-view-btn" class="nav-btn active">Contacts</button>
+            <button id="graph-view-btn" class="nav-btn">Relationship Graph</button>
+            <button id="manage-graph-btn" class="nav-btn">Manage Graph</button>
+            <button id="settings-btn" class="nav-btn">Settings</button>
+        </div>
+        
+        <!-- Main Input View -->
+        <div id="main-view">
+            <!-- Search Area -->
+            <div class="search-area">
+                <div class="search-container">
+                    <input type="search" id="contact-search" placeholder="Search for a contact...">
+                    <label class="tier-filter">
+                        <input type="checkbox" id="tier-filter"> Tier 1 Only
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Note Input Area -->
+            <div id="input-area">
+                <div class="selected-contact">
+                    <span id="selected-contact-name">Select a contact to add notes...</span>
+                    <button id="change-contact-btn" style="display:none;">Change Contact</button>
+                </div>
+                <div class="note-container">
+                    <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
+                    <button id="record-btn" class="mic-btn" title="Start Voice Recording">🎤</button>
+                </div>
+                <button id="analyze-btn" disabled>Analyze Note</button>
+            </div>
+            
+            <!-- Tier 1 Contacts List -->
+            <div class="tier1-contacts-section">
+                <h3>Tier 1 Contacts</h3>
+                <div id="tier1-contacts" class="tier1-contacts-list">
+                    <!-- Tier 1 contacts will be dynamically inserted here -->
+                </div>
+            </div>
+            
+            <!-- Tier 2 Contacts List -->
+            <div class="tier2-contacts-section">
+                <h3>Tier 2 Contacts</h3>
+                <div id="tier2-contacts" class="tier1-contacts-list">
+                    <!-- Tier 2 contacts will be dynamically inserted here -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Review View (Initially hidden) -->
+        <div id="review-view" style="display:none;">
+            <div class="review-header">
+                <h2>AI Analysis Review</h2>
+                <p class="review-subtitle">Edit freely before saving</p>
+                <button id="back-to-input">← Back to Input</button>
+            </div>
+            <div id="review-content"></div>
+            <div class="review-actions">
+                <button id="confirm-btn">Confirm & Save Analysis</button>
+                <button id="cancel-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Individual Contact Profile View (Initially hidden) -->
+        <div id="profile-view" style="display:none;">
+            <input type="hidden" id="selected-contact-id" />
+            <div class="profile-header">
+                <h2 id="contact-profile-name"></h2>
+                <div class="profile-actions">
+                    <button id="back-to-main-from-profile">← Back to Main</button>
+                </div>
+            </div>
+            
+            <!-- Profile Actions -->
+            <div class="profile-actions-bar card">
+                <button id="profile-add-note-btn">Add Note</button>
+                <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
+                
+                <!-- NEW: File Upload -->
+                <form id="file-upload-form" style="display:inline;">
+                    <input type="file" id="file-upload-input" style="display:none;" accept="image/*,.pdf,.txt">
+                    <button type="button" id="profile-upload-file-btn">Upload File</button>
+                </form>
+                
+                <button id="edit-contact-profile-btn">Edit Profile Details</button>
+                <button id="edit-all-categories-btn">Edit Notes</button>
+                <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
+                <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
+            </div>
+            <div id="file-upload-status" style="margin-top:8px;"></div>
+
+            <!-- Profile Note Input Area (hidden by default) -->
+            <div id="profile-note-input-area" class="card" style="display:none;">
+                <h3>Add New Note</h3>
+                <div class="note-container">
+                    <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
+                    <button id="profile-record-btn" class="mic-btn" title="Start Voice Recording">🎤</button>
+                </div>
+                <div class="note-actions">
+                    <button id="profile-analyze-btn">Analyze Note</button>
+                    <button id="profile-cancel-note-btn">Cancel</button>
+                </div>
+            </div>
+            
+            <div id="contact-profile-content" class="profile-sections">
+                <!-- Category sections will be dynamically inserted here -->
+            </div>
+            
+            <!-- Raw Log Viewer -->
+            <div class="raw-logs-section">
+                <details id="raw-logs-details">
+                    <summary>View Raw Logs</summary>
+                    <div id="raw-logs-content">
+                        <!-- Raw logs will be loaded here -->
+                    </div>
+                </details>
+            </div>
+
+            <!-- Import Progress UI -->
+            <div id="import-progress" style="display:none; margin-top: 16px;" class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong>Telegram Sync Progress</strong>
+                    <span id="import-progress-status">Starting…</span>
+                </div>
+                <div style="background:#eee; border-radius:6px; height:10px; overflow:hidden;">
+                    <div id="import-progress-bar" style="height:10px; width:0%; background:#4a90e2;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Telegram Modal -->
+        <div id="sync-telegram-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); align-items:center; justify-content:center; z-index:1000;">
+            <div style="background:#fff; padding:20px; border-radius:8px; width: 380px; max-width: 90%;">
+                <h3>Sync Telegram Chat</h3>
+                <p style="margin-top:4px; color:#555;">Enter the contact's Telegram username and how many days back to sync.</p>
+                <div class="form-group" style="margin-top:12px;">
+                    <label for="sync-telegram-username">Telegram Username</label>
+                    <input id="sync-telegram-username" type="text" placeholder="e.g. johndoe" />
+                </div>
+                <div class="form-group" style="margin-top:12px;">
+                    <label for="sync-telegram-days">Days Back</label>
+                    <input id="sync-telegram-days" type="number" min="1" max="365" value="30" />
+                </div>
+                <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
+                    <button id="sync-telegram-cancel-btn">Cancel</button>
+                    <button id="sync-telegram-start-btn">Start Sync</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings View (Initially hidden) -->
+        <div id="settings-view" style="display:none;">
+            <div class="settings-header">
+                <h2>Settings & Management</h2>
+                <button id="back-to-main-from-settings">← Back to Main</button>
+            </div>
+            
+            <!-- Contacts Management -->
+            <div class="settings-section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3>👥 Manage Contacts</h3>
+                        <div id="contacts-count" class="contacts-count">Loading contacts...</div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <button id="toggle-contacts-list" class="toggle-btn" data-tooltip="Show/Hide contact list">
+                            <span id="toggle-icon">👁️</span>
+                            <span id="toggle-text">Hide List</span>
+                        </button>
+                        <button id="show-create-contact-modal-btn">+ Create Contact</button>
+                    </div>
+                </div>
+                
+                <!-- Collapsible Contacts Container -->
+                <div id="contacts-container" class="contacts-container">
+                    <!-- Search and Filter -->
+                    <div class="management-controls">
+                        <input type="text" id="contact-search-manage" placeholder="Search contacts...">
+                        <select id="tier-filter-manage">
+                            <option value="">All Tiers</option>
+                            <option value="1">Tier 1</option>
+                            <option value="2">Tier 2</option>
+                            <option value="3">Tier 3</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Bulk Actions -->
+                    <div class="bulk-actions">
+                        <button id="select-all-btn">Select All</button>
+                        <button id="deselect-all-btn">Deselect All</button>
+                        <button id="delete-selected-btn" class="danger-btn" disabled>Delete Selected</button>
+                    </div>
+                    
+                    <!-- Contacts Table -->
+                    <table id="contacts-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="select-all-header"></th>
+                                <th>Name</th>
+                                <th>Tier</th>
+                                <th>Telegram Handle</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Contacts will be dynamically inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Import/Export -->
+            <div class="settings-section">
+                <h3>📁 Import & Export</h3>
+                <div class="import-export-controls">
+                    <div>
+                        <label for="vcf-upload">Import vCard:</label>
+                        <input type="file" id="vcf-upload" accept=".vcf">
+                    </div>
+                    <a id="download-csv-btn" href="/api/export/csv" download>Download All Data as CSV</a>
+                </div>
+                <div class="restore-area card">
+                    <h4>Import and Merge from Backup</h4>
+                    <div class="info-box">
+                        <strong>Note:</strong> This tool will add new contacts and details from your CSV file. Existing data will not be deleted or overwritten.
+                    </div>
+                    <form id="merge-form">
+                        <input type="file" id="merge-file-input" accept=".csv" required>
+                        <div class="form-group">
+                            <label for="merge-dry-run">
+                                <input type="checkbox" id="merge-dry-run">
+                                Dry Run (preview changes without applying)
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label for="policy-contact-tier">Policy for Contact Tier Updates:</label>
+                            <select id="policy-contact-tier">
+                                <option value="preserve" selected>Preserve existing</option>
+                                <option value="overwrite">Overwrite with CSV</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="policy-details">Policy for Detail Updates:</label>
+                            <select id="policy-details">
+                                <option value="preserve" selected>Preserve (skip duplicates)</option>
+                                <option value="append">Append (allow duplicates)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="merge-force">
+                                <input type="checkbox" id="merge-force">
+                                Force Merge (Overwrite existing data)
+                            </label>
+                        </div>
+                        <button type="submit" id="merge-btn">🔄 Upload & Merge</button>
+                    </form>
+                    <div id="merge-preview" class="card" style="display:none;"></div>
+                    <p id="merge-status"></p>
+                </div>
+            </div>
+
+            <!-- Telegram Integration -->
+            <div class="settings-section">
+                <h3>💬 Telegram Integration</h3>
+                <div id="telegram-status"></div>
+                <div id="import-status" style="display:none;"></div>
+            </div>
+        </div>
+
+        <div id="create-contact-modal" style="display:none;">
+            <div>
+                <div style="position: relative;">
+                    <h2>Create New Contact</h2>
+                    <button id="close-create-contact-modal-btn" type="button">&times;</button>
+                </div>
+                <div>
+                    <form id="create-contact-form">
+                        <div class="form-group">
+                            <label for="new-contact-name">Full Name</label>
+                            <input type="text" id="new-contact-name" required placeholder="Enter full name">
+                        </div>
+                        <div class="form-group">
+                            <label for="new-contact-tier">Tier</label>
+                            <select id="new-contact-tier">
+                                <option value="1">Tier 1 - Close contacts</option>
+                                <option value="2" selected>Tier 2 - Regular contacts</option>
+                                <option value="3">Tier 3 - Distant contacts</option>
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                <div>
+                    <button id="save-contact-btn" type="button">💾 Save Contact</button>
+                    <button id="cancel-create-contact-btn" type="button">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Relationship Graph View (Initially hidden) -->
+        <div id="graph-view" style="display:none;">
+            <div class="graph-header">
+                <h2>Relationship Graph</h2>
+                <p class="graph-subtitle">Visualize connections between your contacts</p>
+                <button id="back-to-main-from-graph">← Back to Contacts</button>
+            </div>
+            <div id="graph-container" style="width: 100%; height: 600px; border: 1px solid #ddd;"></div>
+            <div class="graph-controls">
+                <button id="fit-graph-btn">Fit to Screen</button>
+                <button id="reset-physics-btn">Reset Physics</button>
+                <label>
+                    <input type="checkbox" id="show-labels-checkbox" checked> Show Labels
+                </label>
+            </div>
+        </div>
+
+        <!-- Manage Graph Modal (Initially hidden) -->
+        <div id="manage-graph-modal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Manage Relationship Graph</h3>
+                    <button class="close-modal-btn">×</button>
+                </div>
+                
+                <!-- Create New Group -->
+                <div class="modal-section">
+                    <h4>Create New Group</h4>
+                    <div class="form-group">
+                        <input type="text" id="new-group-name" placeholder="Group Name (e.g., Family, Work)">
+                        <input type="color" id="new-group-color" value="#97C2FC">
+                        <button id="create-group-btn">Create Group</button>
+                    </div>
+                </div>
+                
+                <hr>
+
+                <!-- Create New Relationship -->
+                <div class="modal-section">
+                    <h4>Create New Relationship</h4>
+                    <div class="form-group">
+                        <select id="rel-source-contact">
+                            <option value="">Select first contact...</option>
+                        </select>
+                        <input type="text" id="rel-label" placeholder="Relationship (e.g., Siblings, Colleagues)">
+                        <select id="rel-target-contact">
+                            <option value="">Select second contact...</option>
+                        </select>
+                        <button id="create-rel-btn">Create Relationship</button>
+                    </div>
+                </div>
+                
+                <div class="modal-actions">
+                    <button class="close-modal-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Button -->
+        <button id="settings-btn" class="settings-btn">⚙️</button>
+    </div>
+
+    <!-- External JavaScript files -->
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="/static/js/ui-enhancements.js"></script>
+    <script src="/static/js/main.js"></script>
+    <script src="/static/js/contacts.js"></script>
+    <script src="/static/js/settings.js"></script>
+    <script src="/static/js/relationship-graph.js"></script>
+    
+    <!-- Minimal inline script for remaining functions -->
+    <script>
+        // API configuration
+        const API_URL = '/api/process-note';
+        const SAVE_URL = '/api/save-synthesis';
+        let currentAnalysisData = null;
+        let selectedContactName = null;
+
+        // Wire search input
+        document.addEventListener('DOMContentLoaded', () => {
+          const search = document.getElementById('contact-search');
+          if (search) search.addEventListener('input', handleContactSearch);
+        });
+
+        // Normalize analysis response to synthesis array for review UI
+        function transformToSynthesis(data) {
+          const updates = data.categorized_updates || [];
+          return updates.flatMap(u => (u.details || []).map(d => ({
+            category: u.category,
+            content: d,
+            confidence_score: data.confidence_score ?? 10.0
+          })));
+        }
+
+        // Note analysis functions
+        async function handleAnalyzeNote() {
+            const noteInput = document.getElementById('note-input');
+            const noteText = noteInput.value.trim();
+            
+            if (!noteText) {
+                alert('Please enter some notes to analyze.');
+                return;
+            }
+            
+            if (!currentContactId) {
+                alert('Please select a contact first.');
+                return;
+            }
+            
+            const analyzeBtn = document.getElementById('analyze-btn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'Analyzing...';
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ note: noteText, contact_id: currentContactId })
+                });
+                
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                currentAnalysisData = data;
+                const synthesis = transformToSynthesis(data);
+                displayReviewCards({ synthesis });
+                showReviewView();
+                
+            } catch (error) {
+                alert('Error analyzing note: ' + error.message);
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'Analyze Note';
+            }
+        }
+
+        async function handleProfileAnalyzeNote() {
+            const noteInput = document.getElementById('profile-note-input');
+            const noteText = noteInput.value.trim();
+            
+            if (!noteText) {
+                alert('Please enter some notes to analyze.');
+                return;
+            }
+            
+            const contactId = document.getElementById('selected-contact-id')?.value;
+            if (!contactId) {
+                alert('Contact ID not found. Please refresh and try again.');
+                return;
+            }
+            
+            const analyzeBtn = document.getElementById('profile-analyze-btn');
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = 'Analyzing...';
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ note: noteText, contact_id: contactId })
+                });
+                
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                currentAnalysisData = data;
+                const synthesis = transformToSynthesis(data);
+                displayReviewCards({ synthesis });
+                showReviewView();
+                
+                noteInput.value = '';
+                document.getElementById('profile-note-input-area').style.display = 'none';
+                
+            } catch (error) {
+                alert('Error analyzing note: ' + error.message);
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = 'Analyze Note';
+            }
+        }
+
+        function displayReviewCards(data) {
+            const reviewContent = document.getElementById('review-content');
+            reviewContent.innerHTML = '';
+            
+            if (!data.synthesis || data.synthesis.length === 0) {
+                reviewContent.innerHTML = '<p>No structured data was extracted from your note.</p>';
+                return;
+            }
+            
+            data.synthesis.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'review-card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="category category-${item.category.toLowerCase().replace('_', '-')}">${item.category.replace('_', ' ')}</span>
+                        <button class="delete-btn" onclick="deleteCard(this)">×</button>
+                    </div>
+                    <div class="card-content">
+                        <textarea class="content-edit" data-index="${index}">${item.content}</textarea>
+                        <div class="confidence-score">Confidence: ${item.confidence_score}</div>
+                    </div>
+                `;
+                reviewContent.appendChild(card);
+            });
+        }
+
+        function deleteCard(button) {
+            const card = button.closest('.review-card');
+            const textarea = card.querySelector('.content-edit');
+            const index = parseInt(textarea.dataset.index);
+            
+            if (currentAnalysisData?.synthesis) {
+                currentAnalysisData.synthesis.splice(index, 1);
+                displayReviewCards(currentAnalysisData);
+            }
+        }
+
+        async function confirmAndSave() {
+            if (!currentAnalysisData) {
+                alert('No analysis data to save.');
+                return;
+            }
+            
+            const editedCards = document.querySelectorAll('.content-edit');
+            const synthesis = transformToSynthesis(currentAnalysisData);
+            editedCards.forEach((textarea, index) => {
+                if (synthesis[index]) synthesis[index].content = textarea.value;
+            });
+            
+            try {
+                const response = await fetch(SAVE_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: currentContactId,
+                        raw_note: document.getElementById('note-input').value,
+                        synthesis: { categorized_updates: Object.entries(synthesis.reduce((acc, item) => {
+                          const cat = item.category;
+                          if (!acc[cat]) acc[cat] = [];
+                          acc[cat].push(item.content);
+                          return acc;
+                        }, {})).map(([category, details]) => ({ category, details })) }
+                    })
+                });
+                
+                const result = await response.json();
+                if (response.ok && (result.status === 'success' || result.message)) {
+                    alert('Analysis saved successfully!');
+                    document.getElementById('note-input').value = '';
+                    document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
+                    document.getElementById('change-contact-btn').style.display = 'none';
+                    document.getElementById('analyze-btn').disabled = true;
+                    currentContactId = null;
+                    currentAnalysisData = null;
+                    showMainView();
+                } else {
+                    throw new Error(result.error || result.message || 'Unknown error');
+                }
+            } catch (error) {
+                alert('Error saving analysis: ' + error.message);
+            }
+        }
+
+        function cancelAnalysis() {
+            currentAnalysisData = null;
+            showMainView();
+        }
+
+        function selectContact(contactId, contactName) {
+            currentContactId = contactId;
+            selectedContactName = contactName;
+            
+            document.getElementById('selected-contact-name').textContent = contactName;
+            document.getElementById('change-contact-btn').style.display = 'inline-block';
+            
+            const noteInput = document.getElementById('note-input');
+            const analyzeBtn = document.getElementById('analyze-btn');
+            analyzeBtn.disabled = !noteInput.value.trim();
+            noteInput.disabled = false;
+        }
+
+        // Telegram functions
+        async function handleProfileTelegramSync() {
+            const contactId = document.getElementById('selected-contact-id')?.value;
+            if (!contactId) {
+                alert('Contact ID not found. Please refresh and try again.');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/telegram/start-import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contact_id: contactId, days_back: 30 })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert('Telegram sync started! This may take a few moments.');
+                    pollImportStatus(result.task_id, null, () => loadContactProfile(contactId));
+                } else {
+                    alert('Error starting Telegram sync: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error starting Telegram sync: ' + error.message);
+            }
+        }
+
+        async function checkTelegramStatus() {
+            try {
+                const response = await fetch('/api/telegram/status');
+                const status = await response.json();
+                
+                const statusDiv = document.getElementById('telegram-status');
+                if (statusDiv) {
+                    if (status.authenticated) {
+                        statusDiv.innerHTML = `<span class="status-indicator connected">✓</span>
+                            <span>Connected${status.username ? ` as ${status.username}` : ''}</span>
+                            ${status.last_sync ? `<span style="margin-left:8px; color:#666;">Last sync: ${new Date(status.last_sync).toLocaleString()}</span>` : ''}
+                            ${status.session_updated_at ? `<span style=\"margin-left:8px; color:#666;\">Session updated: ${status.session_updated_at}</span>` : ''}`;
+                    } else {
+                        statusDiv.innerHTML = `<span class="status-indicator disconnected">✗</span>
+                            <span>Not connected</span>
+                            ${status.session_updated_at ? `<span style=\"margin-left:8px; color:#666;\">Session updated: ${status.session_updated_at}</span>` : ''}`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking Telegram status:', error);
+            }
+        }
+        
+        // Make function globally accessible
+        window.checkTelegramStatus = checkTelegramStatus;
+
+        function pollImportStatus(taskId, statusDiv = null, onComplete = null) {
+            const progressContainer = document.getElementById('import-progress');
+            const progressBar = document.getElementById('import-progress-bar');
+            const progressStatus = document.getElementById('import-progress-status');
+            if (progressContainer) progressContainer.style.display = 'block';
+            // Add cancel control
+            let cancelBtn = document.getElementById('import-cancel-btn');
+            if (!cancelBtn && progressContainer) {
+                cancelBtn = document.createElement('button');
+                cancelBtn.id = 'import-cancel-btn';
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.style.marginTop = '8px';
+                cancelBtn.onclick = () => { clearInterval(pollInterval); if (progressContainer) progressContainer.style.display = 'none'; };
+                progressContainer.appendChild(cancelBtn);
+            }
+
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/telegram/import-status/${taskId}`);
+                    const status = await response.json();
+                    
+                    if (status.status === 'completed') {
+                        clearInterval(pollInterval);
+                        if (progressStatus) progressStatus.textContent = 'Completed';
+                        if (progressBar) progressBar.style.width = '100%';
+                        loadContacts();
+                        loadTier1Contacts();
+                        loadTier2Contacts();
+                        if (onComplete) onComplete();
+                        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 1500);
+                    } else if (status.status === 'failed') {
+                        clearInterval(pollInterval);
+                        const errMsg = status.error_details || status.status_message || status.error || 'Unknown error';
+                        alert('Import failed: ' + errMsg);
+                        if (progressStatus) progressStatus.textContent = 'Failed';
+                        if (progressBar) progressBar.style.width = '100%';
+                        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
+                    } else {
+                        if (progressStatus) progressStatus.textContent = status.status_message || status.status || 'Running...';
+                        if (progressBar && typeof status.progress === 'number') progressBar.style.width = `${Math.max(0, Math.min(100, status.progress))}%`;
+                    }
+                } catch (error) {
+                    clearInterval(pollInterval);
+                    console.error('Error polling import status:', error);
+                    if (progressStatus) progressStatus.textContent = 'Error';
+                    setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
+                }
+            }, 3000);
+        }
+
+        // vCard import
+        async function handleVCardImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('vcard_file', file);
+            
+            try {
+                const response = await fetch('/api/import-vcard', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                if (response.ok && !result.error) {
+                    alert(result.message || 'vCard processed.');
+                    loadContacts();
+                    loadTier1Contacts();
+                    loadTier2Contacts();
+                } else {
+                    alert('Error importing vCard: ' + (result.error || result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error importing vCard: ' + error.message);
+            }
+            
+            event.target.value = '';
+        }
+
+        async function handleMergeImport(event) {
+            console.log('handleMergeImport called'); // Debug log
+            event.preventDefault();
+            const form = document.getElementById('merge-form');
+            const fileInput = document.getElementById('merge-file-input');
+            const mergeStatus = document.getElementById('merge-status');
+            const mergeBtn = document.getElementById('merge-btn');
+            const dryRunCheckbox = document.getElementById('merge-dry-run');
+            const policyTier = document.getElementById('policy-contact-tier');
+            const policyDetails = document.getElementById('policy-details');
+            const forceCheckbox = document.getElementById('merge-force');
+
+            console.log('Form elements:', { form, fileInput, mergeStatus, mergeBtn }); // Debug log
+
+            if (!fileInput.files.length) {
+                alert('Please select a CSV file to merge.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            console.log('Selected file:', file.name, file.type, file.size); // Debug log
+
+            // Show loading state
+            const originalBtnText = mergeBtn.textContent;
+            mergeBtn.disabled = true;
+            mergeBtn.textContent = 'Processing...';
+            mergeStatus.textContent = 'Uploading and processing CSV file...';
+            mergeStatus.style.color = '#007aff';
+
+            const formData = new FormData();
+            formData.append('backup_file', fileInput.files[0]);
+            formData.append('dry_run', dryRunCheckbox && dryRunCheckbox.checked ? 'true' : 'false');
+            formData.append('force', forceCheckbox && forceCheckbox.checked ? 'true' : 'false');
+            if (policyTier) formData.append('policy_contact_tier', policyTier.value);
+            if (policyDetails) formData.append('policy_details', policyDetails.value);
+
+            try {
+                console.log('Sending request to /api/import/merge-from-csv'); // Debug log
+                const response = await fetch('/api/import/merge-from-csv', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                console.log('Response status:', response.status); // Debug log
+                const result = await response.json();
+                console.log('Merge result:', result); // Debug log
+                
+                if (response.ok && (result.status === 'success' || result.status === 'preview')) {
+                    const stats = result.details || {};
+                    const message = `Merge complete! Added ${stats.contacts_added || 0} new contacts, ${stats.details_added || 0} new details. Skipped ${stats.contacts_skipped || 0} existing contacts, ${stats.details_skipped || 0} duplicate details.`;
+                    alert(message);
+                    mergeStatus.textContent = message;
+                    mergeStatus.style.color = '#28a745';
+                    if (result.status === 'preview' && result.preview) {
+                        renderMergePreview(result.preview);
+                    }
+                    
+                    // Refresh the UI
+                    loadContacts();
+                    loadTier1Contacts();
+                    loadTier2Contacts();
+                    
+                    // Clear the file input
+                    fileInput.value = '';
+                } else {
+                    const errorMsg = result.error || result.message || 'Unknown error';
+                    console.error('Merge failed:', errorMsg); // Debug log
+                    alert('Error merging data: ' + errorMsg);
+                    mergeStatus.textContent = 'Merge failed: ' + errorMsg;
+                    mergeStatus.style.color = '#dc3545';
+                }
+            } catch (error) {
+                console.error('Merge error:', error);
+                alert('Error merging data: ' + error.message);
+                mergeStatus.textContent = 'Merge failed: ' + error.message;
+                mergeStatus.style.color = '#dc3545';
+            } finally {
+                // Restore button state
+                mergeBtn.disabled = false;
+                mergeBtn.textContent = originalBtnText;
+            }
+        }
+
+        function renderMergePreview(preview) {
+            const container = document.getElementById('merge-preview');
+            if (!container) return;
+            const conflicts = preview.conflicts || [];
+            const isRecordType = preview.is_record_type;
+            let html = '';
+            html += `<div class="preview-header">Dry-Run Preview</div>`;
+            html += `<div class="preview-sub">Record-type CSV: ${isRecordType ? 'Yes' : 'No'}</div>`;
+            if (conflicts.length) {
+                html += `<div class="preview-conflicts">`;
+                html += `<div class="conflict-title">Detected Conflicts / Duplicates (${conflicts.length})</div>`;
+                html += `<ul class="conflict-list">`;
+                conflicts.slice(0, 50).forEach(c => {
+                    if (c.type === 'duplicate_detail') {
+                        html += `<li>Duplicate detail for <strong>${escapeHtml(c.contact_name)}</strong> in <em>${escapeHtml(c.category)}</em>: ${escapeHtml(c.content)}</li>`;
+                    } else if (c.type === 'contact_tier_update') {
+                        html += `<li>Contact tier update for <strong>${escapeHtml(c.name)}</strong> → ${escapeHtml(String(c.to))} (policy: ${escapeHtml(c.policy_applied)})</li>`;
+                    } else if (c.type === 'error') {
+                        html += `<li>Error: ${escapeHtml(c.message || 'Unknown')}</li>`;
+                    }
+                });
+                html += `</ul>`;
+                html += `</div>`;
+            } else {
+                html += `<div class="preview-conflicts">No conflicts detected.</div>`;
+            }
+            container.innerHTML = html;
+            container.style.display = 'block';
+        }
+
+        async function fetchAndRenderRawLogs(contactId) {
+          try {
+            const res = await fetch(`/api/contact/${contactId}/raw-logs`);
+            const entries = await res.json();
+            const box = document.getElementById('raw-logs-content');
+            if (!box) return;
+            
+            if (!Array.isArray(entries) || entries.length === 0) {
+              box.innerHTML = '<div class="empty">No history found for this contact.</div>';
+              return;
+            }
+            
+            let html = '<div class="change-history">';
+            
+            entries.forEach((entry, index) => {
+              let date = 'Unknown date';
+              if (entry.date) {
+                try {
+                  date = new Date(entry.date).toLocaleString();
+                } catch (e) {
+                  date = entry.date;
+                }
+              }
+              const details = entry.details;
+              const engine = entry.engine;
+              
+              html += `<div class="change-entry">`;
+              html += `<div class="change-header">`;
+              html += `<div class="change-date">${date}</div>`;
+              html += `<div class="change-meta">`;
+              if (engine) {
+                const label = engine === 'vision' ? 'Google Vision' : engine === 'openai' ? 'OpenAI' : engine === 'gemini' ? 'Gemini' : 'Local';
+                const icon = engine === 'vision' ? '👁️' : engine === 'openai' ? '🤖' : engine === 'gemini' ? '✨' : '📄';
+                html += `<span class="engine-badge ${engine}" title="Processed by ${label}">${icon} ${label}</span>`;
+              }
+              html += `</div>`; // change-meta
+              html += `</div>`; // change-header
+              
+              html += `<div class="change-description">${entry.content}</div>`;
+              
+              // Only show detailed tables for entries with before/after data
+              if (details && typeof details === 'object' && !Array.isArray(details) && details.before && details.after) {
+                html += `<div class="change-details">`;
+                html += createBeforeAfterTable(details.before, details.after);
+                html += `</div>`;
+              } else if (details && typeof details === 'object' && !Array.isArray(details) && details.categorized_updates) {
+                html += `<div class="change-details">`;
+                html += createCategorizationTable(details.categorized_updates, details.type);
+                html += `</div>`;
+              } else {
+                html += `<div class="change-details-simple">`;
+                html += `<p>Basic event - no detailed changes available</p>`;
+                html += `</div>`;
+              }
+              
+              html += `</div>`;
+            });
+            
+            html += '</div>';
+            box.innerHTML = html;
+            
+          } catch (e) {
+            console.error('Failed to load history', e);
+            document.getElementById('raw-logs-content').innerHTML = '<div class="error">Failed to load history.</div>';
+          }
+        }
+
+        function createBeforeAfterTable(beforeData, afterData) {
+          const allCategories = new Set([...Object.keys(beforeData), ...Object.keys(afterData)]);
+          
+          let html = `<h4>📋 Changes Made</h4>`;
+          html += `<table class="comparison-table">`;
+          html += `<thead>`;
+          html += `<tr><th>Category</th><th>Before</th><th>After</th></tr>`;
+          html += `</thead><tbody>`;
+          
+          allCategories.forEach(category => {
+            const beforeItems = beforeData[category] || [];
+            const afterItems = afterData[category] || [];
+            
+            // Only show categories that actually changed
+            if (JSON.stringify(beforeItems) !== JSON.stringify(afterItems)) {
+              html += `<tr>`;
+              html += `<td class="category-name"><strong>${category.replace('_', ' ')}</strong></td>`;
+              
+              // Before column
+              html += `<td class="before-column">`;
+              if (beforeItems.length === 0) {
+                html += `<em class="empty-state">Nothing</em>`;
+              } else {
+                beforeItems.forEach(item => {
+                  const isRemoved = !afterItems.includes(item);
+                  html += `<div class="item-row ${isRemoved ? 'removed-item' : 'unchanged-item'}">${escapeHtml(item)}</div>`;
+                });
+              }
+              html += `</td>`;
+              
+              // After column
+              html += `<td class="after-column">`;
+              if (afterItems.length === 0) {
+                html += `<em class="empty-state">Nothing</em>`;
+              } else {
+                afterItems.forEach(item => {
+                  const isAdded = !beforeItems.includes(item);
+                  html += `<div class="item-row ${isAdded ? 'added-item' : 'unchanged-item'}">${escapeHtml(item)}</div>`;
+                });
+              }
+              html += `</td>`;
+              
+              html += `</tr>`;
+            }
+          });
+          
+          html += `</tbody></table>`;
+          return html;
+        }
+
+        function createCategorizationTable(categorizedUpdates, eventType) {
+          let html = `<h4>`;
+          if (eventType === 'telegram_sync') {
+            html += `💬 Information Added from Telegram`;
+          } else {
+            html += `✏️ Information Added`;
+          }
+          html += `</h4>`;
+          
+          html += `<table class="categorization-table">`;
+          html += `<thead>`;
+          html += `<tr><th>Category</th><th>New Information</th></tr>`;
+          html += `</thead><tbody>`;
+          
+          categorizedUpdates.forEach(update => {
+            html += `<tr>`;
+            html += `<td class="category-name"><strong>${update.category.replace('_', ' ')}</strong></td>`;
+            html += `<td class="items-column">`;
+            (update.details || []).forEach(detail => {
+              html += `<div class="item-row added-item">${escapeHtml(detail)}</div>`;
+            });
+            html += `</td>`;
+            html += `</tr>`;
+          });
+          
+          html += `</tbody></table>`;
+          return html;
+        }
+
+        function escapeHtml(text) {
+          const div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
+        }
+
+        // Additional event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Core functionality
+            document.getElementById('analyze-btn').addEventListener('click', handleAnalyzeNote);
+            document.getElementById('confirm-btn').addEventListener('click', confirmAndSave);
+            document.getElementById('cancel-btn').addEventListener('click', cancelAnalysis);
+            document.getElementById('back-to-input').addEventListener('click', showMainView);
+            // Sync modal buttons
+            const syncModal = document.getElementById('sync-telegram-modal');
+            const syncCancel = document.getElementById('sync-telegram-cancel-btn');
+            const syncStart = document.getElementById('sync-telegram-start-btn');
+            if (syncCancel) syncCancel.addEventListener('click', () => { syncModal.style.display = 'none'; });
+            if (syncStart) syncStart.addEventListener('click', () => { if (window.startTelegramSyncFromModal) window.startTelegramSyncFromModal(); });
+            
+            // Note input handling
+            document.getElementById('note-input').addEventListener('input', function() {
+                const analyzeBtn = document.getElementById('analyze-btn');
+                analyzeBtn.disabled = !(this.value.trim() && currentContactId);
+            });
+            
+            // Profile note handling
+            document.getElementById('profile-add-note-btn').addEventListener('click', function() {
+                const noteArea = document.getElementById('profile-note-input-area');
+                noteArea.style.display = noteArea.style.display === 'none' ? 'block' : 'none';
+                if (noteArea.style.display === 'block') {
+                    document.getElementById('profile-note-input').focus();
+                }
+            });
+            
+            document.getElementById('profile-cancel-note-btn').addEventListener('click', function() {
+                document.getElementById('profile-note-input-area').style.display = 'none';
+                document.getElementById('profile-note-input').value = '';
+            });
+
+            // Load raw logs when expanded
+            const rawLogs = document.getElementById('raw-logs-details');
+            if (rawLogs) {
+              rawLogs.addEventListener('toggle', async function() {
+                if (rawLogs.open) {
+                  const id = document.getElementById('selected-contact-id').value;
+                  fetchAndRenderRawLogs(id);
+                }
+              });
+            }
+            
+            // Change contact
+            document.getElementById('change-contact-btn').addEventListener('click', function() {
+                currentContactId = null;
+                selectedContactName = null;
+                document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
+                this.style.display = 'none';
+                document.getElementById('analyze-btn').disabled = true;
+            });
+            
+            // Navigation
+            document.getElementById('back-to-main-from-profile').addEventListener('click', showMainView);
+            document.getElementById('back-to-main-from-settings').addEventListener('click', showMainView);
+            
+            // File imports
+            const vCardInput = document.getElementById('vcf-upload');
+            if (vCardInput) {
+                vCardInput.addEventListener('change', handleVCardImport);
+            }
+
+            // Merge import
+            const mergeForm = document.getElementById('merge-form');
+            if (mergeForm) {
+                console.log('Setting up merge form event listener'); // Debug log
+                mergeForm.addEventListener('submit', handleMergeImport);
+                
+                // Also add a click handler to the button as a fallback
+                const mergeBtn = document.getElementById('merge-btn');
+                if (mergeBtn) {
+                    mergeBtn.addEventListener('click', function(e) {
+                        console.log('Merge button clicked'); // Debug log
+                        if (e.target.type === 'submit') {
+                            // Let the form submit handler take care of it
+                            return;
+                        }
+                        // If for some reason this isn't a submit button, handle it manually
+                        e.preventDefault();
+                        handleMergeImport(e);
+                    });
+                }
+            } else {
+                console.error('Merge form not found!'); // Debug log
+            }
+            
+            // CSV Download
+            const csvDownloadBtn = document.getElementById('download-csv-btn');
+            if (csvDownloadBtn) {
+                // The href attribute is now directly on the anchor tag, so no need for event listener here.
+            }
+
+            // Upload file handlers
+            const uploadBtn = document.getElementById('profile-upload-file-btn');
+            const uploadInput = document.getElementById('file-upload-input');
+            const uploadStatus = document.getElementById('file-upload-status');
+            if (uploadBtn && uploadInput) {
+                uploadBtn.addEventListener('click', () => uploadInput.click());
+                uploadInput.addEventListener('change', async () => {
+                    if (!uploadInput.files || uploadInput.files.length === 0) return;
+                    const contactId = document.getElementById('selected-contact-id')?.value;
+                    if (!contactId) { alert('Select a contact first.'); return; }
+                    const f = uploadInput.files[0];
+                    const fd = new FormData();
+                    fd.append('file', f);
+                    fd.append('contact_id', contactId);
+                    uploadStatus.textContent = `Uploading ${f.name}...`;
+                    uploadBtn.disabled = true;
+                    try {
+                        const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
+                        if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+                        const data = await res.json();
+                        uploadStatus.textContent = `Upload complete. Analysis started (Task ${data.task_id}).`;
+                        showToast('Analysis started', 'info', 2000);
+                        pollFileTask(data.task_id, () => { showToast('File analysis complete', 'success'); });
+                    } catch (e) {
+                        uploadStatus.textContent = `Error: ${e.message}`;
+                        showToast(`Upload error: ${e.message}`, 'error');
+                    } finally {
+                        uploadBtn.disabled = false;
+                        uploadInput.value = '';
+                    }
+                });
+            }
+
+            async function pollFileTask(taskId, onComplete) {
+                const iv = setInterval(async () => {
+                    try {
+                        const r = await fetch(`/api/files/status/${taskId}`);
+                        const s = await r.json();
+                        if (s.status_message) uploadStatus.textContent = s.status_message;
+                        if (s.status === 'completed') { clearInterval(iv); onComplete && onComplete(); }
+                        if (s.status === 'failed') { clearInterval(iv); showToast('File task failed', 'error'); }
+                    } catch (e) { /* ignore transient */ }
+                }, 3000);
+            }
+            
+            // Handle main note input and contact selection
+            function updateNoteInputState() {
+                const noteInput = document.getElementById('note-input');
+                const analyzeBtn = document.getElementById('analyze-btn');
+                const hasContact = currentContactId !== null;
+                const hasText = noteInput && noteInput.value.trim().length > 0;
+                
+                if (noteInput) {
+                    noteInput.disabled = !hasContact;
+                    noteInput.placeholder = hasContact ? 
+                        'Enter unstructured notes about this contact...' : 
+                        'Select a contact first to add notes';
+                }
+                
+                if (analyzeBtn) {
+                    analyzeBtn.disabled = !hasContact || !hasText;
+                }
+            }
+            
+            // Listen for note input changes
+            const noteInput = document.getElementById('note-input');
+            if (noteInput) {
+                noteInput.addEventListener('input', updateNoteInputState);
+            }
+            
+            // Update state when contact is selected (hook into existing selectContact function)
+            const originalSelectContact = window.selectContact;
+            if (originalSelectContact) {
+                window.selectContact = function(...args) {
+                    originalSelectContact.apply(this, args);
+                    setTimeout(updateNoteInputState, 100); // Small delay to ensure currentContactId is set
+                };
+            }
+            
+            // Initial state update
+            updateNoteInputState();
+        });
+    </script>
+    
+    <!-- External JavaScript Files -->
+    <script src="/static/js/main.js"></script>
+    <script src="/static/js/contacts.js"></script>
+    <script src="/static/js/settings.js"></script>
+    <script src="/static/js/relationship-graph.js"></script>
+    <script src="/static/js/ui-enhancements.js"></script>
+</body>
+</html>

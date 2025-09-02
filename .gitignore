@@ -1,0 +1,52 @@
+# OS/Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+
+# App data
+chroma_db/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# Coverage
+.coverage
+
+# Misc
+*.swp
+
+# Secrets/Sessions
+*.session
+
+# Process outputs
+nohup.out
+# Root ignores
+.DS_Store
+*.env
+supercal-*.json
+
+# App ignores
+kith-platform/.venv/
+kith-platform/uploads/
+kith-platform/server.out
+kith-platform/chroma_db/
+kith-platform/*.db
+
+# Misc
+**/__pycache__/
+*.pyc

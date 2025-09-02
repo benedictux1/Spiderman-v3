@@ -1,0 +1,3353 @@
+import os
+import json
+import logging
+import threading
+import openai
+import chromadb
+import vobject
+import uuid
+import re
+import typing
+import csv
+from io import StringIO
+import PyPDF2
+import pdfplumber
+from flask import Flask, request, jsonify, render_template, Response
+from flask_apscheduler import APScheduler
+from dotenv import load_dotenv
+from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship
+from datetime import datetime
+from analytics import RelationshipAnalytics
+from calendar_integration import CalendarIntegration
+from telegram_integration import setup_telegram_routes
+from constants import (
+    Categories, DEFAULT_PORT, DEFAULT_HOST, DEFAULT_MAX_TOKENS, 
+    DEFAULT_AI_TEMPERATURE, DEFAULT_OPENAI_MODEL, DEFAULT_API_TOKEN,
+    DEFAULT_DB_NAME, VALID_CATEGORIES, ChromaDB, CATEGORY_ORDER
+)
+import sqlite3
+import time
+from contextlib import contextmanager
+import hashlib
+from uuid import uuid4 as _uuid4
+from flask import g
+from werkzeug.exceptions import HTTPException
+
+# Optional: Google Vision client import (lazy)
+try:
+    from google.cloud import vision  # type: ignore
+    _GCV_AVAILABLE = True
+except Exception:
+    _GCV_AVAILABLE = False
+
+# --- INITIALIZATION ---
+load_dotenv()
+app = Flask(__name__)
+
+# Ensure templates and static assets reflect latest changes during dev
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('kith_platform.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Configure OpenAI API
+openai.api_key = os.getenv('OPENAI_API_KEY', '')
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)
+OPENAI_MODEL_VERSION = os.getenv('OPENAI_MODEL_VERSION', '')  # optional extra pin
+OPENAI_VISION_MODEL = os.getenv('OPENAI_VISION_MODEL', 'gpt-5')  # used for image/PDF processing
+
+# OpenAI SDK compatibility helper
+_openai_client_v1 = None
+
+def _openai_chat(**kwargs):
+    """
+    Compatibility helper for OpenAI chat completions.
+    Supports both legacy SDK (<=0.28.x) and new SDK (>=1.0.0).
+    """
+    global _openai_client_v1
+    
+    # Handle parameter differences for different models
+    model = kwargs.get('model', '')
+    if 'gpt-5' in model or ('gpt-4' in model and 'vision' in model):
+        # Vision models use max_completion_tokens instead of max_tokens
+        if 'max_tokens' in kwargs:
+            kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+        # gpt-5 only supports default temperature (1.0)
+        if 'temperature' in kwargs:
+            kwargs.pop('temperature')
+    
+    if hasattr(openai, 'OpenAI'):  # New SDK (>=1.0.0)
+        if _openai_client_v1 is None:
+            _openai_client_v1 = openai.OpenAI()
+        return _openai_client_v1.chat.completions.create(**kwargs).choices[0].message.content
+    else:  # Old SDK (<=0.28.x)
+        return openai.ChatCompletion.create(**kwargs).choices[0].message.content
+
+# Optional Sentry setup
+try:
+    import sentry_sdk  # type: ignore
+    SENTRY_DSN = os.getenv('SENTRY_DSN', '').strip()
+    if SENTRY_DSN:
+        sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
+        logger.info('Sentry initialized')
+except Exception as _sentry_err:
+    # Sentry is optional; log and continue
+    logger.info(f'Sentry not enabled: {_sentry_err}')
+
+# --- ChromaDB Client Configuration ---
+# Disable anonymized telemetry by default unless explicitly enabled
+os.environ.setdefault('ANONYMIZED_TELEMETRY', 'FALSE')
+# Persist directory can be overridden; default to absolute path under project
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_CHROMA_DIR = os.path.join(_PROJECT_ROOT, 'chroma_db')
+CHROMA_DB_PATH = os.getenv('CHROMA_DB_PATH', _DEFAULT_CHROMA_DIR)
+chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+
+# Configure Scheduler
+scheduler = APScheduler()
+
+# Initialize database after all functions are defined
+# init_db()  # Commented out - causing NameError
+# ensure_runtime_migrations()  # Commented out - causing NameError
+
+def ensure_runtime_migrations():
+    try:
+        conn = get_db_connection()
+        try:
+            # Ensure contact_audit_log exists
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS contact_audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contact_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    event_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    before_state TEXT,
+                    after_state TEXT,
+                    raw_input TEXT,
+                    FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_contact_time ON contact_audit_log(contact_id, event_timestamp DESC)')
+            # Ensure raw_notes has tags column
+            try:
+                cols = [row[1] for row in conn.execute('PRAGMA table_info(raw_notes)').fetchall()]
+                if 'tags' not in cols:
+                    conn.execute('ALTER TABLE raw_notes ADD COLUMN tags TEXT')
+            except Exception:
+                pass
+            # Ensure file_imports table (for idempotent imports)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS file_imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1,
+                    import_type TEXT NOT NULL,
+                    file_name TEXT,
+                    file_hash TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    stats_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(import_type, file_hash)
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_file_imports_hash ON file_imports(import_type, file_hash)')
+            # Ensure import_tasks table exists for background jobs
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS import_tasks (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER DEFAULT 1,
+                    contact_id INTEGER,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    progress INTEGER DEFAULT 0,
+                    status_message TEXT,
+                    error_details TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+            ''')
+            # Ensure uploaded_files table exists
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS uploaded_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contact_id INTEGER NOT NULL,
+                    user_id INTEGER DEFAULT 1,
+                    original_filename TEXT NOT NULL,
+                    stored_filename TEXT UNIQUE NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_size_bytes INTEGER NOT NULL,
+                    analysis_task_id TEXT,
+                    generated_raw_note_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_uploaded_files_contact_id ON uploaded_files(contact_id)')
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Runtime migrations failed: {e}")
+
+# Initialize analytics
+analytics = RelationshipAnalytics()
+
+# Initialize calendar integration
+calendar_integration = CalendarIntegration()
+
+# Setup Telegram integration routes
+setup_telegram_routes(app)
+
+# Security token for local script authentication
+KITH_SCRIPT_SECRET_TOKEN = os.getenv("KITH_API_TOKEN", DEFAULT_API_TOKEN)
+
+# Thread safety locks
+DB_LOCK = threading.RLock()  # Reentrant lock for database operations
+IMPORT_TASK_LOCK = threading.Lock()  # Lock for import task operations
+CONTACT_CREATION_LOCK = threading.Lock()  # Lock for contact creation
+
+# Simplified database connection
+DB_PATH = os.getenv('KITH_DB_PATH') or os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
+
+def get_db_connection():
+    """Get database connection with robust pragmas and timeout."""
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    # Pragmas for better concurrency and integrity
+    try:
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA busy_timeout=5000')  # ms
+    except Exception:
+        pass
+    conn.row_factory = sqlite3.Row
+    return conn
+
+@contextmanager
+def with_write_connection():
+    """Context manager to serialize writes and ensure proper cleanup."""
+    DB_LOCK.acquire()
+    conn = None
+    try:
+        conn = get_db_connection()
+        yield conn
+        conn.commit()
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        finally:
+            DB_LOCK.release()
+
+def init_db():
+    """Initialize database with retry logic and migration."""
+    try:
+        conn = get_db_connection()
+        # Ensure contacts table
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                tier INTEGER DEFAULT 2,
+                telegram_id TEXT,
+                telegram_username TEXT,
+                telegram_phone TEXT,
+                telegram_handle TEXT,
+                is_verified BOOLEAN DEFAULT FALSE,
+                is_premium BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER,
+                vector_collection_id TEXT,
+                telegram_last_sync TIMESTAMP
+            )
+        ''')
+        
+        # Ensure import_tasks table
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS import_tasks (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER DEFAULT 1,
+                contact_id INTEGER,
+                task_type TEXT NOT NULL DEFAULT 'telegram_import',
+                status TEXT NOT NULL DEFAULT 'pending',
+                progress INTEGER DEFAULT 0,
+                status_message TEXT,
+                error_details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (contact_id) REFERENCES contacts (id)
+            )
+        ''')
+        
+        # Create indexes for better performance (contacts and import_tasks only, synthesized_entries indexes are created after the table)
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_import_tasks_status ON import_tasks(status)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_import_tasks_user_id ON import_tasks(user_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_contacts_user_id ON contacts(user_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_contacts_full_name ON contacts(full_name)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_contacts_telegram_username ON contacts(telegram_username)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_contacts_telegram_id ON contacts(telegram_id)')
+        
+        # Ensure synthesized_entries table with correct schema
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS synthesized_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id INTEGER,
+                category TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence_score REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE
+            )
+        ''')
+        # Create indexes for synthesized_entries table (now that it exists)
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_synthesized_entries_contact_id ON synthesized_entries(contact_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_synthesized_entries_category ON synthesized_entries(category)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_synthesized_entries_created_at ON synthesized_entries(created_at)')
+
+        # Ensure raw_notes table exists (needed by /api/contact/<id>/raw-logs)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS raw_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tags TEXT,
+                FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Migration: ensure raw_notes has 'tags' column for detailed payloads
+        try:
+            cur = conn.execute("PRAGMA table_info(raw_notes)")
+            rn_cols = [row[1] for row in cur.fetchall()]
+            if 'tags' not in rn_cols:
+                conn.execute('ALTER TABLE raw_notes ADD COLUMN tags TEXT')
+        except Exception as raw_notes_mig_err:
+            print(f"⚠️ raw_notes migration warning: {raw_notes_mig_err}")
+
+        # Ensure contact_audit_log table exists (immutable ledger)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS contact_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                before_state TEXT,
+                after_state TEXT,
+                raw_input TEXT,
+                FOREIGN KEY (contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_contact_time ON contact_audit_log(contact_id, event_timestamp DESC)')
+        
+        # Ensure file_imports table (for idempotent imports)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS file_imports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER DEFAULT 1,
+                import_type TEXT NOT NULL,
+                file_name TEXT,
+                file_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'completed',
+                stats_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(import_type, file_hash)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_file_imports_hash ON file_imports(import_type, file_hash)')
+        
+        # NOTE: All migration logic for synthesized_entries has been removed and handled by the database_surgeon.py script.
+        # The schema is now assumed to be correct upon application start.
+
+        # Migration: ensure contacts has telegram fields
+        try:
+            cursor = conn.execute("PRAGMA table_info(contacts)")
+            contact_columns = [row[1] for row in cursor.fetchall()]
+            if 'telegram_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN telegram_id TEXT")
+            if 'telegram_username' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN telegram_username TEXT")
+            if 'telegram_phone' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN telegram_phone TEXT")
+            if 'telegram_handle' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN telegram_handle TEXT")
+            if 'is_verified' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN is_verified BOOLEAN DEFAULT FALSE")
+            if 'is_premium' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN is_premium BOOLEAN DEFAULT FALSE")
+            if 'created_at' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            if 'updated_at' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            if 'telegram_last_sync' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN telegram_last_sync TIMESTAMP")
+            if 'user_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN user_id INTEGER")
+                conn.execute("UPDATE contacts SET user_id = 1 WHERE user_id IS NULL")
+            if 'vector_collection_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN vector_collection_id TEXT")
+        except Exception as contacts_mig_err:
+            print(f"⚠️ Contacts migration warning: {contacts_mig_err}")
+
+        # Ensure users table and default user exists
+        try:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            # Create default user id=1 if not exists
+            cur = conn.execute('SELECT id FROM users WHERE id = 1')
+            if cur.fetchone() is None:
+                conn.execute('INSERT INTO users (id, username, password_hash) VALUES (1, "admin", "dev")')
+        except Exception as users_err:
+            print(f"⚠️ Users migration warning: {users_err}")
+
+        # Add missing columns user_id and vector_collection_id to contacts and backfill
+        try:
+            cursor = conn.execute("PRAGMA table_info(contacts)")
+            contact_columns = [row[1] for row in cursor.fetchall()]
+            if 'user_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN user_id INTEGER")
+                conn.execute("UPDATE contacts SET user_id = 1 WHERE user_id IS NULL")
+            if 'vector_collection_id' not in contact_columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN vector_collection_id TEXT")
+                # Backfill with simple deterministic values
+                cur = conn.execute('SELECT id FROM contacts WHERE vector_collection_id IS NULL')
+                rows = cur.fetchall()
+                for (cid,) in rows:
+                    conn.execute('UPDATE contacts SET vector_collection_id = ? WHERE id = ?', (f"contact_{cid}", cid))
+        except Exception as backfill_err:
+            print(f"⚠️ Contacts backfill warning: {backfill_err}")
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ Database initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Error initializing database: {e}")
+        raise e
+
+def log_audit_event(contact_id: int, user_id: int, event_type: str, source: str,
+                    before_state: typing.Optional[dict] = None,
+                    after_state: typing.Optional[dict] = None,
+                    raw_input: typing.Optional[str] = None) -> None:
+    """Append an immutable audit log row for a contact. Safe with fallback."""
+    payload = (
+        contact_id,
+        user_id,
+        sanitize_text(event_type or ''),
+        sanitize_text(source or ''),
+        json.dumps(before_state) if before_state is not None else None,
+        json.dumps(after_state) if after_state is not None else None,
+        raw_input
+    )
+    # Try once; if table missing, ensure migrations and retry once
+    for attempt in range(2):
+        try:
+            with with_write_connection() as conn:
+                conn.execute(
+                    'INSERT INTO contact_audit_log (contact_id, user_id, event_type, source, before_state, after_state, raw_input) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    payload
+                )
+            logger.info(f"Audit event logged for contact {contact_id}: {event_type}")
+            return
+        except Exception as e:
+            if attempt == 0:
+                logger.warning(f"Audit insert failed, attempting migration then retry: {e}")
+                try:
+                    ensure_runtime_migrations()
+                except Exception:
+                    pass
+                time.sleep(0.05)
+                continue
+            logger.error(f"CRITICAL: Failed to log audit event after retry: {e}")
+            return
+
+# Initialize scheduler after app creation
+# Ensure bootstrap is executed before starting background jobs
+def initialize_runtime():
+    """Run configuration validation, bootstrap DB, and start scheduler."""
+    try:
+        validate_config()
+    except Exception:
+        pass
+    try:
+        bootstrap_database_once()
+    except Exception as e:
+        logger.error(f"Bootstrap failed during runtime init: {e}")
+    try:
+        scheduler.init_app(app)
+        scheduler.start()
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
+
+# --- VALIDATION HELPERS ---
+def validate_input(data_type, value, **kwargs):
+    """Universal input validation."""
+    if value is None:
+        return None
+        
+    validators = {
+        'contact_name': lambda x: re.sub(r'[<>"\'/\\;]', '', x.strip()) if isinstance(x, str) and 1 <= len(x.strip()) <= 255 else None,
+        'tier': lambda x: int(x) if str(x) in ['1', '2', '3'] else 2,
+        'identifier': lambda x: x.strip() if isinstance(x, str) and re.match(r'^[@]?[a-zA-Z0-9_]+$', x.strip()) and 1 <= len(x.strip()) <= 100 else None,
+        'days_back': lambda x: max(1, min(int(x), 365)) if str(x).isdigit() else 30,
+        'contact_id': lambda x: int(x) if str(x).isdigit() and int(x) > 0 else None,
+        'text': lambda x: x.strip()[:kwargs.get('max_length', 10000)] if isinstance(x, str) and x.strip() else None
+    }
+    
+    try:
+        return validators.get(data_type, lambda x: x)(value)
+    except (ValueError, TypeError, AttributeError):
+        return validators.get(data_type, lambda x: None)(None)
+
+def sanitize_text(value: str) -> str:
+    try:
+        return re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', value).strip() if isinstance(value, str) else ''
+    except Exception:
+        return ''
+
+        return False  # Don't suppress exceptions
+
+# --- CATEGORY NORMALIZATION & HEURISTICS ---
+VALID_CATEGORY_SET = set(CATEGORY_ORDER)
+
+# Broad keyword heuristics for fallback categorization
+KEYWORD_CATEGORY_MAP = [
+    # Actionable
+    (Categories.ACTIONABLE, [
+        "todo", "follow up", "follow-up", "next week", "schedule", "remind",
+        "arrange", "set up", "book", "plan", "meet", "call", "email",
+        "action item", "due", "deadline", "ASAP", "to-do"
+    ]),
+    # Goals
+    (Categories.GOALS, [
+        "goal", "aim", "objective", "wants to", "plans to", "hopes to", "target",
+        "ambition", "aspire", "intend to"
+    ]),
+    # Relationship Strategy
+    (Categories.RELATIONSHIP_STRATEGY, [
+        "approach", "keep in touch", "build", "nurture", "stay connected",
+        "check in", "best to", "strategy", "reach out", "touch base"
+    ]),
+    # Social
+    (Categories.SOCIAL, [
+        "party", "event", "dinner", "drinks", "hang out", "friends", "club",
+        "wedding", "celebration", "gathering", "meetup", "bbt party"
+    ]),
+    # Wellbeing
+    (Categories.WELLBEING, [
+        "health", "exercise", "stress", "anxiety", "sleep", "diet", "mental",
+        "wellbeing", "well-being", "therapy", "gym", "workout"
+    ]),
+    # Avocation
+    (Categories.AVOCATION, [
+        "likes", "enjoys", "hobby", "hobbies", "interest", "interests",
+        "favorite", "favourite", "music", "sport", "movie", "hiking",
+        "food", "cuisine", "travel", "coffee", "tea", "bubble tea",
+        "bbt", "nasi lemak", "sashimi", "strawberries", "mint ice cream"
+    ]),
+    # Professional Background
+    (Categories.PROFESSIONAL_BACKGROUND, [
+        "work", "job", "career", "role", "company", "employer", "startup",
+        "industry", "boss", "colleague", "dentist", "engineer", "founder",
+        "managed", "organized", "organised", "led", "lead", "committee",
+        "aiesec", "internship", "intern", "cv", "resume", "position",
+        "experience", "project", "orientation", "data collection", "research"
+    ]),
+    # Environment & Lifestyle
+    (Categories.ENVIRONMENT_AND_LIFESTYLE, [
+        "lives", "living", "apartment", "house", "city", "singapore",
+        "commute", "car", "pet", "lifestyle", "neighborhood", "neighbourhood"
+    ]),
+    # Psychology & Values
+    (Categories.PSYCHOLOGY_AND_VALUES, [
+        "values", "belief", "personality", "introvert", "extrovert",
+        "principle", "priority", "ethos", "mindset"
+    ]),
+    # Communication Style
+    (Categories.COMMUNICATION_STYLE, [
+        "prefers text", "prefers call", "communication", "responds", "reply",
+        "tone", "style", "email vs", "whatsapp", "fast reply", "slow to reply"
+    ]),
+    # Challenges & Development
+    (Categories.CHALLENGES_AND_DEVELOPMENT, [
+        "challenge", "difficulty", "struggle", "learning", "improve",
+        "development", "working on", "needs help"
+    ]),
+    # Deeper Insights
+    (Categories.DEEPER_INSIGHTS, [
+        "pattern", "tends to", "usually", "often", "underlying", "insight",
+        "tendency"
+    ]),
+    # Financial Situation
+    (Categories.FINANCIAL_SITUATION, [
+        "salary", "income", "bonus", "money", "finance", "budget",
+        "savings", "debt", "expenses"
+    ]),
+    # Admin Matters
+    (Categories.ADMIN_MATTERS, [
+        "address", "email", "phone", "birthday", "contact", "handle",
+        "passport", "booking ref", "reservation", "logistics", "linkedin",
+        "url", "website"
+    ]),
+    # Established Patterns
+    (Categories.ESTABLISHED_PATTERNS, [
+        "always", "every", "habit", "routine", "pattern", "regularly",
+        "weekly", "daily"
+    ]),
+    # Core Identity
+    (Categories.CORE_IDENTITY, [
+        "identity", "who he is", "who she is", "self", "core", "background"
+    ]),
+    # Information Gaps
+    (Categories.INFORMATION_GAPS, [
+        "unknown", "not sure", "need to find", "unclear", "missing",
+        "TBD", "to be decided"
+    ]),
+    # Memory Anchors
+    (Categories.MEMORY_ANCHORS, [
+        "remember", "note", "key detail", "anchor", "remember to"
+    ]),
+    # Positionality
+    (Categories.POSITIONALITY, [
+        "status", "role in", "position", "senior", "junior", "cpo",
+        "vp", "vice-president", "president"
+    ]),
+    # Others
+    (Categories.OTHERS, ["misc", "other"])
+]
+
+SYNONYM_TO_CATEGORY = {
+    "preferences": Categories.AVOCATION,
+    "hobbies": Categories.AVOCATION,
+    "work_history": Categories.PROFESSIONAL_BACKGROUND,
+    "work": Categories.PROFESSIONAL_BACKGROUND,
+    "job": Categories.PROFESSIONAL_BACKGROUND,
+    "contact_info": Categories.ADMIN_MATTERS,
+    "logistics": Categories.ADMIN_MATTERS,
+    "health": Categories.WELLBEING,
+    "habits": Categories.ESTABLISHED_PATTERNS,
+}
+
+def canonicalize_category(category_name: str) -> str:
+    if not isinstance(category_name, str):
+        return Categories.OTHERS
+    normalized = category_name.strip().replace(' ', '_')
+    # Exact match
+    if normalized in VALID_CATEGORY_SET:
+        return normalized
+    # Case-insensitive match
+    for cat in VALID_CATEGORY_SET:
+        if normalized.lower() == cat.lower():
+            return cat
+    # Synonym map
+    mapped = SYNONYM_TO_CATEGORY.get(normalized.lower())
+    if mapped:
+        return mapped
+    return Categories.OTHERS
+
+import itertools
+
+def infer_category_from_text(text: str) -> str:
+    t = (text or '').lower()
+    if not t:
+        return Categories.OTHERS
+
+    # 1) Explicit URL/email → Admin_Matters
+    try:
+        if re.search(r"\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b", t):
+            return Categories.ADMIN_MATTERS
+        if re.search(r"\bhttps?://\S+", t) or "linkedin.com" in t or t.startswith("linkedin:"):
+            return Categories.ADMIN_MATTERS
+    except Exception:
+        pass
+
+    # 2) Resume/experience cues → Professional_Background
+    resume_terms = [
+        "intern", "research assistant", "assistant", "ui/ux", "ux", "adobe xd",
+        "organising committee", "organizing committee", "vice-president", "aiesec",
+        "conducted", "headed", "orientation", "data collection", "projects", "experience",
+        "member of", "marketing", "engineer", "manager", "school", "university",
+        "managed", "organized", "organised", "led", "lead", "committee", "position"
+    ]
+    if any(term in t for term in resume_terms):
+        return Categories.PROFESSIONAL_BACKGROUND
+
+    # 3) Actionable only for imperative/future phrasing (avoid past tense like "planned", "conducted")
+    actionable_patterns = [
+        r"\bto\s+do\b", r"\bfollow[- ]up\b", r"\bneed to\b", r"\bplan to\b",
+        r"\bschedule\b", r"\bremind\b", r"\blet's\b", r"\bplease\b", r"\bnext week\b",
+        r"^action( item)?:", r"\bETA\b", r"\bdue\b"
+    ]
+    if any(re.search(p, t) for p in actionable_patterns):
+        return Categories.ACTIONABLE
+
+    # 4) Fallback to broad keyword map with word-boundary matching
+    for cat, keywords in KEYWORD_CATEGORY_MAP:
+        for kw in keywords:
+            try:
+                if re.search(rf"\b{re.escape(kw)}\b", t):
+                    return cat
+            except re.error:
+                if kw in t:
+                    return cat
+
+    return Categories.OTHERS
+
+
+def normalize_ai_output(ai_json: dict) -> dict:
+    """Ensure categories conform to CATEGORY_ORDER and reassign miscategorized items using heuristics."""
+    updates = ai_json.get('categorized_updates') or []
+    normalized_updates = []
+
+    for item in updates:
+        cat = canonicalize_category(item.get('category'))
+        details = item.get('details') or []
+        # If AI category is Others, try per-detail inference
+        if cat not in VALID_CATEGORY_SET or cat == Categories.OTHERS:
+            for d in details:
+                inferred = infer_category_from_text(d)
+                normalized_updates.append({"category": inferred, "details": [d]})
+        else:
+            # Split any details that hint at different categories
+            for d in details:
+                inferred = infer_category_from_text(d)
+                final_cat = cat if inferred == cat or inferred == Categories.OTHERS else inferred
+                normalized_updates.append({"category": final_cat, "details": [d]})
+
+    # Merge same-category entries and de-duplicate details (case-insensitive)
+    merged = {}
+    for entry in normalized_updates:
+        c = entry['category']
+        existed = merged.setdefault(c, [])
+        for d in entry['details']:
+            if all(d.strip().lower() != e.strip().lower() for e in existed):
+                existed.append(d)
+
+    ai_json['categorized_updates'] = [{"category": c, "details": ds} for c, ds in merged.items()]
+    return ai_json
+
+# --- MASTER PROMPT (The AI's Brain) ---
+MASTER_PROMPT_TEMPLATE = """
+You are a world-class relationship intelligence analyst with perfect memory and a deep understanding of human psychology and interaction. Your task is to analyze a new piece of information about a person and extract every distinct fact.
+
+**GUIDING PRINCIPLES:**
+1.  **Do Not Summarize:** Your primary task is to extract every distinct fact from the 'New Information' and list it. Preserve all specific details, names, and preferences.
+2.  **Absolute Accuracy:** Base your analysis ONLY on the information provided. Do not infer or hallucinate.
+3.  **Structured Output:** Your final output must be a single, valid JSON object with the specified keys: "synthesized_narrative", "confidence_score", "reasoning_chain", and "categorized_updates". The "categorized_updates" must be an array of objects, each with a "category" and a "details" key, where "details" is an array of strings.
+4.  **CATEGORY ENUMERATION (STRICT):** The "category" value for every detail MUST be one of EXACTLY these tokens (case-sensitive): {allowed_categories}. If unsure, use "Others". Split details so each fact appears under the single best-fitting category.
+
+**CATEGORIZATION RULES:**
+You must categorize information into exactly these 20 categories:
+- "Actionable" - Tasks, follow-ups, or actions needed
+- "Goals" - Personal or professional objectives
+- "Relationship_Strategy" - How to approach or maintain the relationship
+- "Social" - Social activities, events, or connections
+- "Wellbeing" - Health, mental state, or life satisfaction
+- "Avocation" - Hobbies, interests, or personal pursuits
+- "Professional_Background" - Career, work, or business information
+- "Environment_And_Lifestyle" - Living situation, lifestyle choices
+- "Psychology_And_Values" - Beliefs, values, or personality traits
+- "Communication_Style" - How they communicate or prefer to interact
+- "Challenges_And_Development" - Difficulties, growth, or learning
+- "Deeper_Insights" - Psychological patterns or deeper understanding
+- "Financial_Situation" - Money, resources, or financial status
+- "Admin_Matters" - Logistical details, contact info, or practical matters
+- "ESTABLISHED_PATTERNS" - Recurring behaviors or habits
+- "CORE_IDENTITY" - Fundamental aspects of who they are
+- "INFORMATION_GAPS" - Missing information or areas to explore
+- "MEMORY_ANCHORS" - Key details to remember about them
+- "POSITIONALITY" - Their role, status, or position in various contexts
+- "Others" - Information that doesn't fit other categories
+
+**CONTEXT PACKAGE:**
+
+**New Information:**
+{new_note}
+
+**Retrieved Relevant History:**
+{history}
+
+**YOUR TASK:**
+Based on the context package above, perform your analysis and return the JSON object. For each category, provide a "details" array containing each extracted fact as a separate string.
+
+**EXAMPLE OUTPUT FORMAT:**
+```json
+{{
+  "synthesized_narrative": "A brief, high-level narrative connecting the key themes from the extracted facts...",
+  "confidence_score": 9.5,
+  "reasoning_chain": "The user provided a detailed list of preferences and biographical information. Each fact was extracted and categorized directly. For example, 'Likes Mint ice cream' was categorized under 'Avocation' as a food preference.",
+  "categorized_updates": [
+    {{
+      "category": "Avocation",
+      "details": [
+        "Food Preference (Likes): Mint ice cream",
+        "Food Preference (Likes): Sashimi",
+        "Food Preference (Likes): Strawberries"
+      ]
+    }},
+    {{
+      "category": "Professional_Background", 
+      "details": [
+        "Current Role: Dentist at a Polyclinic",
+        "Education: Graduated from NUS Faculty of Dentistry in 2024"
+      ]
+    }}
+  ]
+}}
+```
+"""
+
+# --- API ENDPOINTS ---
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for production monitoring."""
+    return jsonify({
+        "status": "healthy",
+        "service": "kith-platform",
+        "version": "1.0.0"
+    })
+
+@app.after_request
+def add_no_cache_headers(response):
+    try:
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    except Exception:
+        pass
+    return response
+
+@app.route('/api/contacts', methods=['GET'])
+def get_contacts():
+    """Get all contacts."""
+    try:
+        conn = get_db_connection()
+        try:
+            # Optimized query with user filtering and limit
+            limit = min(int(request.args.get('limit', 1000)), 1000)  # Max 1000 contacts
+            offset = max(int(request.args.get('offset', 0)), 0)
+            tier_param = request.args.get('tier')
+            params = [1]
+            where_clause = 'WHERE user_id = ?'
+            if tier_param and tier_param.isdigit():
+                where_clause += ' AND tier = ?'
+                params.append(int(tier_param))
+
+            params.extend([limit, offset])
+            cursor = conn.execute(f'''
+                SELECT id, full_name, tier, telegram_username, is_verified, is_premium, created_at
+                FROM contacts 
+                {where_clause}
+                ORDER BY full_name COLLATE NOCASE
+                LIMIT ? OFFSET ?
+            ''', params)
+            contacts = [dict(row) for row in cursor.fetchall()]
+            
+            return jsonify(contacts)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to get contacts: {e}")
+        return jsonify({"error": f"Failed to get contacts: {e}"}), 500
+
+@app.route('/api/contacts', methods=['POST'])
+def create_contact():
+    """Create a new contact."""
+    try:
+        data = request.get_json()
+        if not data:
+            logger.warning("Create contact: No data provided")
+            return jsonify({"error": "No data provided"}), 400
+        
+        full_name = validate_input('contact_name', data.get('full_name'))
+        tier = validate_input('tier', data.get('tier', 2))
+        
+        if not full_name:
+            logger.warning(f"Create contact: Invalid full name provided: {data.get('full_name')}")
+            return jsonify({"error": "Valid full name is required (1-255 characters)"}), 400
+        
+        with CONTACT_CREATION_LOCK:  # Thread-safe contact creation
+            conn = get_db_connection()
+            try:
+                # Check for duplicate (case-insensitive)
+                cursor = conn.execute('SELECT id FROM contacts WHERE LOWER(full_name) = LOWER(?)', (full_name,))
+                if cursor.fetchone():
+                    return jsonify({"error": "Contact already exists"}), 409
+                
+                # Create new contact
+                cursor = conn.execute(
+                    'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at) VALUES (?, ?, ?, ?, ?)',
+                    (full_name, tier, 1, f"contact_{uuid.uuid4().hex[:8]}", datetime.now().isoformat())
+                )
+                contact_id = cursor.lastrowid
+                conn.commit()
+                
+                logger.info(f"Created new contact: '{full_name}' (ID: {contact_id})")
+                return jsonify({
+                    "message": f"Contact '{full_name}' created successfully",
+                    "contact_id": contact_id
+                }), 201
+            finally:
+                conn.close()
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to create contact: {e}"}), 500
+
+@app.route('/api/contacts/<int:contact_id>', methods=['DELETE'])
+def delete_contact(contact_id):
+    """Delete a single contact and all associated data."""
+    try:
+        session = get_session()
+        
+        # Find the contact
+        contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+        if not contact:
+            return jsonify({"error": "Contact not found"}), 404
+        
+        contact_name = contact.full_name
+        
+        # Delete associated data (cascade delete)
+        # Delete synthesized entries
+        session.query(SynthesizedEntry).filter_by(contact_id=contact_id).delete()
+        
+        # Delete raw notes
+        session.query(RawNote).filter_by(contact_id=contact_id).delete()
+        
+        # Delete the contact
+        session.delete(contact)
+        session.commit()
+        
+        # Clean up ChromaDB collection for this contact
+        try:
+            collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+            chroma_client.delete_collection(name=collection_name)
+        except Exception:
+            pass  # Collection might not exist
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Contact '{contact_name}' and all associated data deleted successfully."
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Failed to delete contact: {e}"}), 500
+    finally:
+        session.close()
+
+@app.route('/api/contacts/bulk-delete', methods=['POST'])
+def bulk_delete_contacts():
+    """Delete multiple contacts at once."""
+    try:
+        data = request.get_json()
+        contact_ids = data.get('contact_ids', [])
+        
+        if not contact_ids:
+            return jsonify({"error": "No contact IDs provided"}), 400
+        
+        session = get_session()
+        deleted_contacts = []
+        failed_contacts = []
+        
+        for contact_id in contact_ids:
+            try:
+                # Find the contact
+                contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+                if not contact:
+                    failed_contacts.append({"id": contact_id, "error": "Contact not found"})
+                    continue
+                
+                contact_name = contact.full_name
+                
+                # Delete associated data
+                session.query(SynthesizedEntry).filter_by(contact_id=contact_id).delete()
+                session.query(RawNote).filter_by(contact_id=contact_id).delete()
+                
+                # Delete the contact
+                session.delete(contact)
+                deleted_contacts.append(contact_name)
+                
+                # Clean up ChromaDB collection
+                try:
+                    collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+                    chroma_client.delete_collection(name=collection_name)
+                except Exception:
+                    pass
+                    
+            except Exception as e:
+                failed_contacts.append({"id": contact_id, "error": str(e)})
+        
+        session.commit()
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Deleted {len(deleted_contacts)} contacts successfully.",
+            "deleted_contacts": deleted_contacts,
+            "failed_contacts": failed_contacts
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Failed to bulk delete contacts: {e}"}), 500
+    finally:
+        session.close()
+
+@app.route('/api/import-vcard', methods=['POST'])
+def import_vcard_endpoint():
+    """Parses an uploaded .vcf file and creates contacts, avoiding duplicates."""
+    if 'vcard_file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['vcard_file']
+    if file.filename == '' or not file.filename.endswith('.vcf'):
+        return jsonify({"error": "No selected or invalid file type"}), 400
+
+    try:
+        vcf_data = file.read().decode('utf-8')
+        contacts_created = 0
+        contacts_skipped = 0
+        session = get_session()
+
+        # Parse VCard data
+        vcards = list(vobject.readComponents(vcf_data))
+        
+        for vcard in vcards:
+            if hasattr(vcard, 'fn') and vcard.fn.value:
+                full_name = vcard.fn.value.strip()
+
+                # Check for existing contact by full name (case-insensitive)
+                existing_contact = session.query(Contact).filter(
+                    Contact.full_name.ilike(full_name),
+                    Contact.user_id == 1
+                ).first()
+
+                if existing_contact:
+                    contacts_skipped += 1
+                    continue  # Skip if contact already exists
+
+                # Create new contact if it doesn't exist
+                new_contact = Contact(
+                    full_name=full_name,
+                    user_id=1,  # Assume user_id=1 for MVP
+                    vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
+                )
+                session.add(new_contact)
+                contacts_created += 1
+
+        session.commit()
+        session.close()
+
+        message = f"{contacts_created} new contacts imported. {contacts_skipped} duplicates were skipped."
+        return jsonify({"status": "success", "message": message})
+
+    except Exception as e:
+        session.rollback()
+        session.close()
+        return jsonify({"error": f"Failed to process VCF file: {e}"}), 500
+
+@app.route('/api/contact/<int:contact_id>', methods=['GET'])
+def get_contact_details(contact_id):
+    """Fetches all synthesized data for a single contact, ordered correctly."""
+    try:
+        # Use direct database connection instead of SQLAlchemy to avoid schema issues
+        conn = get_db_connection()
+        try:
+            # Check if contact exists and get contact info including telegram fields
+            cursor = conn.execute('SELECT id, full_name, tier, telegram_username, telegram_handle FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
+            contact_info = cursor.fetchone()
+            if not contact_info:
+                return jsonify({"error": "Contact not found"}), 404
+
+            # Get synthesized entries using direct SQL to avoid schema issues
+            cursor = conn.execute('''
+                SELECT category, content, created_at 
+                FROM synthesized_entries 
+                WHERE contact_id = ? 
+                ORDER BY created_at DESC 
+                LIMIT 500
+            ''', (contact_id,))
+            
+            all_entries = cursor.fetchall()
+
+            # Use the category order defined in constants
+            categorized_data = {category: [] for category in CATEGORY_ORDER}
+
+            for entry in all_entries:
+                if entry['category'] in categorized_data:
+                    categorized_data[entry['category']].append(entry['content'])
+
+            # Do not filter out empty categories so the UI can show all 20
+            final_categorized_data = categorized_data
+
+            final_response = {
+                "contact_info": {
+                    "id": contact_info['id'], 
+                    "full_name": contact_info['full_name'], 
+                    "tier": contact_info['tier'],
+                    "telegram_username": contact_info['telegram_username'],
+                    "telegram_handle": contact_info['telegram_handle']
+                },
+                "categorized_data": final_categorized_data
+            }
+            
+            return jsonify(final_response)
+            
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Could not retrieve contact data: {e}")
+        return jsonify({"error": f"Could not retrieve contact data: {e}"}), 500
+
+@app.route('/api/contact/<int:contact_id>', methods=['PATCH'])
+def update_contact(contact_id):
+    """Update contact information: full_name, telegram_username, and/or telegram_handle."""
+    try:
+        data = request.get_json() or {}
+        full_name = data.get('full_name')
+        telegram_username = data.get('telegram_username')
+        telegram_handle = data.get('telegram_handle')
+        
+        if not any([full_name, telegram_username, telegram_handle]):
+            return jsonify({"error": "No updatable fields provided"}), 400
+        
+        conn = get_db_connection()
+        try:
+            # Ensure contact exists
+            cursor = conn.execute('SELECT id FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
+            if not cursor.fetchone():
+                return jsonify({"error": "Contact not found"}), 404
+            
+            # Build dynamic update
+            fields = []
+            params = []
+            if isinstance(full_name, str) and full_name.strip():
+                fields.append('full_name = ?')
+                params.append(validate_input('contact_name', full_name))
+            if isinstance(telegram_username, str):
+                fields.append('telegram_username = ?')
+                params.append(telegram_username.strip().lstrip('@') or None)
+            if isinstance(telegram_handle, str):
+                fields.append('telegram_handle = ?')
+                params.append(telegram_handle.strip().lstrip('@') or None)
+            
+            if not fields:
+                return jsonify({"error": "No valid fields to update"}), 400
+            
+            params.append(contact_id)
+            conn.execute(f'UPDATE contacts SET {", ".join(fields)} WHERE id = ?', params)
+            conn.commit()
+            
+            return jsonify({"message": "Contact updated successfully"})
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Failed to update contact: {e}")
+        return jsonify({"error": f"Failed to update contact: {e}"}), 500
+
+@app.route('/api/contact/<int:contact_id>/raw-logs', methods=['GET'])
+def get_raw_logs_for_contact(contact_id):
+    """Fetches all raw notes for a single contact, ordered by creation date."""
+    try:
+        conn = get_db_connection()
+        try:
+            # Check if contact exists
+            cursor = conn.execute('SELECT id FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
+            if not cursor.fetchone():
+                return jsonify({"error": "Contact not found"}), 404
+            
+            # Get all raw notes for this contact, include tags for details
+            cursor = conn.execute('''
+                SELECT content, created_at, tags 
+                FROM raw_notes 
+                WHERE contact_id = ? 
+                ORDER BY created_at DESC
+            ''', (contact_id,))
+            
+            raw_logs = cursor.fetchall()
+            formatted_logs = []
+            for log in raw_logs:
+                details = None
+                try:
+                    if log['tags']:
+                        details = json.loads(log['tags'])
+                except Exception:
+                    details = None
+                # Compute engine badge info when applicable
+                engine = None
+                try:
+                    if isinstance(details, dict) and details.get('source') == 'file_upload':
+                        if details.get('used_google_ocr'):
+                            engine = 'vision'
+                        elif details.get('used_openai_mm'):
+                            engine = 'openai'
+                        elif details.get('used_gemini'):
+                            engine = 'gemini'
+                        else:
+                            engine = 'local'
+                except Exception:
+                    engine = None
+                formatted_logs.append({
+                    "content": log['content'],
+                    "date": log['created_at'],
+                    "details": details,
+                    "engine": engine
+                })
+            
+            return jsonify(formatted_logs)
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Could not retrieve raw logs: {e}")
+        return jsonify({"error": f"Could not retrieve raw logs: {e}"}), 500
+
+@app.route('/api/search', methods=['GET'])
+def search_endpoint():
+    """Unified search across contacts and their data."""
+    query = request.args.get('q')
+    if not query or len(query) < 2:
+        return jsonify([])
+
+    try:
+        conn = get_db_connection()
+        try:
+            # 1. Keyword Search using direct SQL
+            cursor = conn.execute('''
+                SELECT DISTINCT c.id 
+                FROM contacts c 
+                LEFT JOIN synthesized_entries se ON c.id = se.contact_id 
+                WHERE (c.full_name LIKE ? OR se.content LIKE ?) AND c.user_id = 1
+            ''', (f'%{query}%', f'%{query}%'))
+            
+            keyword_contact_ids = [row['id'] for row in cursor.fetchall()]
+
+            # 2. Semantic Search (ChromaDB - Master Collection)
+            try:
+                master_collection = chroma_client.get_or_create_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+                semantic_results = master_collection.query(query_texts=[query], n_results=10)
+                semantic_contact_ids = [int(meta['contact_id']) for meta in semantic_results['metadatas'][0]]
+            except Exception:
+                semantic_contact_ids = []
+
+            # 3. Combine and De-duplicate Results
+            combined_ids = list(set(keyword_contact_ids + semantic_contact_ids))
+
+            # 4. Fetch Contact Details for the matched IDs
+            if not combined_ids:
+                return jsonify([])
+
+            # Convert to SQL IN clause
+            placeholders = ','.join('?' * len(combined_ids))
+            cursor = conn.execute(f'''
+                SELECT id, full_name, tier 
+                FROM contacts 
+                WHERE id IN ({placeholders}) AND user_id = 1
+            ''', combined_ids)
+            
+            final_contacts = [dict(row) for row in cursor.fetchall()]
+            
+            return jsonify(final_contacts)
+            
+        finally:
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        return jsonify({"error": f"Search failed: {e}"}), 500
+
+@app.route('/api/process-note', methods=['POST'])
+def process_note_endpoint():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Accept either 'note' or 'note_text'
+        raw_note_text = sanitize_text(data.get('note') or data.get('note_text') or '')
+        contact_id = validate_input('contact_id', data.get('contact_id'))
+
+        if not raw_note_text:
+            return jsonify({"error": "Valid note text is required"}), 400
+        if not contact_id:
+            return jsonify({"error": "Valid contact_id is required"}), 400
+
+        # --- RAG PIPELINE --- (best-effort; safe if collection missing)
+        collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+        try:
+            collection = chroma_client.get_or_create_collection(name=collection_name)
+            query_text = " ".join(raw_note_text.split()[:30])
+            results = collection.query(query_texts=[query_text], n_results=3)
+            retrieved_history = "\n---\n".join(results['documents'][0]) if results['documents'] else "No relevant history found."
+        except Exception:
+            retrieved_history = "No relevant history found."
+
+        master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=raw_note_text, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
+        
+        # If OpenAI isn't configured, return a minimal deterministic mock to keep UX flowing
+        if not openai.api_key:
+            chunks = [seg.strip() for seg in re.split(r'[\.!?\n;]+', raw_note_text) if seg.strip()]
+            bucketed = {}
+            for seg in chunks:
+                cat = infer_category_from_text(seg)
+                bucketed.setdefault(cat, []).append(seg)
+            mock_updates = [{"category": c, "details": ds} for c, ds in bucketed.items()]
+            mock = {
+                "synthesized_narrative": "",
+                "confidence_score": 1.0,
+                "reasoning_chain": "",
+                "categorized_updates": mock_updates
+            }
+            return jsonify(normalize_ai_output(mock))
+
+        try:
+            response_content = _openai_chat(
+                messages=[{"role": "user", "content": master_prompt}],
+                model=OPENAI_MODEL,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                temperature=DEFAULT_AI_TEMPERATURE,
+            )
+        except Exception as openai_error:
+            return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
+        
+        # Clean up the response content to extract JSON
+        if response_content.startswith('```json'):
+            response_content = response_content.replace('```json', '').replace('```', '').strip()
+        elif response_content.startswith('```'):
+            response_content = response_content.replace('```', '').strip()
+        
+        try:
+            ai_json_response = json.loads(response_content)
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
+            if json_match:
+                ai_json_response = json.loads(json_match.group())
+            else:
+                return jsonify({"error": "Failed to parse AI response"}), 500
+        
+        return jsonify(normalize_ai_output(ai_json_response))
+    except Exception as e:
+        return jsonify({"error": f"An internal error occurred: {e}"}), 500
+
+@app.route('/api/save-synthesis', methods=['POST'])
+def save_synthesis_endpoint():
+    """Save the approved analysis to the database."""
+    try:
+        data = request.get_json()
+        contact_id = data.get('contact_id')
+        raw_note_text = data.get('raw_note')
+        synthesis_data = data.get('synthesis')
+        ai_synthesis = data.get('ai_synthesis')
+        user_edited_synthesis = data.get('user_edited_synthesis')
+        
+        if not contact_id or not synthesis_data:
+            return jsonify({"error": "Missing required data"}), 400
+
+        try:
+            conn = get_db_connection()
+            try:
+                # Log the raw note with full details
+                if isinstance(raw_note_text, str) and raw_note_text.strip():
+                    tags_obj = {
+                        "type": "manual_note",
+                        "raw_note": raw_note_text.strip(),
+                        "categorized_updates": synthesis_data.get('categorized_updates', [])
+                    }
+                    conn.execute(
+                        'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                        (contact_id, 'Manual note analyzed and saved', json.dumps(tags_obj), datetime.now().isoformat())
+                    )
+
+                # Save synthesized entries
+                for category_data in synthesis_data.get('categorized_updates', []):
+                    for detail in category_data.get('details', []):
+                        conn.execute(
+                            'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
+                            (contact_id, category_data['category'], detail)
+                        )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Audit logging
+            try:
+                user_id = 1
+                if ai_synthesis:
+                    log_audit_event(
+                        contact_id=contact_id,
+                        user_id=user_id,
+                        event_type='AI_ANALYSIS_CREATED',
+                        source='AI_ANALYSIS',
+                        before_state=None,
+                        after_state=ai_synthesis,
+                        raw_input=raw_note_text
+                    )
+                if ai_synthesis and user_edited_synthesis and ai_synthesis != user_edited_synthesis:
+                    log_audit_event(
+                        contact_id=contact_id,
+                        user_id=user_id,
+                        event_type='SYNTHESIS_EDITED',
+                        source='MANUAL_USER',
+                        before_state=ai_synthesis,
+                        after_state=user_edited_synthesis,
+                        raw_input=None
+                    )
+                if not ai_synthesis and not user_edited_synthesis:
+                    # Fallback: single note added record
+                    log_audit_event(
+                        contact_id=contact_id,
+                        user_id=1,
+                        event_type='NOTE_ADDED',
+                        source='MANUAL_USER',
+                        before_state=None,
+                        after_state=synthesis_data,
+                        raw_input=raw_note_text
+                    )
+            except Exception:
+                pass
+            return jsonify({"status": "success", "message": "Analysis saved successfully."})
+        except sqlite3.OperationalError as e:
+            if "no such column: content" in str(e):
+                logger.warning("Schema mismatch detected. Applying on-the-fly migration for 'synthesized_entries' (manual save).")
+                try:
+                    conn = get_db_connection()
+                    try:
+                        conn.execute('ALTER TABLE synthesized_entries ADD COLUMN content TEXT NOT NULL DEFAULT ""')
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    # Retry the operation
+                    conn = get_db_connection()
+                    try:
+                        if isinstance(raw_note_text, str) and raw_note_text.strip():
+                            tags_obj = {
+                                "type": "manual_note",
+                                "raw_note": raw_note_text.strip(),
+                                "categorized_updates": synthesis_data.get('categorized_updates', [])
+                            }
+                            conn.execute(
+                                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                                (contact_id, 'Manual note analyzed and saved', json.dumps(tags_obj), datetime.now().isoformat())
+                            )
+                        for category_data in synthesis_data.get('categorized_updates', []):
+                            for detail in category_data.get('details', []):
+                                conn.execute(
+                                    'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
+                                    (contact_id, category_data['category'], detail)
+                                )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    logger.info("✅ On-the-fly migration successful. Manual analysis saved.")
+                    try:
+                        user_id = 1
+                        if ai_synthesis:
+                            log_audit_event(contact_id, user_id, 'AI_ANALYSIS_CREATED', 'AI_ANALYSIS', None, ai_synthesis, raw_note_text)
+                        if ai_synthesis and user_edited_synthesis and ai_synthesis != user_edited_synthesis:
+                            log_audit_event(contact_id, user_id, 'SYNTHESIS_EDITED', 'MANUAL_USER', ai_synthesis, user_edited_synthesis, None)
+                        if not ai_synthesis and not user_edited_synthesis:
+                            log_audit_event(contact_id, user_id, 'NOTE_ADDED', 'MANUAL_USER', None, synthesis_data, raw_note_text)
+                    except Exception:
+                        pass
+                    return jsonify({"status": "success", "message": "Analysis saved successfully after migration."})
+                except Exception as retry_e:
+                    logger.error(f"❌ Error saving manual analysis even after migration attempt: {retry_e}")
+                    return jsonify({"error": f"Database migration failed: {retry_e}"}), 500
+            else:
+                raise e  # Re-raise other operational errors
+
+    except Exception as e:
+        logger.error(f"Failed to save analysis: {e}")
+        return jsonify({"error": f"Failed to save analysis: {e}"}), 500
+
+@app.route('/api/telegram/direct-import', methods=['POST'])
+def direct_telegram_import():
+    """Run the direct import script as a subprocess."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'No data provided'
+            }), 400
+            
+        identifier = validate_input('identifier', data.get('identifier'))
+        days_back = validate_input('days_back', data.get('days_back', 30))
+        
+        if not identifier:
+            logger.warning(f"Direct import: Invalid identifier provided: {data.get('identifier')}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Please provide a valid username or handle'
+            }), 400
+        
+        # Run the direct import script
+        import subprocess
+        import sys
+        
+        script_path = os.path.join(os.path.dirname(__file__), 'telegram_direct_import.py')
+        
+        # Run in background and return immediately
+        def run_import():
+            process = None
+            try:
+                process = subprocess.Popen([
+                    sys.executable, script_path, identifier, str(days_back)
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                
+                stdout, stderr = process.communicate(timeout=600)  # 10 minute timeout
+                
+                if process.returncode == 0:
+                    logger.info(f"✅ Direct import completed for {identifier}")
+                    if stdout:
+                        logger.info(f"Import output: {stdout}")
+                else:
+                    logger.error(f"❌ Direct import failed for {identifier}")
+                    if stderr:
+                        logger.error(f"Import error: {stderr}")
+            except subprocess.TimeoutExpired:
+                if process:
+                    process.kill()
+                    process.wait()
+                logger.warning(f"⏰ Direct import timed out for {identifier}")
+            except Exception as e:
+                if process and process.poll() is None:
+                    process.kill()
+                    process.wait()
+                logger.error(f"❌ Error running direct import: {e}")
+        
+        import threading
+        thread = threading.Thread(target=run_import)
+        thread.daemon = True
+        thread.start()
+        
+        logger.info(f"Started direct import for identifier: {identifier} (last {days_back} days)")
+        return jsonify({
+            'status': 'success',
+            'message': f'Import started for "{identifier}" (last {days_back} days). Check terminal for progress.'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error starting import: {e}'
+        }), 500
+
+@app.route('/api/process-transcript', methods=['POST'])
+def process_transcript_endpoint():
+    """Process a conversation transcript using AI analysis."""
+    try:
+        data = request.get_json()
+        transcript = data.get('transcript')
+        contact_id = data.get('contact_id')
+
+        if not transcript or not contact_id:
+            return jsonify({"error": "Missing transcript or contact_id"}), 400
+
+        # --- RAG PIPELINE ---
+        try:
+            collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+            collection = chroma_client.get_or_create_collection(name=collection_name)
+            query_text = " ".join(transcript.split()[:30])
+            results = collection.query(query_texts=[query_text], n_results=3)
+            retrieved_history = "\n---\n".join(results['documents'][0]) if results['documents'] else "No relevant history found."
+        except Exception as rag_err:
+            logger.warning(f"RAG pipeline unavailable, proceeding without retrieved history: {rag_err}")
+            retrieved_history = "No relevant history found."
+
+        master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=transcript, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
+        
+        try:
+            response_content = _openai_chat(
+                messages=[{"role": "user", "content": master_prompt}],
+                model=OPENAI_MODEL,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                temperature=DEFAULT_AI_TEMPERATURE,
+            )
+        except Exception as openai_error:
+            return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
+        
+        if response_content.startswith('```json'):
+            response_content = response_content.replace('```json', '').replace('```', '').strip()
+        elif response_content.startswith('```'):
+            response_content = response_content.replace('```', '').strip()
+        
+        try:
+            ai_json_response = json.loads(response_content)
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
+            if json_match:
+                ai_json_response = json.loads(json_match.group())
+            else:
+                return jsonify({"error": "Failed to parse AI response"}), 500
+        
+        normalized = normalize_ai_output(ai_json_response)
+
+        # Auto-save the analysis and log raw transcript + AI output
+        try:
+            with get_db_connection() as conn:
+                for category_data in normalized.get('categorized_updates', []):
+                    for detail in category_data.get('details', []):
+                        conn.execute(
+                            'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
+                            (contact_id, category_data['category'], detail)
+                        )
+                # Log raw transcript with categorized result
+                tags_obj = {
+                    "type": "telegram_sync",
+                    "transcript": transcript,
+                    "categorized_updates": normalized.get('categorized_updates', [])
+                }
+                conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+                    contact_id, 'Telegram transcript processed and saved', json.dumps(tags_obj), datetime.now().isoformat()
+                ))
+ 
+            logger.info(f"✅ Successfully processed and saved transcript for contact {contact_id}")
+            try:
+                log_audit_event(contact_id, 1, 'TELEGRAM_SYNC_APPLIED', 'TELEGRAM_IMPORT', None, {"message_count": transcript.count('\n') + 1}, transcript)
+                log_audit_event(contact_id, 1, 'AI_ANALYSIS_CREATED', 'AI_ANALYSIS', None, normalized, transcript)
+            except Exception:
+                pass
+            return jsonify({
+                "status": "success", 
+                "message": "Transcript processed and saved successfully",
+                "analysis": normalized
+            })
+        except sqlite3.OperationalError as e:
+            if "no such column: content" in str(e):
+                try:
+                    with get_db_connection() as conn:
+                        conn.execute('ALTER TABLE synthesized_entries ADD COLUMN content TEXT NOT NULL DEFAULT ""')
+                    with get_db_connection() as conn:
+                        for category_data in normalized.get('categorized_updates', []):
+                            for detail in category_data.get('details', []):
+                                conn.execute(
+                                    'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
+                                    (contact_id, category_data['category'], detail)
+                                )
+                        tags_obj = {
+                            "type": "telegram_sync",
+                            "transcript": transcript,
+                            "categorized_updates": normalized.get('categorized_updates', [])
+                        }
+                        conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+                            contact_id, 'Telegram transcript processed and saved', json.dumps(tags_obj), datetime.now().isoformat()
+                        ))
+                    return jsonify({
+                        "status": "success", 
+                        "message": "Transcript processed and saved successfully after migration.",
+                        "analysis": normalized
+                    })
+                except Exception as retry_e:
+                    logger.error(f"❌ Error processing transcript even after migration attempt: {retry_e}")
+                    return jsonify({"error": f"Database migration failed: {retry_e}"}), 500
+            else:
+                raise e
+    except Exception as e:
+        print(f"❌ Error processing transcript: {e}")
+        return jsonify({"error": f"An internal error occurred: {e}"}), 500
+
+@app.route('/api/telegram/start-import', methods=['POST'])
+def start_telegram_import():
+    """Initiates a new Telegram import background task. Accepts identifier or contact_id."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        identifier = validate_input('identifier', data.get('identifier'))
+        days_back = validate_input('days_back', data.get('days_back', 30))
+        contact_id = validate_input('contact_id', data.get('contact_id'))
+        
+        # If identifier not provided, infer from contact_id
+        if not identifier and contact_id:
+            conn = get_db_connection()
+            try:
+                cur = conn.execute('SELECT telegram_username, telegram_handle, full_name FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
+                row = cur.fetchone()
+                if not row:
+                    return jsonify({"error": "Contact not found"}), 404
+                identifier = (row['telegram_username'] or row['telegram_handle'] or '').strip()
+            finally:
+                conn.close()
+        
+        if not identifier:
+            return jsonify({"error": "Please provide a Telegram username (e.g., 'username' or '@username')."}), 400
+
+        identifier = identifier.lstrip('@')
+
+        # Create a new task record in the database
+        with IMPORT_TASK_LOCK:  # Thread-safe import task creation
+            task_id = str(uuid.uuid4())
+            conn = get_db_connection()
+            try:
+                conn.execute('''
+                    INSERT INTO import_tasks (id, user_id, contact_id, task_type, status, status_message)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (task_id, 1, contact_id, 'telegram_import', 'pending', 'Task created, waiting to start...'))
+                conn.commit()
+            finally:
+                conn.close()
+
+        # Run import in subprocess instead of scheduler
+        import subprocess
+        import sys
+        
+        def run_import_subprocess():
+            """Run the import in a subprocess to avoid threading issues."""
+            try:
+                # Determine the correct python executable from the virtualenv
+                # This makes the assumption that the venv is in the project root.
+                project_root = os.path.dirname(os.path.abspath(__file__))
+                python_executable = os.path.join(project_root, '.venv', 'bin', 'python')
+
+                # Fallback to sys.executable if venv python not found
+                if not os.path.exists(python_executable):
+                    python_executable = sys.executable
+
+                # Create a simple script to run the import
+                script_content = f'''
+import sys
+import os
+sys.path.insert(0, "{os.path.dirname(os.path.abspath(__file__))}")
+from telegram_worker import run_telegram_import
+run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 'None'}, {days_back})
+'''
+                
+                # Write script to temp file
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+                    f.write(script_content)
+                    script_path = f.name
+                
+                # Set environment variables for subprocess
+                env = os.environ.copy()
+                env['TELEGRAM_API_ID'] = os.getenv('TELEGRAM_API_ID', '')
+                env['TELEGRAM_API_HASH'] = os.getenv('TELEGRAM_API_HASH', '')
+                env['KITH_API_URL'] = os.getenv('KITH_API_URL', 'http://127.0.0.1:5001')
+                env['KITH_API_TOKEN'] = os.getenv('KITH_API_TOKEN', 'dev_token')
+                
+                process = subprocess.Popen([
+                    python_executable, script_path
+                ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
+                
+                try:
+                    stdout, stderr = process.communicate(timeout=600)  # 10 minute timeout
+                    result_code = process.returncode
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    stdout, stderr, result_code = '', 'Timeout expired after 10 minutes.', 1
+                
+                # Clean up temp file
+                try:
+                    os.unlink(script_path)
+                except:
+                    pass
+                
+                conn = get_db_connection()
+                try:
+                    if result_code != 0:
+                        error_details = f"Subprocess failed with code {result_code}.\n"
+                        if stdout:
+                            error_details += f"--- STDOUT ---\n{stdout}\n"
+                        if stderr:
+                            error_details += f"--- STDERR ---\n{stderr}\n"
+                        
+                        conn.execute('''
+                            UPDATE import_tasks 
+                            SET status = ?, status_message = ?, error_details = ?
+                            WHERE id = ?
+                        ''', ('failed', 'Import process exited unexpectedly', error_details, task_id))
+                    else:
+                        # Final check: if status is still running, it means the worker finished
+                        # but didn't set a final state. Mark as completed.
+                        current_status_row = conn.execute('SELECT status FROM import_tasks WHERE id = ?', (task_id,)).fetchone()
+                        if current_status_row and current_status_row['status'] not in ['completed', 'failed']:
+                            conn.execute('''
+                                UPDATE import_tasks 
+                                SET status = ?, status_message = ?, completed_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            ''', ('completed', 'Import process finished.', task_id))
+                            
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            except Exception as e:
+                # This outer catch is for errors in setting up the subprocess itself
+                conn = get_db_connection()
+                try:
+                    conn.execute('''
+                        UPDATE import_tasks 
+                        SET status = 'failed', status_message = 'Failed to start subprocess', error_details = ?
+                        WHERE id = ?
+                    ''', (str(e), task_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+
+        # Execute in a background thread to avoid blocking the request
+        import threading
+        thread = threading.Thread(target=run_import_subprocess)
+        thread.start()
+        
+        return jsonify({
+            "success": True, 
+            "message": "Telegram import started.",
+            "task_id": task_id
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+        
+@app.route('/api/telegram/import-status/<task_id>', methods=['GET'])
+def get_import_status(task_id):
+    """Polls for the status of a background import task."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.execute('SELECT * FROM import_tasks WHERE id = ?', (task_id,))
+        task = cursor.fetchone()
+        conn.close()
+        
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        
+        return jsonify({
+            "task_id": task['id'],
+            "status": task['status'],
+            "progress": task['progress'],
+            "status_message": task['status_message'],
+            "error_details": task['error_details'],
+            "created_at": task['created_at'],
+            "completed_at": task['completed_at']
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to get task status: {e}"}), 500
+
+def get_or_create_contact_by_identifier(identifier):
+    """Find or create a contact based on Telegram identifier."""
+    try:
+        with CONTACT_CREATION_LOCK:  # Thread-safe contact lookup/creation
+            conn = get_db_connection()
+            try:
+                # Clean the identifier
+                clean_identifier = identifier.strip().lstrip('@')
+                
+                # Try to find existing contact
+                cursor = conn.execute('''
+                    SELECT id FROM contacts 
+                    WHERE telegram_username = ? OR telegram_phone = ? OR LOWER(full_name) LIKE LOWER(?)
+                ''', (clean_identifier, identifier, f'%{clean_identifier}%'))
+                
+                existing_contact = cursor.fetchone()
+                if existing_contact:
+                    logger.info(f"Found existing contact for identifier '{identifier}': {existing_contact['id']}")
+                    return existing_contact['id']
+                
+                # Create new contact with all required fields
+                cursor = conn.execute('''
+                    INSERT INTO contacts (full_name, tier, telegram_username, user_id, vector_collection_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (clean_identifier, 2, clean_identifier, 1, f"contact_{uuid.uuid4().hex[:8]}", datetime.now().isoformat()))
+                
+                contact_id = cursor.lastrowid
+                conn.commit()
+                
+                logger.info(f"Created new contact for identifier '{identifier}': {contact_id}")
+                return contact_id
+            finally:
+                conn.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating contact for identifier '{identifier}': {e}")
+        return None
+
+@app.route('/api/export/csv', methods=['GET'])
+def export_all_data_csv():
+    """Streams all user data as a single, comprehensive CSV file using a Record-Type CSV format."""
+    def generate_csv():
+        output = StringIO()
+        writer = csv.writer(output)
+        # Master header covering all record types
+        header = [
+            'record_type', 'record_id', 'contact_id', 'contact_full_name', 'contact_tier',
+            'category', 'detail_content', 'raw_note_content',
+            'log_event_type', 'log_source', 'log_timestamp', 'log_before_state', 'log_after_state', 'log_raw_input'
+        ]
+        writer.writerow(header)
+        yield output.getvalue(); output.seek(0); output.truncate(0)
+
+        try:
+            with get_db_connection() as conn:
+                # CONTACT rows
+                cur = conn.execute('''
+                    SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = 1 ORDER BY id
+                ''')
+                for row in cur:
+                    writer.writerow([
+                        'CONTACT', row['id'], row['id'], row['full_name'], row['tier'],
+                        '', '', '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # SYNTHESIZED_DETAIL rows
+                cur = conn.execute('''
+                    SELECT se.id as se_id, se.contact_id, c.full_name, c.tier, se.category, se.content, se.created_at as created_at
+                    FROM synthesized_entries se
+                    JOIN contacts c ON c.id = se.contact_id
+                    WHERE c.user_id = 1
+                    ORDER BY se.id
+                ''')
+                for row in cur:
+                    writer.writerow([
+                        'SYNTHESIZED_DETAIL', row['se_id'], row['contact_id'], row['full_name'], row['tier'],
+                        row['category'], row['content'], '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # RAW_NOTE rows (include extracted raw content from tags when available)
+                cur = conn.execute('''
+                    SELECT rn.id as rn_id, rn.contact_id, c.full_name, c.tier, rn.content as note_summary, rn.tags, rn.created_at
+                    FROM raw_notes rn
+                    JOIN contacts c ON c.id = rn.contact_id
+                    WHERE c.user_id = 1
+                    ORDER BY rn.id
+                ''')
+                for row in cur:
+                    raw_content = ''
+                    try:
+                        if row['tags']:
+                            t = json.loads(row['tags'])
+                            if isinstance(t, dict):
+                                # Prefer raw_note if present, else transcript for telegram, otherwise stringify tags
+                                raw_content = t.get('raw_note') or t.get('transcript') or ''
+                                if not raw_content:
+                                    raw_content = json.dumps(t, ensure_ascii=False)
+                    except Exception:
+                        raw_content = ''
+                    writer.writerow([
+                        'RAW_NOTE', row['rn_id'], row['contact_id'], row['full_name'], row['tier'],
+                        '', '', raw_content or row['note_summary'] or '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # AUDIT_LOG rows
+                cur = conn.execute('''
+                    SELECT id, contact_id, event_type, source, event_timestamp, before_state, after_state, raw_input
+                    FROM contact_audit_log
+                    WHERE user_id = 1
+                    ORDER BY id
+                ''')
+                for row in cur:
+                    writer.writerow([
+                        'AUDIT_LOG', row['id'], row['contact_id'], '', '',
+                        '', '', '',
+                        row['event_type'] or '', row['source'] or '',
+                        row['event_timestamp'] or '',
+                        row['before_state'] or '', row['after_state'] or '', row['raw_input'] or ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+        except Exception as e:
+            # Surface an error row to the CSV for visibility
+            writer.writerow(['ERROR', '', '', '', '', '', '', '', '', '', '', '', '', str(e)])
+            yield output.getvalue(); output.seek(0); output.truncate(0)
+
+    response = Response(generate_csv(), mimetype='text/csv')
+    response.headers.set("Content-Disposition", "attachment", filename="kith_full_export.csv")
+    return response
+
+@app.route('/api/contact/<int:contact_id>/categories', methods=['PUT'])
+def replace_contact_categories(contact_id: int):
+    """Replace all synthesized category entries for a contact with provided updates and log the change."""
+    try:
+        payload = request.get_json() or {}
+        updates = payload.get('categorized_updates', [])
+        raw_note = payload.get('raw_note')
+        if not isinstance(updates, list):
+            return jsonify({"error": "categorized_updates must be a list"}), 400
+        # Validate categories and normalize structure
+        cleaned = []
+        for item in updates:
+            cat = canonicalize_category(item.get('category'))
+            details = [sanitize_text(d) for d in (item.get('details') or []) if sanitize_text(d)]
+            if not details:
+                continue
+            cleaned.append({"category": cat, "details": details})
+        conn = get_db_connection()
+        try:
+            # Snapshot before state
+            before = {}
+            cur = conn.execute('SELECT category, content FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+            for row in cur.fetchall():
+                before.setdefault(row['category'], []).append(row['content'])
+
+            # Replace within a transaction
+            conn.execute('BEGIN')
+            conn.execute('DELETE FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+            for item in cleaned:
+                for detail in item['details']:
+                    conn.execute(
+                        'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
+                        (contact_id, item['category'], detail)
+                    )
+            # Snapshot after state
+            after = {}
+            cur2 = conn.execute('SELECT category, content FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+            for row in cur2.fetchall():
+                after.setdefault(row['category'], []).append(row['content'])
+ 
+            # Build dynamic summary for log content based on real changes
+            changed_categories = []
+            added_count = 0
+            removed_count = 0
+            for category in set(list(before.keys()) + list(after.keys())):
+                before_items = before.get(category, []) or []
+                after_items = after.get(category, []) or []
+                if before_items != after_items:
+                    changed_categories.append(category)
+                    added_count += sum(1 for x in after_items if x not in before_items)
+                    removed_count += sum(1 for x in before_items if x not in after_items)
+
+            if changed_categories:
+                if len(changed_categories) == 1:
+                    cats_part = changed_categories[0].replace('_', ' ')
+                    summary = f"Edited 1 category via UI: {cats_part}"
+                else:
+                    preview = ', '.join([c.replace('_', ' ') for c in changed_categories[:3]])
+                    ellipsis = '…' if len(changed_categories) > 3 else ''
+                    summary = f"Edited {len(changed_categories)} categories via UI: {preview}{ellipsis}"
+                summary += f" (+{added_count} added, -{removed_count} removed)"
+            else:
+                summary = 'Saved categories with no changes'
+
+            # Prefer dynamic summary over any client-provided note
+            log_text = summary
+            tags_obj = {"type": "category_edit", "before": before, "after": after}
+            conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+                contact_id, log_text, json.dumps(tags_obj), datetime.now().isoformat()
+            ))
+
+            conn.commit()
+            try:
+                log_audit_event(contact_id, 1, 'SYNTHESIS_EDITED', 'MANUAL_USER', before, after, raw_note)
+            except Exception:
+                pass
+            return jsonify({"status": "success", "message": "Categories updated"})
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to replace categories: {e}")
+        return jsonify({"error": f"Failed to replace categories: {e}"}), 500
+
+@app.route('/api/contact/<int:contact_id>/audit-log', methods=['GET'])
+def get_audit_log_for_contact(contact_id: int):
+    """Fetch complete, ordered audit history for a contact."""
+    try:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute('SELECT event_timestamp, event_type, source, before_state, after_state, raw_input FROM contact_audit_log WHERE contact_id = ? ORDER BY event_timestamp DESC', (contact_id,))
+            rows = cur.fetchall()
+            result = []
+            for r in rows:
+                try:
+                    before_obj = json.loads(r['before_state']) if r['before_state'] else None
+                    after_obj = json.loads(r['after_state']) if r['after_state'] else None
+                except Exception:
+                    before_obj, after_obj = r['before_state'], r['after_state']
+                result.append({
+                    'event_timestamp': r['event_timestamp'],
+                    'event_type': r['event_type'],
+                    'source': r['source'],
+                    'before_state': before_obj,
+                    'after_state': after_obj,
+                    'raw_input': r['raw_input']
+                })
+            return jsonify(result)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to fetch audit log: {e}")
+        return jsonify({"error": f"Failed to fetch audit log: {e}"}), 500
+
+# --- Merge from CSV (non-destructive) ---
+@app.route('/api/import/merge-from-csv', methods=['POST'])
+def merge_from_csv_endpoint():
+    try:
+        if 'backup_file' not in request.files:
+            return jsonify({"error": "No backup file provided"}), 400
+        file = request.files['backup_file']
+        if not file or not file.filename.lower().endswith('.csv'):
+            return jsonify({"error": "Invalid file type. Please upload a .csv file."}), 400
+
+        csv_bytes = file.read()
+        # Idempotency: compute file hash
+        import hashlib
+        file_hash = hashlib.sha256(csv_bytes).hexdigest()
+
+        # Options via multipart form fields
+        dry_run = (request.form.get('dry_run', 'false').lower() == 'true')
+        force = (request.form.get('force', 'false').lower() == 'true')
+        # Conflict policy defaults
+        conflict_policy = {
+            'contact_tier': request.form.get('policy_contact_tier', 'preserve'),  # preserve | overwrite
+            'details': request.form.get('policy_details', 'preserve'),            # preserve | append
+        }
+
+        # Check idempotency store unless dry_run or force
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute('SELECT id, created_at FROM file_imports WHERE import_type = ? AND file_hash = ?', ('csv_merge', file_hash))
+                row = cur.fetchone()
+                if row and not force and not dry_run:
+                    return jsonify({
+                        "status": "skipped",
+                        "message": "This CSV was already imported before (same file hash).",
+                        "import_id": row['id'],
+                        "imported_at": row['created_at']
+                    })
+        except Exception:
+            # Non-fatal: proceed without idempotency if table not available
+            pass
+
+        try:
+            csv_text = csv_bytes.decode('utf-8')
+        except Exception:
+            csv_text = csv_bytes.decode('latin-1')
+
+        result = run_merge_process(csv_text, options={
+            'dry_run': dry_run,
+            'conflict_policy': conflict_policy,
+            'file_name': file.filename,
+            'file_hash': file_hash
+        })
+
+        # Persist idempotency record on successful non-dry run
+        if not dry_run and result.get('status') == 'success':
+            try:
+                with get_db_connection() as conn:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO file_imports (user_id, import_type, file_name, file_hash, status, stats_json) VALUES (?, ?, ?, ?, ?, ?)',
+                        (1, 'csv_merge', file.filename, file_hash, 'completed', json.dumps(result.get('details', {})))
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist file import record: {e}")
+
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("Merge from CSV failed")
+        return jsonify({"error": f"Merge failed: {e}"}), 500
+
+
+def run_merge_process(csv_text: str, options: typing.Optional[dict] = None) -> dict:
+    """Non-destructively merge contacts and synthesized details from CSV text.
+    Supports two CSV formats:
+      1) Simple columns: Contact Full Name, Contact Tier, Category, Detail/Fact, AI Confidence, Entry Date
+      2) Record-type CSV (our export): record_type, contact_full_name, category, detail_content, log_timestamp
+    The parser tolerates truncated or variant header names (e.g., 'contact_full', 'detail_conte').
+    Accepts options:
+      - dry_run: bool (no writes, returns preview)
+      - conflict_policy: {contact_tier: 'preserve'|'overwrite', details: 'preserve'|'append'}
+      - file_name, file_hash for echoing back
+    """
+    options = options or {}
+    dry_run: bool = bool(options.get('dry_run', False))
+    conflict_policy: dict = options.get('conflict_policy', {}) or {}
+    contact_tier_policy = (conflict_policy.get('contact_tier') or 'preserve').lower()
+    details_policy = (conflict_policy.get('details') or 'preserve').lower()
+
+    stats = {
+        "contacts_added": 0, "details_added": 0,
+        "contacts_skipped": 0, "details_skipped": 0,
+        "rows_total": 0, "rows_contact_processed": 0,
+        "rows_synth_processed": 0, "rows_skipped_unknown_type": 0,
+        "rows_skipped_no_name": 0, "rows_skipped_duplicate": 0
+    }
+    conflicts: list[dict] = []
+
+    reader = csv.DictReader(StringIO(csv_text))
+    raw_fieldnames = reader.fieldnames or []
+    fieldnames = [f.strip() for f in raw_fieldnames]
+    rows = list(reader)
+
+    def norm(s: typing.Any) -> str:
+        return (s or '').strip()
+
+    def canon(name: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', (name or '').lower())
+
+    # Build a lookup from canonical header token to actual header
+    canon_to_actual = {canon(h): h for h in fieldnames}
+
+    def has_logical(logical_key: str) -> bool:
+        candidates = {
+            'record_type': ['record_type', 'record_t', 'type']
+        }.get(logical_key, [logical_key])
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return True
+        return False
+
+    def get_val(row: dict, logical_key: str, *, default: str = '') -> str:
+        """Get value from row with flexible header matching."""
+        # Direct mapping for exact matches from user's CSV
+        header_mappings = {
+            'record_type': ['record_type'],
+            'contact_full_name': ['contact_full_name', 'contact_full', 'full_name', 'name'],
+            'contact_tier': ['contact_tier', 'tier'],
+            'category': ['category'],
+            'detail_content': ['detail_content', 'detail_conte', 'content'],
+            'entry_date': ['log_timestamp', 'created_at', 'entry_date', 'timestamp'],
+            'raw_note_content': ['raw_note_content', 'raw_note', 'note_content', 'note']
+        }
+        
+        candidates = header_mappings.get(logical_key, [logical_key])
+        
+        # First try exact matches
+        for header in fieldnames:
+            if header in candidates:
+                return norm(row.get(header, default))
+        
+        # Then try case-insensitive exact matches
+        for header in fieldnames:
+            header_lower = header.lower()
+            for cand in candidates:
+                if header_lower == cand.lower():
+                    return norm(row.get(header, default))
+        
+        # Finally try prefix/substring matching
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return norm(row.get(header, default))
+        
+        return default
+
+    def to_int_or(default: int, val: typing.Any) -> int:
+        try:
+            v = str(val).strip()
+            return int(v) if v else default
+        except Exception:
+            return default
+
+    from datetime import datetime
+    with get_db_connection() as conn:
+        # Load existing contacts for user 1 into a case-insensitive map
+        cur = conn.execute('SELECT id, full_name, tier FROM contacts WHERE COALESCE(user_id, 1) = 1')
+        name_to_contact_id = { (row['full_name'] or '').strip().lower(): row['id'] for row in cur }
+        contact_tiers: dict[int, int] = { row['id']: row['tier'] for row in cur.fetchall() } if False else {}
+
+        # Load existing synthesized detail signatures per contact_id
+        existing_details_map: dict[int, set[str]] = {}
+        cur = conn.execute('SELECT contact_id, category, content FROM synthesized_entries')
+        for row in cur:
+            sig = f"{norm(row['category'])}|{norm(row['content'])}"
+            existing_details_map.setdefault(row['contact_id'], set()).add(sig)
+
+        # If record-type CSV, pre-create contacts from CONTACT rows even if no details exist
+        if has_logical('record_type'):
+            for row in rows:
+                stats['rows_total'] += 1
+                if classify_record_type(get_val(row, 'record_type')) != 'CONTACT':
+                    continue
+                name = norm(get_val(row, 'contact_full_name'))
+                if not name:
+                    stats['rows_skipped_no_name'] += 1
+                    continue
+                name_key = name.lower()
+                if name_key in name_to_contact_id:
+                    # Potential conflict: tier change
+                    tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                    if contact_tier_policy == 'overwrite' and tier_val in (1, 2, 3):
+                        try:
+                            if not dry_run:
+                                conn.execute('UPDATE contacts SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tier_val, name_to_contact_id[name_key]))
+                            else:
+                                conflicts.append({
+                                    'type': 'contact_tier_update',
+                                    'name': name,
+                                    'from': 'existing',
+                                    'to': tier_val,
+                                    'policy_applied': 'overwrite'
+                                })
+                        except Exception as e:
+                            conflicts.append({'type': 'error', 'message': f"Failed to update tier for {name}: {e}"})
+                    stats['contacts_skipped'] += 1
+                    continue
+                tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
+                    )
+                    contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                else:
+                    contact_id = -(stats['contacts_added'] + 1)  # pseudo id for preview
+                name_to_contact_id[name_key] = contact_id
+                existing_details_map.setdefault(contact_id, set())
+                stats['contacts_added'] += 1
+                stats['rows_contact_processed'] += 1
+
+        # Helper: iterate normalized synthesized-detail rows
+        def iter_normalized_rows():
+            is_record_type = has_logical('record_type')
+            if is_record_type:
+                for row in rows:
+                    rt = classify_record_type(get_val(row, 'record_type'))
+                    if not rt:
+                        stats['rows_skipped_unknown_type'] += 1
+                        continue
+                    if rt != 'SYNTHESIZED_DETAIL':
+                        continue
+                    yield {
+                        'name': norm(get_val(row, 'contact_full_name')),
+                        'tier': get_val(row, 'contact_tier') or '2',
+                        'category': norm(get_val(row, 'category')),
+                        'detail': norm(get_val(row, 'detail_content')),
+                        'confidence': None,
+                        'entry_date': norm(get_val(row, 'log_timestamp')),
+                    }
+            else:
+                for row in rows:
+                    yield {
+                        'name': norm(row.get('Contact Full Name') or row.get('contact_full_name')),
+                        'tier': row.get('Contact Tier') or row.get('contact_tier') or '2',
+                        'category': norm(row.get('Category') or row.get('category')),
+                        'detail': norm(row.get('Detail/Fact') or row.get('detail_content')),
+                        'confidence': row.get('AI Confidence') or row.get('confidence_score'),
+                        'entry_date': norm(row.get('Entry Date') or row.get('created_at')),
+                    }
+
+        # Now process synthesized details (and create contacts on-the-fly if needed)
+        for r in iter_normalized_rows():
+            name = r['name']
+            if not name:
+                stats['rows_skipped_no_name'] += 1
+                continue
+            name_key = name.lower()
+            contact_id = name_to_contact_id.get(name_key)
+            if contact_id is None:
+                tier_val = to_int_or(2, r['tier'])
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (name, tier_val, f"contact_{uuid.uuid4().hex[:8]}")
+                    )
+                    contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                else:
+                    contact_id = -(stats['contacts_added'] + 1)
+                name_to_contact_id[name_key] = contact_id
+                existing_details_map.setdefault(contact_id, set())
+                stats['contacts_added'] += 1
+                stats['rows_contact_processed'] += 1
+            else:
+                # If contact exists and CSV contains a tier value and policy is overwrite, update
+                tier_val = to_int_or(0, r['tier'])
+                if tier_val in (1, 2, 3) and contact_tier_policy == 'overwrite':
+                    try:
+                        if not dry_run:
+                            conn.execute('UPDATE contacts SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tier_val, contact_id))
+                        else:
+                            conflicts.append({
+                                'type': 'contact_tier_update',
+                                'name': name,
+                                'from': 'existing',
+                                'to': tier_val,
+                                'policy_applied': 'overwrite'
+                            })
+                    except Exception as e:
+                        conflicts.append({'type': 'error', 'message': f"Failed to update tier for {name}: {e}"})
+                stats['contacts_skipped'] += 1
+                stats['rows_synth_processed'] += 1
+
+            detail_text = r['detail']
+            category = r['category'] or 'Uncategorized'
+            if not detail_text:
+                continue
+            sig = f"{category}|{detail_text}"
+            is_dup = sig in existing_details_map.get(contact_id, set())
+            if is_dup and details_policy == 'preserve':
+                stats['details_skipped'] += 1
+                stats['rows_skipped_duplicate'] += 1
+                conflicts.append({'type': 'duplicate_detail', 'contact_name': name, 'category': category, 'content': detail_text})
+                continue
+
+            confidence_val = None
+            if r['confidence'] not in (None, ''):
+                try:
+                    confidence_val = float(r['confidence'])
+                except ValueError:
+                    confidence_val = None
+
+            created_at_val = None
+            if r['entry_date']:
+                try:
+                    created_at_val = datetime.fromisoformat(r['entry_date'].replace('Z', '+00:00')).isoformat()
+                except Exception:
+                    created_at_val = None
+
+            if not dry_run:
+                conn.execute(
+                    'INSERT INTO synthesized_entries (contact_id, category, content, confidence_score, created_at) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))',
+                    (contact_id, category, detail_text, confidence_val, created_at_val)
+                )
+                existing_details_map.setdefault(contact_id, set()).add(sig)
+            else:
+                # Preview only; virtually add to existing set for subsequent dedupe
+                existing_details_map.setdefault(contact_id, set()).add(sig)
+            stats['details_added'] += 1
+            stats['rows_synth_processed'] += 1
+
+        if not dry_run:
+            conn.commit()
+
+    preview = {
+        'fieldnames': fieldnames,
+        'canonical_mappings': canon_to_actual,
+        'is_record_type': has_logical('record_type'),
+        'conflict_policy': {'contact_tier': contact_tier_policy, 'details': details_policy},
+        'conflicts': conflicts[:200]  # cap for response size
+    }
+
+    result: dict = {"status": "success", "message": "Merge complete!", "details": stats}
+    if dry_run:
+        result.update({
+            'status': 'preview',
+            'message': 'Dry-run completed. No changes were written.',
+            'preview': preview
+        })
+    # Echo back file identifiers when provided
+    if options.get('file_name') or options.get('file_hash'):
+        result['file'] = {
+            'name': options.get('file_name'),
+            'hash': options.get('file_hash')
+        }
+    return result
+
+def classify_record_type(value: str) -> str:
+    """Classify record type with robust matching."""
+    if not value:
+        return ''
+    
+    # Clean and normalize the value
+    v = value.strip().upper()
+    
+    # Direct matches first
+    if v == 'CONTACT':
+        return 'CONTACT'
+    if v == 'SYNTHESIZED_DETAIL':
+        return 'SYNTHESIZED_DETAIL'
+    if v == 'RAW_NOTE':
+        return 'RAW_NOTE'
+        
+    # Partial matches for robustness
+    if 'CONTACT' in v:
+        return 'CONTACT'
+    if 'SYNTHESIZED' in v or 'DETAIL' in v:
+        return 'SYNTHESIZED_DETAIL'
+    if 'RAW' in v and 'NOTE' in v:
+        return 'RAW_NOTE'
+        
+    return ''
+
+# --- BOOTSTRAP: run DB init and migrations once, early ---
+_BOOTSTRAPPED = False
+
+def validate_config():
+    missing = []
+    # Only warn for now to avoid blocking local usage
+    if not os.getenv('OPENAI_API_KEY'):
+        logger.warning('OPENAI_API_KEY is not set; AI synthesis may fail.')
+    # Telegram creds required for imports
+    for key in ['TELEGRAM_API_ID', 'TELEGRAM_API_HASH']:
+        if not os.getenv(key):
+            missing.append(key)
+    if missing:
+        logger.warning(f"Missing Telegram config keys: {', '.join(missing)}. Telegram import may be limited.")
+
+
+def bootstrap_database_once():
+    global _BOOTSTRAPPED
+    if _BOOTSTRAPPED:
+        return
+    try:
+        init_db()
+        ensure_runtime_migrations()
+        # Minimal backfill: seed one marker event per up to 5 most recent contacts if audit log is empty
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute('SELECT COUNT(1) FROM contact_audit_log')
+                (cnt,) = cur.fetchone()
+                if cnt == 0:
+                    cur = conn.execute('SELECT id FROM contacts ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 5')
+                    rows = [r[0] for r in cur.fetchall()]
+                    for cid in rows:
+                        conn.execute(
+                            'INSERT INTO contact_audit_log (contact_id, user_id, event_type, source, before_state, after_state, raw_input) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                            (cid, 1, 'AUDIT_INIT', 'SYSTEM', None, json.dumps({'initialized_at': datetime.utcnow().isoformat()}), None)
+                        )
+                    conn.commit()
+        except Exception:
+            # Backfill is best-effort
+            pass
+        _BOOTSTRAPPED = True
+        logger.info('✅ Bootstrap complete: DB initialized and migrations ensured')
+    except Exception as e:
+        logger.error(f'❌ Bootstrap failed: {e}')
+
+# Initialize runtime when module is imported (safe now that defs exist)
+initialize_runtime()
+
+@app.before_request
+def inject_request_id():
+    try:
+        g.request_id = request.headers.get('X-Request-ID') or _uuid4().hex
+    except Exception:
+        g.request_id = _uuid4().hex
+
+@app.after_request
+def attach_request_id(response):
+    try:
+        response.headers['X-Request-ID'] = getattr(g, 'request_id', '')
+    except Exception:
+        pass
+    return response
+
+@app.errorhandler(Exception)
+def handle_exceptions(e):
+    if isinstance(e, HTTPException):
+        code = e.code or 500
+        message = e.description or str(e)
+    else:
+        code = 500
+        message = str(e)
+    error_body = {
+        'error': {
+            'code': code,
+            'message': message,
+            'type': e.__class__.__name__,
+        },
+        'request_id': getattr(g, 'request_id', None)
+    }
+    try:
+        logger.error(json.dumps({
+            'event': 'error',
+            'code': code,
+            'message': message,
+            'type': e.__class__.__name__,
+            'path': request.path,
+            'request_id': getattr(g, 'request_id', None)
+        }))
+    except Exception:
+        logger.error(f"Error: {message} (code={code}) [request_id={getattr(g, 'request_id', None)}]")
+    return jsonify(error_body), code
+
+# ------------------------
+# Background Reindexing API
+# ------------------------
+
+def _collect_reindex_items_for_contact(conn: sqlite3.Connection, contact_id: int):
+    """Gather documents and metadata for a single contact to index."""
+    docs: typing.List[str] = []
+    metas: typing.List[dict] = []
+    ids: typing.List[str] = []
+
+    # Raw notes
+    for row in conn.execute('SELECT id, content, created_at FROM raw_notes WHERE contact_id = ?', (contact_id,)):
+        docs.append(row['content'] or '')
+        metas.append({
+            'type': 'raw_note',
+            'contact_id': str(contact_id),
+            'record_id': str(row['id']),
+            'created_at': row['created_at']
+        })
+        ids.append(f"raw_{row['id']}")
+
+    # Synthesized entries
+    for row in conn.execute('SELECT id, category, content, created_at FROM synthesized_entries WHERE contact_id = ?', (contact_id,)):
+        text_blob = f"[{row['category']}] {row['content']}"
+        docs.append(text_blob)
+        metas.append({
+            'type': 'synthesized',
+            'contact_id': str(contact_id),
+            'record_id': str(row['id']),
+            'category': row['category'],
+            'created_at': row['created_at']
+        })
+        ids.append(f"syn_{row['id']}")
+
+    return ids, docs, metas
+
+
+def _reindex_contacts(task_id: str, specific_contact_id: typing.Optional[int] = None):
+    """Run the reindexing job; updates import_tasks with progress and status."""
+    conn = get_db_connection()
+    try:
+        # Build list of contacts to process
+        if specific_contact_id:
+            contact_rows = [{'id': specific_contact_id}]
+        else:
+            contact_rows = conn.execute('SELECT id FROM contacts WHERE user_id = 1 ORDER BY id').fetchall()
+
+        total = len(contact_rows)
+        processed = 0
+
+        # Prepare master collection
+        master_collection = chroma_client.get_or_create_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+        # Clear master by deleting and recreating for a clean slate
+        try:
+            chroma_client.delete_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+        except Exception:
+            pass
+        master_collection = chroma_client.get_or_create_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
+
+        for row in contact_rows:
+            contact_id = int(row['id'] if isinstance(row, sqlite3.Row) else row['id'])
+            try:
+                ids, docs, metas = _collect_reindex_items_for_contact(conn, contact_id)
+
+                # Reset and repopulate contact collection
+                collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
+                try:
+                    chroma_client.delete_collection(name=collection_name)
+                except Exception:
+                    pass
+                contact_collection = chroma_client.get_or_create_collection(name=collection_name)
+
+                if docs:
+                    contact_collection.add(ids=ids, documents=docs, metadatas=metas)
+                    # Also add to master
+                    master_collection.add(ids=[f"c{contact_id}_{i}" for i in ids], documents=docs, metadatas=metas)
+
+                status_msg = f"Indexed contact {contact_id} with {len(docs)} documents"
+                with get_db_connection() as wconn:
+                    wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, progress = ? WHERE id = ?', (
+                        'running', status_msg, int((processed / max(total, 1)) * 100), task_id
+                    ))
+                    wconn.commit()
+            except Exception as e:
+                with get_db_connection() as wconn:
+                    wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, error_details = ? WHERE id = ?', (
+                        'failed', f"Failed on contact {contact_id}", str(e), task_id
+                    ))
+                    wconn.commit()
+                return
+            finally:
+                processed += 1
+
+        with get_db_connection() as wconn:
+            wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, progress = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?', (
+                'completed', 'Reindex completed', 100, task_id
+            ))
+            wconn.commit()
+    finally:
+        conn.close()
+
+
+@app.route('/api/reindex/start', methods=['POST'])
+def start_reindex():
+    """Start background reindex of Chroma collections. Optional JSON body: {contact_id?: int}"""
+    try:
+        ensure_runtime_migrations()
+        payload = request.get_json(silent=True) or {}
+        specific_contact_id = payload.get('contact_id')
+
+        with IMPORT_TASK_LOCK:
+            task_id = str(uuid.uuid4())
+            with get_db_connection() as conn:
+                conn.execute('''
+                    INSERT INTO import_tasks (id, user_id, contact_id, task_type, status, status_message)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (task_id, 1, specific_contact_id, 'reindex', 'pending', 'Reindex task created'))
+                conn.commit()
+
+        def _runner():
+            try:
+                _reindex_contacts(task_id, specific_contact_id)
+            except Exception as e:
+                with get_db_connection() as wconn:
+                    wconn.execute('UPDATE import_tasks SET status = ?, status_message = ?, error_details = ? WHERE id = ?', (
+                        'failed', 'Reindex failed', str(e), task_id
+                    ))
+                    wconn.commit()
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+
+        return jsonify({
+            'task_id': task_id,
+            'status': 'started'
+        })
+    except Exception as e:
+        return jsonify({'error': f'Failed to start reindex: {e}'}), 500
+
+
+@app.route('/api/reindex/status/<task_id>', methods=['GET'])
+def get_reindex_status(task_id: str):
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute('SELECT * FROM import_tasks WHERE id = ? AND task_type = ?', (task_id, 'reindex')).fetchone()
+            if not row:
+                return jsonify({'error': 'Task not found'}), 404
+            return jsonify({
+                'task_id': row['id'],
+                'status': row['status'],
+                'progress': row['progress'],
+                'status_message': row['status_message'],
+                'error_details': row['error_details'],
+                'created_at': row['created_at'],
+                'completed_at': row['completed_at']
+            })
+    except Exception as e:
+        return jsonify({'error': f'Failed to get reindex status: {e}'}), 500
+
+# ------------------------
+# Health and Readiness
+# ------------------------
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'ok',
+        'chroma_path': CHROMA_DB_PATH,
+        'telemetry': os.getenv('ANONYMIZED_TELEMETRY', 'FALSE')
+    })
+
+@app.route('/api/ready', methods=['GET'])
+def ready():
+    try:
+        # DB check
+        conn = get_db_connection()
+        try:
+            conn.execute('SELECT 1').fetchone()
+        finally:
+            conn.close()
+        # Chroma check
+        _ = chroma_client.list_collections()
+        return jsonify({'ready': True})
+    except Exception as e:
+        return jsonify({'ready': False, 'error': str(e)}), 503
+
+# Configure uploads
+UPLOAD_ROOT = os.getenv('UPLOAD_FOLDER') or os.path.join(_PROJECT_ROOT, 'uploads')
+os.makedirs(UPLOAD_ROOT, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_ROOT
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+
+@app.route('/api/notes', methods=['POST'])
+def create_note_endpoint():
+    """Create a raw note for a contact and return its ID."""
+    try:
+        data = request.get_json(force=True)
+        contact_id = validate_input('contact_id', data.get('contact_id'))
+        content = sanitize_text(data.get('content', ''))
+        if not contact_id or not content:
+            return jsonify({"error": "Missing or invalid contact_id/content"}), 400
+        tags = data.get('tags')
+        with with_write_connection() as conn:
+            cur = conn.execute(
+                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                (contact_id, content, json.dumps(tags) if isinstance(tags, (dict, list)) else tags, datetime.now().isoformat())
+            )
+            raw_note_id = cur.lastrowid
+        return jsonify({"status": "success", "raw_note_id": raw_note_id})
+    except Exception as e:
+        logger.error(f"Failed to create note: {e}")
+        return jsonify({"error": f"Failed to create note: {e}"}), 500
+
+# --- File upload + background analysis ---
+try:
+    from werkzeug.utils import secure_filename
+except Exception:
+    secure_filename = None
+
+ALLOWED_UPLOAD_MIME_PREFIXES = ['image/', 'application/pdf', 'text/']
+
+def _is_allowed_mime(m):
+    return any(m == p or m.startswith(p.rstrip('/')) for p in ALLOWED_UPLOAD_MIME_PREFIXES)
+
+@app.route('/api/files/upload', methods=['POST'])
+def upload_file_endpoint():
+    """Accept a file for a given contact and schedule analysis."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part"}), 400
+        file = request.files['file']
+        contact_id = validate_input('contact_id', request.form.get('contact_id'))
+        if not contact_id or not file or file.filename == '':
+            return jsonify({"error": "Missing file or contact_id"}), 400
+        if secure_filename is None:
+            return jsonify({"error": "Upload dependency unavailable"}), 500
+        original_filename = secure_filename(file.filename)
+        _, ext = os.path.splitext(original_filename)
+        stored_filename = f"{uuid.uuid4()}{ext}"
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+        file.save(file_path)
+        mime_type = file.mimetype or 'application/octet-stream'
+        size_bytes = os.path.getsize(file_path)
+        # Create DB records
+        task_id = str(uuid.uuid4())
+        with with_write_connection() as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO import_tasks (id, user_id, contact_id, task_type, status, progress, status_message) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (task_id, 1, contact_id, 'file_analysis', 'pending', 0, 'Queued for analysis')
+            )
+            cur = conn.execute(
+                'INSERT INTO uploaded_files (contact_id, user_id, original_filename, stored_filename, file_path, file_type, file_size_bytes, analysis_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                (contact_id, 1, original_filename, stored_filename, file_path, mime_type, size_bytes, task_id)
+            )
+            file_id = cur.lastrowid
+        # Schedule job
+        try:
+            scheduler.add_job(id=task_id, func=run_file_analysis_job, trigger='date', args=[task_id, file_id])
+        except Exception as e:
+            logger.error(f"Failed to schedule file analysis job: {e}")
+            return jsonify({"error": f"Failed to schedule job: {e}"}), 500
+        return jsonify({"task_id": task_id, "message": "File uploaded and analysis started."}), 202
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        return jsonify({"error": f"Upload failed: {e}"}), 500
+
+@app.route('/api/files/status/<task_id>', methods=['GET'])
+def get_file_task_status(task_id: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.execute('SELECT * FROM import_tasks WHERE id = ?', (task_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"error": "Task not found"}), 404
+        return jsonify({
+            "task_id": row['id'],
+            "status": row['status'],
+            "progress": row['progress'],
+            "status_message": row['status_message'],
+            "error_details": row['error_details'],
+            "created_at": row['created_at'],
+            "completed_at": row['completed_at']
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to get status: {e}"}), 500
+
+# Background worker
+
+def extract_pdf_text(file_path):
+    """Extract text from PDF using multiple fallback methods"""
+    extracted_text = ""
+    
+    # Method 1: PyPDF2 - fast and works for most PDFs
+    try:
+        text_chunks = []
+        with open(file_path, 'rb') as pf:
+            reader = PyPDF2.PdfReader(pf)
+            for page in reader.pages:
+                t = page.extract_text() or ''
+                if t.strip():
+                    text_chunks.append(t)
+        if text_chunks:
+            extracted_text = '\n'.join(text_chunks)[:50000]
+    except Exception as e:
+        logger.info(f"PyPDF2 extraction failed: {e}")
+    
+    # Method 2: pdfplumber - better for complex layouts
+    if not extracted_text:
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                text_chunks = []
+                for page in pdf.pages:
+                    t = page.extract_text() or ''
+                    if t.strip():
+                        text_chunks.append(t)
+                if text_chunks:
+                    extracted_text = '\n'.join(text_chunks)[:50000]
+        except Exception as e:
+            logger.info(f"pdfplumber extraction failed: {e}")
+    
+    # Method 3: pdfminer.six - fallback for tough PDFs
+    if not extracted_text:
+        try:
+            from pdfminer.high_level import extract_text
+            t = extract_text(file_path) or ''
+            if t.strip():
+                extracted_text = t.strip()[:50000]
+        except Exception as e:
+            logger.info(f"pdfminer extraction failed: {e}")
+    
+    # Final fallback
+    if not extracted_text:
+        extracted_text = '[PDF content could not be extracted - file may be image-based or corrupted]'
+    
+    return extracted_text
+
+def _update_task(task_id: str, status: str, status_message: str = '', progress: int = None, error: str = None):
+    try:
+        with with_write_connection() as conn:
+            fields = ["status = ?", "status_message = ?"]
+            params = [status, status_message]
+            if progress is not None:
+                fields.append("progress = ?")
+                params.append(progress)
+            if error is not None:
+                fields.append("error_details = ?")
+                params.append(error)
+            fields.append("completed_at = CURRENT_TIMESTAMP" if status in ['completed', 'failed'] else "completed_at = completed_at")
+            sql = f"UPDATE import_tasks SET {', '.join(fields)} WHERE id = ?"
+            params.append(task_id)
+            conn.execute(sql, tuple(params))
+    except Exception as e:
+        logger.error(f"Failed to update task {task_id}: {e}")
+
+def google_ocr_image(file_path: str) -> str:
+    """OCR an image with Google Cloud Vision (DOCUMENT_TEXT_DETECTION)."""
+    if not _GCV_AVAILABLE:
+        return ""
+    client = vision.ImageAnnotatorClient()
+    with open(file_path, "rb") as f:
+        content = f.read()
+    image = vision.Image(content=content)
+    resp = client.document_text_detection(image=image)
+    if getattr(resp, "error", None) and getattr(resp.error, "message", None):
+        raise RuntimeError(resp.error.message)
+    text = ""
+    try:
+        # Prefer full_text_annotation when present
+        text = (resp.full_text_annotation.text or "").strip()
+    except Exception:
+        pass
+    if not text and getattr(resp, "text_annotations", None):
+        try:
+            text = (resp.text_annotations[0].description or "").strip()
+        except Exception:
+            pass
+    return text or ""
+
+def google_ocr_pdf(file_path: str) -> str:
+    """OCR a PDF with Google Cloud Vision by converting to images first."""
+    if not _GCV_AVAILABLE:
+        return ""
+    
+    try:
+        # Try to convert PDF to images using pdfplumber for page extraction
+        import pdfplumber
+        from PIL import Image
+        import io
+        
+        extracted_texts = []
+        
+        with pdfplumber.open(file_path) as pdf:
+            for i, page in enumerate(pdf.pages[:10]):  # Limit to first 10 pages for cost control
+                # Convert page to image
+                try:
+                    # Get page as image
+                    page_image = page.to_image(resolution=200)  # Higher resolution for better OCR
+                    
+                    # Convert PIL image to bytes for Google Vision
+                    img_byte_arr = io.BytesIO()
+                    page_image.save(img_byte_arr, format='PNG')
+                    img_byte_arr.seek(0)
+                    
+                    # OCR with Google Vision
+                    client = vision.ImageAnnotatorClient()
+                    image = vision.Image(content=img_byte_arr.getvalue())
+                    resp = client.document_text_detection(image=image)
+                    
+                    if getattr(resp, "error", None) and getattr(resp.error, "message", None):
+                        logger.warning(f"Google Vision error on page {i+1}: {resp.error.message}")
+                        continue
+                    
+                    page_text = ""
+                    try:
+                        page_text = (resp.full_text_annotation.text or "").strip()
+                    except Exception:
+                        pass
+                    
+                    if not page_text and getattr(resp, "text_annotations", None):
+                        try:
+                            page_text = (resp.text_annotations[0].description or "").strip()
+                        except Exception:
+                            pass
+                    
+                    if page_text:
+                        extracted_texts.append(f"--- Page {i+1} ---\n{page_text}")
+                        
+                except Exception as page_error:
+                    logger.warning(f"Failed to process PDF page {i+1}: {page_error}")
+                    continue
+        
+        return "\n\n".join(extracted_texts) if extracted_texts else ""
+        
+    except Exception as e:
+        logger.error(f"Google Vision PDF OCR failed: {e}")
+        return ""
+
+def run_file_analysis_job(task_id: str, file_id: int):
+    """Perform a simple multimodal analysis with optional Gemini fallback."""
+    _update_task(task_id, 'processing', 'Preparing file...')
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute('SELECT * FROM uploaded_files WHERE id = ?', (file_id,)).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            _update_task(task_id, 'failed', 'File record not found')
+            return
+        file_path = row['file_path']
+        mime_type = row['file_type']
+        contact_id = row['contact_id']
+        extracted_text = ''
+        used_google_ocr = False
+        # Google Vision OCR for images and PDFs if enabled (STAGE 1: Text Extraction)
+        try:
+            if os.getenv('KITH_VISION_OCR_ENABLED', 'false').lower() == 'true':
+                if mime_type.startswith('image/'):
+                    _update_task(task_id, 'processing', 'Google Vision OCR for image…')
+                    text = google_ocr_image(file_path)
+                    if isinstance(text, str) and len(text.strip()) >= 20:
+                        extracted_text = text.strip()[:50000]
+                        used_google_ocr = True
+                        logger.info(f"Google Vision extracted {len(extracted_text)} characters from image")
+                elif mime_type == 'application/pdf':
+                    _update_task(task_id, 'processing', 'Google Vision OCR for PDF…')
+                    text = google_ocr_pdf(file_path)
+                    if isinstance(text, str) and len(text.strip()) >= 20:
+                        extracted_text = text.strip()[:50000]
+                        used_google_ocr = True
+                        logger.info(f"Google Vision extracted {len(extracted_text)} characters from PDF")
+        except Exception as gerr:
+            logger.info(f"Google Vision OCR not used: {gerr}")
+
+        # Attempt OpenAI multimodal first (user requested gpt-5)
+        used_openai_mm = False
+        try:
+            if openai.api_key and OPENAI_VISION_MODEL and not mime_type.startswith('text/') and not used_google_ocr:
+                import base64
+                with open(file_path, 'rb') as f:
+                    b64 = base64.b64encode(f.read()).decode('utf-8')
+                # PDF: attempt text extraction locally first to avoid unsupported mime on image_url
+                if mime_type == 'application/pdf':
+                    _update_task(task_id, 'processing', 'Extracting PDF text...')
+                    try:
+                        import PyPDF2  # type: ignore
+                        text_chunks = []
+                        with open(file_path, 'rb') as pf:
+                            reader = PyPDF2.PdfReader(pf)
+                            for page in reader.pages:
+                                t = page.extract_text() or ''
+                                if t.strip():
+                                    text_chunks.append(t)
+                        if text_chunks:
+                            extracted_text = '\n'.join(text_chunks)[:50000]
+                    except Exception:
+                        pass
+                    # Fallback: pdfminer.six for tougher PDFs
+                    if not extracted_text:
+                        try:
+                            from pdfminer.high_level import extract_text  # type: ignore
+                            t = extract_text(file_path) or ''
+                            if t.strip():
+                                extracted_text = t.strip()[:50000]
+                        except Exception:
+                            pass
+                if not extracted_text and mime_type.startswith('image/'):
+                    # Use image-style content for OpenAI vision-capable models
+                    data_uri = f"data:{mime_type};base64,{b64}"
+                    _update_task(task_id, 'processing', f'Analyzing via {OPENAI_VISION_MODEL}...')
+                    prompt_content = [
+                        {"type": "text", "text": "You are an expert relationship intelligence analyst. OCR all visible text and describe meaningful visual content. Output plaintext facts only."}
+                    ]
+                    prompt_content.append({"type": "image_url", "image_url": {"url": data_uri}})
+                    # Call chat with multimodal content (works for both SDK versions)
+                    try:
+                        response_content = _openai_chat(
+                            messages=[{"role": "user", "content": prompt_content}],
+                            model=OPENAI_VISION_MODEL,
+                            max_tokens=DEFAULT_MAX_TOKENS,
+                            temperature=DEFAULT_AI_TEMPERATURE,
+                        )
+                        if response_content:
+                            _text = response_content.strip()
+                            # Guard against instruction-like replies asking for image/URL
+                            if re.search(r"no image|provide (a )?url|upload the image|image needs to be attached|attach (the )?image|OCR and visual description processing", _text, re.IGNORECASE):
+                                logger.info("Vision response indicated missing image/URL; falling back to alternate extraction")
+                                extracted_text = ''
+                            else:
+                                extracted_text = _text
+                                used_openai_mm = True
+                    except Exception as oe:
+                        logger.info(f"OpenAI multimodal analysis failed: {oe}")
+        except Exception as oe:
+            logger.info(f"OpenAI multimodal not used: {oe}")
+
+        # Attempt Gemini if OpenAI MM not used or produced no content
+        used_gemini = False
+        try:
+            if not extracted_text and not mime_type.startswith('text/'):
+                import google.generativeai as genai  # type: ignore
+                api_key = os.getenv('GEMINI_API_KEY', '').strip()
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                    import base64
+                    with open(file_path, 'rb') as f:
+                        b64 = base64.b64encode(f.read()).decode('utf-8')
+                    prompt = [
+                        "You are an expert relationship intelligence analyst. Extract all text (OCR) and describe any meaningful visual content. Output plaintext facts only.",
+                        {"mime_type": mime_type, "data": b64}
+                    ]
+                    _update_task(task_id, 'processing', 'Analyzing via Gemini...')
+                    resp = model.generate_content(prompt)
+                    extracted_text = (resp.text or '').strip()
+                    used_gemini = True
+        except Exception as ge:
+            logger.info(f"Gemini not used: {ge}")
+        if not extracted_text:
+            # Fallbacks
+            try:
+                if mime_type.startswith('text/'):
+                    with open(file_path, 'r', errors='ignore') as f:
+                        extracted_text = f.read()[:20000]
+                elif mime_type == 'application/pdf':
+                    extracted_text = extract_pdf_text(file_path)
+                else:
+                    extracted_text = f"[Auto-generated placeholder analysis for {os.path.basename(file_path)}]"
+            except Exception as fe:
+                extracted_text = f"[Failed to read file: {fe}]"
+        _update_task(task_id, 'processing', 'Creating note...')
+        # Store raw note
+        with with_write_connection() as conn:
+            cur = conn.execute(
+                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                (contact_id, f"--- Analysis of uploaded file ---\n{extracted_text}", json.dumps({"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini}), datetime.now().isoformat())
+            )
+            new_note_id = cur.lastrowid
+            conn.execute('UPDATE uploaded_files SET generated_raw_note_id = ? WHERE id = ?', (new_note_id, file_id))
+        _update_task(task_id, 'processing', 'STAGE 2: OpenAI categorization and analysis...', progress=90)
+        # STAGE 2: Send extracted text to OpenAI for intelligent categorization and analysis
+        try:
+            client = app.test_client()
+            resp = client.post('/api/process-transcript', json={'contact_id': contact_id, 'transcript': extracted_text})
+            if resp.status_code == 200:
+                _update_task(task_id, 'completed', 'Two-stage analysis complete: Google Vision extraction + OpenAI categorization.', progress=100)
+            else:
+                _update_task(task_id, 'failed', f'Stage 2 (OpenAI categorization) failed: {resp.data.decode()}', error='categorization_failed')
+        except Exception as e:
+            _update_task(task_id, 'failed', f'Internal processing error: {e}', error=str(e))
+    except Exception as e:
+        _update_task(task_id, 'failed', 'Unexpected error', error=str(e))
+
+@app.route('/api/transcribe-audio', methods=['POST'])
+def transcribe_audio_endpoint():
+    try:
+        if 'audio_file' not in request.files:
+            return jsonify({"error": "No audio file part"}), 400
+        audio_file = request.files['audio_file']
+        tmp_dir = '/tmp'
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f"temp_audio_{uuid.uuid4()}.webm")
+        audio_file.save(tmp_path)
+        transcript_text = ''
+        try:
+            # Prefer new SDK if available
+            if hasattr(openai, 'OpenAI'):
+                client = getattr(openai, 'OpenAI')()
+                with open(tmp_path, 'rb') as f:
+                    resp = client.audio.transcriptions.create(model='whisper-1', file=f)
+                transcript_text = (getattr(resp, 'text', None) or '')
+            else:
+                with open(tmp_path, 'rb') as f:
+                    resp = openai.Audio.transcribe(model='whisper-1', file=f)
+                transcript_text = (resp.get('text') if isinstance(resp, dict) else '')
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+        if not transcript_text:
+            return jsonify({"error": "Transcription returned no text"}), 502
+        return jsonify({"transcript": transcript_text})
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        return jsonify({"error": "Failed to transcribe audio."}), 500
+
+# === RELATIONSHIP GRAPH API ENDPOINTS ===
+
+@app.route('/api/graph-data', methods=['GET'])
+def get_graph_data():
+    """
+    Fetches and formats all data required to render the relationship graph.
+    """
+    user_id = 1  # Assume single user
+    session = get_session()
+    try:
+        # 1. Fetch all contacts (nodes)
+        contacts = session.query(Contact).filter_by(user_id=user_id).all()
+        nodes_dict = {contact.id: {
+            "id": contact.id,
+            "label": contact.full_name,
+            "group": None,  # Default group
+            "tier": contact.tier,
+            "value": 10 + (session.query(SynthesizedEntry).filter_by(contact_id=contact.id).count())  # Node size based on interaction count
+        } for contact in contacts}
+
+        # 2. Fetch group memberships and assign group to nodes
+        memberships = session.query(ContactGroupMembership).join(Contact).filter(Contact.user_id == user_id).all()
+        for member in memberships:
+            if member.contact_id in nodes_dict:
+                nodes_dict[member.contact_id]['group'] = member.group_id
+
+        # 3. Fetch all direct relationships (edges)
+        relationships = session.query(ContactRelationship).filter_by(user_id=user_id).all()
+        edges = [{
+            "from": rel.source_contact_id,
+            "to": rel.target_contact_id,
+            "label": rel.label,
+            "arrows": "to"  # Add arrows to show direction
+        } for rel in relationships]
+
+        # 4. Fetch group definitions for styling
+        groups_db = session.query(ContactGroup).filter_by(user_id=user_id).all()
+        group_definitions = {group.id: {
+            "color": group.color,
+            "name": group.name
+        } for group in groups_db}
+
+        # Add a "self" node representing the user
+        nodes_dict[0] = {"id": 0, "label": "You", "group": "self", "fixed": True, "value": 40}
+        group_definitions["self"] = {"color": "#FF6384", "name": "Self"}
+        
+        # Add edges from "You" to all Tier 1 contacts
+        for contact in contacts:
+            if contact.tier == 1:
+                edges.append({"from": 0, "to": contact.id, "length": 150})  # Shorter edges for closer contacts
+
+        return jsonify({
+            "nodes": list(nodes_dict.values()),
+            "edges": edges,
+            "groups": group_definitions
+        })
+    except Exception as e:
+        logger.exception("Failed to fetch graph data")
+        return jsonify({"error": f"Failed to fetch graph data: {e}"}), 500
+    finally:
+        session.close()
+
+# --- Group Management ---
+@app.route('/api/groups', methods=['POST'])
+def create_group():
+    data = request.get_json()
+    name = data.get('name')
+    color = data.get('color', '#97C2FC')
+    user_id = 1  # Assume single user
+
+    if not name:
+        return jsonify({"error": "Group name is required"}), 400
+
+    session = get_session()
+    try:
+        new_group = ContactGroup(name=name, color=color, user_id=user_id)
+        session.add(new_group)
+        session.commit()
+        new_group_data = {"id": new_group.id, "name": new_group.name, "color": new_group.color}
+        return jsonify({"message": "Group created", "group": new_group_data}), 201
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to create group")
+        return jsonify({"error": f"Could not create group: {e}"}), 500
+    finally:
+        session.close()
+
+@app.route('/api/groups/<int:group_id>/members', methods=['POST'])
+def add_member_to_group(group_id):
+    data = request.get_json()
+    contact_id = data.get('contact_id')
+    user_id = 1  # Assume single user
+
+    if not contact_id:
+        return jsonify({"error": "Contact ID is required"}), 400
+
+    session = get_session()
+    try:
+        # Check if membership already exists
+        existing = session.query(ContactGroupMembership).filter_by(contact_id=contact_id, group_id=group_id).first()
+        if existing:
+            return jsonify({"message": "Contact is already in this group"}), 200
+
+        new_membership = ContactGroupMembership(contact_id=contact_id, group_id=group_id)
+        session.add(new_membership)
+        session.commit()
+        return jsonify({"message": "Contact added to group"})
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to add member to group")
+        return jsonify({"error": f"Could not add member: {e}"}), 500
+    finally:
+        session.close()
+
+# --- Relationship Management ---
+@app.route('/api/relationships', methods=['POST'])
+def create_relationship():
+    data = request.get_json()
+    source_id = data.get('source_contact_id')
+    target_id = data.get('target_contact_id')
+    label = data.get('label')
+    user_id = 1  # Assume single user
+
+    if not source_id or not target_id:
+        return jsonify({"error": "Source and Target contact IDs are required"}), 400
+
+    session = get_session()
+    try:
+        new_rel = ContactRelationship(
+            source_contact_id=source_id,
+            target_contact_id=target_id,
+            label=label,
+            user_id=user_id
+        )
+        session.add(new_rel)
+        session.commit()
+        new_rel_data = {"id": new_rel.id, "from": new_rel.source_contact_id, "to": new_rel.target_contact_id, "label": new_rel.label}
+        return jsonify({"message": "Relationship created", "relationship": new_rel_data}), 201
+    except Exception as e:  # Catches potential unique constraint violation
+        session.rollback()
+        logger.exception("Failed to create relationship")
+        return jsonify({"error": f"Could not create relationship. It may already exist. Error: {e}"}), 500
+    finally:
+        session.close()
+
+# Initialize database on startup (moved to end to ensure all routes are registered first)
+if __name__ == '__main__':
+    bootstrap_database_once()
+    app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)

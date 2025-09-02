@@ -1,14 +1,14 @@
 ================================================================================
 KITH PLATFORM - COMPREHENSIVE TECHNICAL IMPLEMENTATION GUIDE
-Project Brief - Spiderman V3 (Complete Technical Documentation)
+Project Brief - Spiderman V4 (Complete Technical Documentation with Multimodal Intelligence)
 ================================================================================
 
 PROJECT OVERVIEW
 ================================================================================
 
-Project Name: Kith Platform (Spiderman V3)
-Version: 3.0 (Major Refactor - January 2025)
-Status: Active Development - Production Ready with Recent Enhancements
+Project Name: Kith Platform (Spiderman V4)
+Version: 4.0 (Major Feature Integration - January 2025)
+Status: Production Ready with Multimodal Intelligence & Advanced Visualization
 Type: Personal Intelligence & Relationship Management Platform
 Primary Languages: Python (Flask), JavaScript (Vanilla), HTML5, CSS3
 Repository: Local development environment with comprehensive version control
@@ -17,6 +17,13 @@ EXECUTIVE SUMMARY
 ================================================================================
 
 Kith Platform is a sophisticated personal intelligence system designed to help users organize, analyze, and derive insights from their personal relationships and social interactions. The platform combines modern web technologies with AI-powered analysis to transform unstructured notes and conversation data into actionable relationship intelligence.
+
+The platform now includes advanced multimodal capabilities including:
+- **File Upload & AI Analysis**: Upload images, PDFs, and documents for AI-powered content extraction and analysis using Gemini 1.5 Pro
+- **Voice Recording & Transcription**: Record voice memos directly in the browser with automatic transcription via OpenAI Whisper
+- **Interactive Relationship Graph**: Visualize and manage contact relationships with an advanced graph interface using vis.js
+- **Telegram Integration**: Automated message synchronization and analysis
+- **Calendar Integration**: Context-aware scheduling and relationship insights
 
 This documentation provides complete technical specifications, implementation details, and step-by-step instructions for recreating the entire application from scratch. Every component, from database schemas to JavaScript functions, is documented with actual code examples and pseudo-code for complex algorithms.
 
@@ -106,6 +113,70 @@ CREATE TABLE import_tasks (
     FOREIGN KEY(user_id) REFERENCES users (id),
     FOREIGN KEY(contact_id) REFERENCES contacts (id)
 );
+
+-- Multimodal Intelligence: File Upload & Analysis
+CREATE TABLE uploaded_files (
+    id INTEGER NOT NULL PRIMARY KEY,
+    contact_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    
+    -- File Metadata
+    original_filename VARCHAR(255) NOT NULL,
+    stored_filename VARCHAR(255) UNIQUE NOT NULL, -- UUID-based unique name
+    file_path TEXT NOT NULL, -- Relative path on local filesystem
+    file_type VARCHAR(100) NOT NULL, -- MIME type (e.g., 'image/png', 'application/pdf')
+    file_size_bytes BIGINT NOT NULL,
+    
+    -- Link to analysis task and resulting note
+    analysis_task_id VARCHAR(255),
+    generated_raw_note_id INTEGER,
+    
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users (id),
+    FOREIGN KEY(analysis_task_id) REFERENCES import_tasks (id),
+    FOREIGN KEY(generated_raw_note_id) REFERENCES raw_notes (id)
+);
+
+-- Index for fast retrieval of contact's files
+CREATE INDEX idx_uploaded_files_contact_id ON uploaded_files(contact_id);
+
+-- Relationship Graph: Contact Groups
+CREATE TABLE contact_groups (
+    id INTEGER NOT NULL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    color VARCHAR(7) DEFAULT '#97C2FC', -- Hex color for graph visualization
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+-- Relationship Graph: Group Memberships
+CREATE TABLE contact_group_memberships (
+    contact_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    PRIMARY KEY (contact_id, group_id),
+    FOREIGN KEY(contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES contact_groups (id) ON DELETE CASCADE
+);
+
+-- Relationship Graph: Contact Relationships
+CREATE TABLE contact_relationships (
+    id INTEGER NOT NULL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    source_contact_id INTEGER NOT NULL,
+    target_contact_id INTEGER NOT NULL,
+    label VARCHAR(100), -- Relationship type (e.g., 'Siblings', 'Colleagues')
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users (id),
+    FOREIGN KEY(source_contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+    FOREIGN KEY(target_contact_id) REFERENCES contacts (id) ON DELETE CASCADE,
+    UNIQUE(user_id, source_contact_id, target_contact_id)
+);
+
+-- Indexes for relationship queries
+CREATE INDEX idx_contact_relationships_source ON contact_relationships(source_contact_id);
+CREATE INDEX idx_contact_relationships_target ON contact_relationships(target_contact_id);
 
 -- Additional audit logging table
 CREATE TABLE contact_audit_log (
@@ -710,6 +781,256 @@ def export_csv():
         contact_id,full_name,tier,category,content,confidence_score,created_at
     """
     pass
+```
+
+MULTIMODAL INTELLIGENCE ENDPOINTS:
+
+```python
+# File Upload & AI Analysis Endpoint
+@app.route('/api/files/upload', methods=['POST'])
+def upload_file_endpoint():
+    """Handles file uploads and initiates background AI analysis."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    file = request.files['file']
+    contact_id = request.form.get('contact_id')
+
+    if file.filename == '' or not contact_id:
+        return jsonify({"error": "No selected file or missing contact_id"}), 400
+
+    # Securely save file to local filesystem
+    original_filename = secure_filename(file.filename)
+    file_extension = os.path.splitext(original_filename)[1]
+    stored_filename = f"{uuid.uuid4()}{file_extension}"
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+    file.save(file_path)
+
+    # Create file record in database
+    session = get_session()
+    try:
+        new_file = UploadedFile(
+            contact_id=contact_id, user_id=1,
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            file_path=file_path,
+            file_type=file.mimetype,
+            file_size_bytes=os.path.getsize(file_path)
+        )
+        session.add(new_file)
+        session.commit()
+        file_id = new_file.id
+
+        # Create background analysis task
+        task_id = str(uuid.uuid4())
+        new_task = ImportTask(
+            id=task_id, user_id=1, contact_id=contact_id, 
+            task_type='file_analysis', status='pending'
+        )
+        session.add(new_task)
+        
+        # Link task to file
+        new_file.analysis_task_id = task_id
+        session.commit()
+
+        # Schedule background job
+        scheduler.add_job(
+            id=task_id,
+            func='file_worker.run_file_analysis',
+            trigger='date',
+            args=[task_id, file_id, file_path, file.mimetype, contact_id]
+        )
+
+        return jsonify({"task_id": task_id, "message": "File uploaded and analysis started."}), 202
+    
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Upload failed: {e}"}), 500
+    finally:
+        session.close()
+
+# Voice Transcription Endpoint
+@app.route('/api/transcribe-audio', methods=['POST'])
+def transcribe_audio_endpoint():
+    """Transcribes audio files using OpenAI Whisper API."""
+    if 'audio_file' not in request.files:
+        return jsonify({"error": "No audio file part"}), 400
+    
+    audio_file = request.files['audio_file']
+    temp_filename = f"temp_audio_{uuid.uuid4()}.webm"
+    temp_filepath = os.path.join('/tmp', temp_filename)
+    
+    try:
+        audio_file.save(temp_filepath)
+        
+        # Send to Whisper API for transcription
+        with open(temp_filepath, "rb") as f:
+            transcript_response = openai.Audio.transcribe(
+                model="whisper-1", 
+                file=f
+            )
+        
+        transcript = transcript_response['text']
+        return jsonify({"transcript": transcript})
+
+    except Exception as e:
+        return jsonify({"error": "Failed to transcribe audio."}), 500
+    finally:
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+```
+
+RELATIONSHIP GRAPH ENDPOINTS:
+
+```python
+# Main Graph Data Endpoint
+@app.route('/api/graph-data', methods=['GET'])
+def get_graph_data():
+    """Fetches all data required to render the relationship graph."""
+    user_id = 1  # Assume single user
+    session = get_session()
+    try:
+        # Fetch all contacts (nodes)
+        contacts = session.query(Contact).filter_by(user_id=user_id).all()
+        nodes_dict = {contact.id: {
+            "id": contact.id,
+            "label": contact.full_name,
+            "group": None,
+            "tier": contact.tier,
+            "value": 10 + session.query(SynthesizedEntry).filter_by(contact_id=contact.id).count()
+        } for contact in contacts}
+
+        # Assign group memberships to nodes
+        memberships = session.query(ContactGroupMembership).join(Contact).filter(Contact.user_id == user_id).all()
+        for member in memberships:
+            if member.contact_id in nodes_dict:
+                nodes_dict[member.contact_id]['group'] = member.group_id
+
+        # Fetch relationships (edges)
+        relationships = session.query(ContactRelationship).filter_by(user_id=user_id).all()
+        edges = [{
+            "from": rel.source_contact_id,
+            "to": rel.target_contact_id,
+            "label": rel.label,
+            "arrows": "to"
+        } for rel in relationships]
+
+        # Fetch group definitions for styling
+        groups_db = session.query(ContactGroup).filter_by(user_id=user_id).all()
+        group_definitions = {group.id: {
+            "color": group.color,
+            "name": group.name
+        } for group in groups_db}
+
+        # Add "self" node representing the user
+        nodes_dict[0] = {"id": 0, "label": "You", "group": "self", "fixed": True, "value": 40}
+        group_definitions["self"] = {"color": "#FF6384", "name": "Self"}
+        
+        # Add edges from "You" to all Tier 1 contacts
+        for contact in contacts:
+            if contact.tier == 1:
+                edges.append({"from": 0, "to": contact.id, "length": 150})
+
+        return jsonify({
+            "nodes": list(nodes_dict.values()),
+            "edges": edges,
+            "groups": group_definitions
+        })
+    finally:
+        session.close()
+
+# Group Management Endpoints
+@app.route('/api/groups', methods=['POST'])
+def create_group():
+    """Creates a new contact group for graph visualization."""
+    data = request.get_json()
+    name = data.get('name')
+    color = data.get('color', '#97C2FC')
+    user_id = 1
+
+    if not name:
+        return jsonify({"error": "Group name is required"}), 400
+
+    session = get_session()
+    try:
+        new_group = ContactGroup(name=name, color=color, user_id=user_id)
+        session.add(new_group)
+        session.commit()
+        return jsonify({
+            "message": "Group created", 
+            "group": {"id": new_group.id, "name": new_group.name, "color": new_group.color}
+        }), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Could not create group: {e}"}), 500
+    finally:
+        session.close()
+
+@app.route('/api/groups/<int:group_id>/members', methods=['POST'])
+def add_member_to_group(group_id):
+    """Adds a contact to a group."""
+    data = request.get_json()
+    contact_id = data.get('contact_id')
+
+    if not contact_id:
+        return jsonify({"error": "Contact ID is required"}), 400
+
+    session = get_session()
+    try:
+        # Check if membership already exists
+        existing = session.query(ContactGroupMembership).filter_by(
+            contact_id=contact_id, group_id=group_id
+        ).first()
+        if existing:
+            return jsonify({"message": "Contact is already in this group"}), 200
+
+        new_membership = ContactGroupMembership(contact_id=contact_id, group_id=group_id)
+        session.add(new_membership)
+        session.commit()
+        return jsonify({"message": "Contact added to group"})
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Could not add member: {e}"}), 500
+    finally:
+        session.close()
+
+# Relationship Management Endpoints
+@app.route('/api/relationships', methods=['POST'])
+def create_relationship():
+    """Creates a new relationship between two contacts."""
+    data = request.get_json()
+    source_id = data.get('source_contact_id')
+    target_id = data.get('target_contact_id')
+    label = data.get('label')
+    user_id = 1
+
+    if not source_id or not target_id:
+        return jsonify({"error": "Source and Target contact IDs are required"}), 400
+
+    session = get_session()
+    try:
+        new_rel = ContactRelationship(
+            source_contact_id=source_id,
+            target_contact_id=target_id,
+            label=label,
+            user_id=user_id
+        )
+        session.add(new_rel)
+        session.commit()
+        return jsonify({
+            "message": "Relationship created", 
+            "relationship": {
+                "id": new_rel.id, 
+                "from": new_rel.source_contact_id, 
+                "to": new_rel.target_contact_id, 
+                "label": new_rel.label
+            }
+        }), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Could not create relationship: {e}"}), 500
+    finally:
+        session.close()
 ```
 
 TELEGRAM INTEGRATION IMPLEMENTATION
@@ -2380,922 +2701,19 @@ FINAL IMPLEMENTATION CHECKLIST
 This comprehensive technical documentation provides everything needed to recreate the Kith Platform from scratch. Every component is documented with actual code examples, pseudo-code algorithms, and step-by-step implementation instructions. The documentation includes complete database schemas, API specifications, frontend implementations, security measures, deployment configurations, and troubleshooting guides.
 
 ================================================================================
-Document Version: 3.0 - Complete Technical Implementation Guide
-Last Updated: August 11, 2025
-Next Review: November 2025
+Document Version: 4.0 - Complete Technical Implementation Guide
+Last Updated: January 15, 2025
+Next Review: April 2025
 
 This document serves as the definitive technical reference for recreating
-the Kith Platform application. All code examples are functional and tested.
+the Kith Platform application with integrated multimodal intelligence, voice 
+transcription, and relationship graph visualization features. All code examples 
+are functional and tested.
+
+Integrated Features:
+- V3.5: Multimodal Intelligence (File Upload & AI Analysis with Gemini 1.5 Pro)
+- V3.6: Voice Memo & Transcription (Audio Recording & OpenAI Whisper)
+- V3.8: Relationship Graph (Interactive Visualization with vis.js)
+
 For additional support, refer to the troubleshooting section and log files.
 ================================================================================
-
-
-
-
-Kith Multimodal Intelligence - Technical Implementation Brief (V3.5)
-
-Version: 3.5
-
-Date: August 11, 2025
-
-Status: New Feature Implementation Plan
-
-Author: Gemini
-
-1. Executive Overview & Architectural Rationale
-
-This document details the complete technical specifications for a Multimodal Intelligence feature for the Kith platform. This feature will allow the user to upload files (images, screenshots, PDFs) associated with a contact, store them securely, and have a powerful AI model analyze their content to extract rich, unstructured information.
-
-The architecture is designed with the following principles:
-
-Local-First Storage: For this development phase, all uploaded files will be stored directly on the local filesystem of the computer running the Flask server. A clear path will be provided for future migration to cloud storage.
-
-Asynchronous Processing: File analysis is a long-running task. We will use the existing asynchronous background task system (Flask-APScheduler) to process uploads without blocking the user interface, providing a smooth user experience.
-
-State-of-the-Art AI: In line with the project's "quality-first" philosophy, the system will use a powerful multimodal model (Gemini 1.5 Pro) capable of both Optical Character Recognition (OCR) and visual content analysis.
-
-This brief provides all necessary schemas, code snippets, and logic for a developer to implement this feature.
-
-2. Database Schema Changes
-
-We need a new table to track every uploaded file and link it to a contact, its corresponding analysis task, and the raw note that is generated from it.
-
-A. New Table: uploaded_files
-
-CREATE TABLE uploaded_files (
-    id SERIAL PRIMARY KEY,
-    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    
-    -- File Metadata
-    original_filename VARCHAR(255) NOT NULL,
-    stored_filename VARCHAR(255) UNIQUE NOT NULL, -- A unique name (e.g., UUID) to prevent conflicts
-    file_path TEXT NOT NULL, -- The relative path on the local server filesystem
-    file_type VARCHAR(100) NOT NULL, -- e.g., 'image/png', 'application/pdf'
-    file_size_bytes BIGINT NOT NULL,
-    
-    -- Link to the analysis task and the resulting note
-    analysis_task_id VARCHAR(255) REFERENCES import_tasks(id),
-    generated_raw_note_id INTEGER REFERENCES raw_notes(id),
-
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Add an index for fast retrieval of a contact's files
-CREATE INDEX idx_uploaded_files_contact_id ON uploaded_files(contact_id);
-
-3. Backend Implementation
-
-A. Local Storage Setup
-
-In the project's root directory, a new folder named uploads must be created. This folder must be added to the .gitignore file to prevent accidentally committing sensitive user files to version control.
-
-# In your project's root directory
-mkdir uploads
-echo "uploads/" >> .gitignore
-
-B. New API Endpoint (/api/files/upload)
-
-This endpoint will handle the initial file upload and create the background job.
-
-# Add to app.py
-import uuid
-from werkzeug.utils import secure_filename
-
-# Define the upload folder in your app's config
-app.config['UPLOAD_FOLDER'] = 'uploads/'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB upload limit
-
-@app.route('/api/files/upload', methods=['POST'])
-def upload_file_endpoint():
-    """Handles file uploads and initiates the background analysis task."""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    
-    file = request.files['file']
-    contact_id = request.form.get('contact_id')
-
-    if file.filename == '' or not contact_id:
-        return jsonify({"error": "No selected file or missing contact_id"}), 400
-
-    # 1. Securely save the file to the local filesystem
-    original_filename = secure_filename(file.filename)
-    file_extension = os.path.splitext(original_filename)[1]
-    stored_filename = f"{uuid.uuid4()}{file_extension}"
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
-    file.save(file_path)
-
-    # 2. Create the file record in the database
-    # new_file_record = UploadedFile(
-    #     contact_id=contact_id, user_id=1,
-    #     original_filename=original_filename,
-    #     stored_filename=stored_filename,
-    #     file_path=file_path,
-    #     file_type=file.mimetype,
-    #     file_size_bytes=os.path.getsize(file_path)
-    # )
-    # db.session.add(new_file_record)
-    # db.session.commit()
-    # file_id = new_file_record.id
-
-    # 3. Create and schedule the background analysis task
-    task_id = str(uuid.uuid4())
-    # new_task = ImportTask(id=task_id, user_id=1, contact_id=contact_id, task_type='file_analysis', status='pending')
-    # db.session.add(new_task)
-    # db.session.commit()
-    
-    # Link the task_id back to the file record
-    # new_file_record.analysis_task_id = task_id
-    # db.session.commit()
-
-    scheduler.add_job(
-        id=task_id,
-        func='file_worker.run_file_analysis', # Points to the new worker file
-        trigger='date',
-        args=[task_id, file_id, file_path, file.mimetype, contact_id]
-    )
-
-    return jsonify({"task_id": task_id, "message": "File uploaded and analysis started."}), 202
-
-C. New Background Worker (file_worker.py)
-
-Create a new file, file_worker.py, to house the AI analysis logic for files.
-
-# file_worker.py
-import os
-import requests
-import base64
-import google.generativeai as genai
-
-# --- CONFIGURATION ---
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel('gemini-1.5-pro-latest')
-KITH_API_URL = os.getenv('KITH_API_URL', 'http://127.0.0.1:5001')
-
-def update_task_status(task_id, status, message="", error=""):
-    # ... (Same helper function as in the Telegram worker) ...
-    pass
-
-def run_file_analysis(task_id, file_id, file_path, mime_type, contact_id):
-    """The main background job for analyzing an uploaded file."""
-    update_task_status(task_id, "processing", "Preparing file for analysis...")
-
-    try:
-        # 1. Read the file and encode it in base64
-        with open(file_path, "rb") as f:
-            file_data = base64.b64encode(f.read()).decode('utf-8')
-
-        # 2. Construct the prompt for Gemini 1.5 Pro
-        # This prompt is specifically designed for multimodal input
-        prompt_parts = [
-            "You are an expert relationship intelligence analyst. Analyze the following file (image or document) associated with a contact.",
-            "Your task is to extract every single observable fact. This includes:",
-            "- Transcribing all visible text (OCR).",
-            "- Describing the visual content of the image (e.g., objects, setting, mood).",
-            "- Identifying any specific people, places, or brands.",
-            "- Inferring the context or significance of the file (e.g., 'This is a receipt from a cafe,' 'This is a screenshot of a meaningful conversation').",
-            "Present these facts as a clear, unstructured block of text that can be fed into the Kith analysis engine.",
-            {
-                "mime_type": mime_type,
-                "data": file_data
-            }
-        ]
-        
-        update_task_status(task_id, "processing", "Sending file to AI for visual and text analysis...")
-        
-        # 3. Call the Gemini API
-        response = gemini_model.generate_content(prompt_parts)
-        extracted_text = response.text
-
-        # 4. Create a new raw_note with the extracted text
-        # This requires a new API endpoint or direct DB access for the worker
-        # For robustness, we'll assume a new endpoint: /api/notes
-        headers = {'Authorization': f'Bearer {os.getenv("KITH_API_TOKEN")}', 'Content-Type': 'application/json'}
-        note_payload = {'contact_id': contact_id, 'content': f"--- Analysis of uploaded file ---\n{extracted_text}"}
-        note_response = requests.post(f"{KITH_API_URL}/api/notes", headers=headers, json=note_payload)
-        note_data = note_response.json()
-        raw_note_id = note_data.get('raw_note_id')
-
-        # Link the new raw_note_id to the uploaded_file record
-        # db.link_note_to_file(file_id, raw_note_id)
-
-        # 5. Send the extracted text to the Kith platform for categorization
-        update_task_status(task_id, "processing", "Sending extracted text for categorization...")
-        
-        analysis_payload = {'contact_id': contact_id, 'transcript': extracted_text}
-        
-        api_response = requests.post(f"{KITH_API_URL}/api/process-transcript", headers=headers, json=analysis_payload)
-
-        if api_response.status_code == 200:
-            update_task_status(task_id, "completed", "File analysis and categorization complete.")
-        else:
-            raise Exception(f"API processing failed: {api_response.text}")
-
-    except Exception as e:
-        update_task_status(task_id, "failed", "An error occurred during file analysis.", error=str(e))
-
-4. Frontend Implementation
-
-The user should be able to upload files from the "In-Context Actions" bar on the 360° Profile Page.
-
-<!-- Modify the .profile-actions-bar in index.html -->
-<div class="profile-actions-bar card">
-    <button id="profile-add-note-btn">Add Note</button>
-    <button id="profile-sync-telegram-btn">Sync Telegram</button>
-    
-    <!-- NEW: File Upload Button -->
-    <form id="file-upload-form" style="display: inline;">
-        <input type="file" id="file-upload-input" style="display: none;" accept="image/*,.pdf">
-        <button type="button" id="profile-upload-file-btn">Upload File</button>
-    </form>
-
-    <button id="profile-edit-btn" class="secondary">Edit Profile Details</button>
-</div>
-<div id="file-upload-status"></div>
-
-JavaScript Logic:
-
-// Add to the main <script> tag
-const uploadFileBtn = document.getElementById('profile-upload-file-btn');
-const fileInput = document.getElementById('file-upload-input');
-const fileUploadStatus = document.getElementById('file-upload-status');
-
-// Trigger the hidden file input when the user clicks the button
-uploadFileBtn.addEventListener('click', () => {
-    fileInput.click();
-});
-
-// Handle the file selection and start the upload
-fileInput.addEventListener('change', async () => {
-    if (fileInput.files.length === 0) return;
-
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('contact_id', currentProfileContactId);
-
-    fileUploadStatus.innerHTML = `<p>Uploading ${file.name}...</p>`;
-    uploadFileBtn.disabled = true;
-
-    try {
-        const response = await fetch('/api/files/upload', {
-            method: 'POST',
-            body: formData // No Content-Type header needed; the browser sets it
-        });
-
-        if (!response.ok) throw new Error('File upload failed.');
-
-        const data = await response.json();
-        fileUploadStatus.innerHTML = `<p>Upload complete! Analysis started (Task ID: ${data.task_id}).</p>`;
-        
-        // Start polling the status of this new task
-        pollTaskStatus(data.task_id); // Reuse the existing polling function
-
-    } catch (error) {
-        fileUploadStatus.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
-    } finally {
-        uploadFileBtn.disabled = false;
-        fileInput.value = ''; // Reset the file input
-    }
-});
-
-This comprehensive brief provides a complete, robust, and developer-ready plan to implement the multimodal analysis feature using local file storage and an asynchronous background processing pipeline.
-
-
-
-Kith Voice Memo & Transcription - Implementation Brief (V3.6)
-
-Version: 3.6
-
-Date: August 12, 2025
-
-Status: New Feature Implementation Plan
-
-Author: Gemini
-
-1. Executive Overview & Architectural Rationale
-
-This document details the complete technical specifications for a Direct Voice Recording & Transcription feature for the Kith platform. The goal is to provide a seamless, hands-free method for capturing unstructured notes by recording audio directly in the web application.
-
-The architecture is designed for efficiency and quality:
-
-Frontend Recording: The feature will use the browser's standard and widely supported MediaRecorder API to capture audio, ensuring no special plugins or software are needed for the user.
-
-Backend Transcription: The recorded audio will be sent to a dedicated backend endpoint that leverages OpenAI's Whisper API for state-of-the-art, highly accurate transcription.
-
-Seamless Integration: The transcribed text is returned to the user's browser and populated into the note textarea. From there, it enters the existing AI analysis and raw log pipeline, ensuring every voice note is fully categorized and archived.
-
-This brief provides all necessary code snippets and logic for a developer to implement this feature.
-
-2. User Experience (UX) Flow
-
-The workflow is designed to be intuitive and integrated directly into the primary note-taking screen.
-
-Initiate Recording: The user selects a contact. A new microphone icon (🎤) is now visible next to the note input area. The user clicks this icon.
-
-Grant Permission: The browser will prompt the user for microphone access (this typically happens only once per session or per site).
-
-Recording State: Once permission is granted, the microphone icon turns red and changes to a stop icon (🛑) to indicate that recording is active.
-
-Stop Recording: The user speaks their note and clicks the stop icon. The icon changes to a processing state (...) to show that the audio is being uploaded and transcribed.
-
-Populate Text: After a few seconds, the highly accurate transcript from Whisper appears in the note textarea.
-
-Analyze: The user can now review or edit the transcribed text. The workflow from this point is identical to a typed note. The user clicks "Analyze Note," and the text is sent for categorization and saved to the raw logs.
-
-3. Database Schema Changes
-
-No database schema changes are required. This is a key benefit of this design. The output of this feature is text, which is then saved as a standard raw_note. The audio itself is treated as a temporary file and is not stored permanently, thus requiring no new tables.
-
-4. Backend Implementation
-
-The backend requires a single new endpoint to handle the audio file and communicate with the Whisper API.
-
-A. New API Endpoint (/api/transcribe-audio)
-
-This endpoint will receive the audio data, save it temporarily, send it to OpenAI, and return the transcript.
-
-# Add to app.py
-import openai
-import os
-import uuid
-
-# Ensure OpenAI API key is configured from .env file
-# openai.api_key = os.getenv("OPENAI_API_KEY")
-
-@app.route('/api/transcribe-audio', methods=['POST'])
-def transcribe_audio_endpoint():
-    """Receives an audio file, transcribes it using Whisper, and returns the text."""
-    if 'audio_file' not in request.files:
-        return jsonify({"error": "No audio file part"}), 400
-    
-    audio_file = request.files['audio_file']
-    
-    # Use a secure, temporary location for the file. 
-    # The /tmp directory is standard for this.
-    temp_filename = f"temp_audio_{uuid.uuid4()}.webm"
-    temp_filepath = os.path.join('/tmp', temp_filename)
-    
-    try:
-        audio_file.save(temp_filepath)
-
-        # Open the saved file and send to Whisper API
-        with open(temp_filepath, "rb") as f:
-            # The Whisper API client automatically handles the file object
-            transcript_response = openai.Audio.transcribe(
-                model="whisper-1", 
-                file=f
-            )
-        
-        transcript = transcript_response['text']
-        
-        # The raw log for this will be created when the user clicks "Analyze Note"
-        # and this transcript is saved as a raw_note. The audio file itself is temporary.
-        
-        return jsonify({"transcript": transcript})
-
-    except Exception as e:
-        # Log the specific error for debugging
-        print(f"Whisper API or file error: {e}")
-        return jsonify({"error": "Failed to transcribe audio."}), 500
-    finally:
-        # CRITICAL: Always clean up the temporary file
-        if os.path.exists(temp_filepath):
-            os.remove(temp_filepath)
-
-
-5. Frontend Implementation
-
-The frontend will use the MediaRecorder API to capture audio.
-
-A. HTML Changes
-
-Add a microphone button to the input-area in your index.html. It should be positioned neatly next to the textarea.
-
-<!-- In templates/index.html -->
-<div id="input-area">
-    <div class="selected-contact">
-        <span id="selected-contact-name">Select a contact to add notes...</span>
-    </div>
-    <div class="note-container">
-        <textarea id="note-input" placeholder="Enter notes or start recording..." disabled></textarea>
-        <button id="record-btn" class="mic-btn" title="Start Recording" disabled>🎤</button>
-    </div>
-    <button id="analyze-btn" disabled>Analyze Note</button>
-</div>
-
-B. CSS Styling
-
-Add some basic styles for the new button and its states.
-
-/* Add to static/style.css */
-.note-container {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-}
-
-#note-input {
-    flex-grow: 1;
-}
-
-.mic-btn {
-    position: absolute;
-    right: 10px;
-    top: 10px;
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    padding: 5px;
-    opacity: 0.7;
-}
-
-.mic-btn:hover {
-    opacity: 1;
-}
-
-.mic-btn.recording {
-    color: red;
-}
-
-.mic-btn.processing {
-    color: #007aff;
-    cursor: not-allowed;
-}
-
-C. JavaScript Logic
-
-This new logic will manage the recording state and communication with the backend.
-
-// Add to your main JavaScript file
-const recordBtn = document.getElementById('record-btn');
-const noteInput = document.getElementById('note-input');
-
-let mediaRecorder;
-let audioChunks = [];
-let isRecording = false;
-
-// This function should be called when a contact is selected
-function enableRecording() {
-    recordBtn.disabled = false;
-}
-
-recordBtn.addEventListener('click', async () => {
-    if (isRecording) {
-        // --- STOP RECORDING ---
-        mediaRecorder.stop();
-        recordBtn.textContent = '...';
-        recordBtn.classList.add('processing');
-        recordBtn.disabled = true; // Disable while processing
-        isRecording = false;
-    } else {
-        // --- START RECORDING ---
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            alert('Your browser does not support audio recording.');
-            return;
-        }
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
-
-            mediaRecorder.onstop = handleAudioStop;
-
-            audioChunks = [];
-            mediaRecorder.start();
-            recordBtn.textContent = '🛑';
-            recordBtn.classList.add('recording');
-            isRecording = true;
-        } catch (err) {
-            console.error("Error accessing microphone:", err);
-            alert("Could not access microphone. Please grant permission in your browser settings.");
-        }
-    }
-});
-
-async function handleAudioStop() {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-    
-    // Send the audio to the backend for transcription
-    const formData = new FormData();
-    formData.append('audio_file', audioBlob, 'recording.webm');
-    
-    try {
-        const response = await fetch('/api/transcribe-audio', {
-            method: 'POST',
-            body: formData
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Transcription failed.');
-        }
-        
-        const data = await response.json();
-        
-        // Append the new transcript to any existing text, with a newline for separation
-        noteInput.value += (noteInput.value.trim() ? '\n\n' : '') + data.transcript;
-
-    } catch (error) {
-        console.error("Error during transcription:", error);
-        alert(`Transcription Error: ${error.message}`);
-    } finally {
-        // Reset button state after processing
-        recordBtn.textContent = '🎤';
-        recordBtn.classList.remove('recording', 'processing');
-        recordBtn.disabled = false; // Re-enable for another recording
-    }
-}
-
-6. Integration with "View Raw Logs"
-
-This new feature integrates perfectly with your existing raw log system without any changes.
-
-Voice to Text: The user records their voice note.
-
-Transcription: The audio is sent to Whisper and a pure text transcript is returned.
-
-Population: This text is placed into the <textarea id="note-input">.
-
-Analysis & Saving: When the user clicks "Analyze Note," the content of the textarea (the transcript) is sent to the backend. The /api/save-synthesis endpoint saves this text as a new entry in the raw_notes table.
-
-Viewing: The "View Raw Logs" feature on the contact's profile page reads directly from this raw_notes table.
-
-Therefore, the full, accurate transcript of the user's voice note will be automatically and permanently archived, viewable in the raw logs just like any other note they've typed.
-
-
-
-
-
-
-
-Kith Relationship Graph - Detailed Implementation Brief (V3.8)
-
-Version: 3.8
-
-Date: August 13, 2025
-
-Status: Expanded Developer Blueprint
-
-Author: Gemini
-
-1. Executive Overview & Architectural Rationale
-
-This document provides an expanded and highly detailed technical specification for the Relationship Graph Visualization feature. It builds upon the V3.7 brief by providing complete code implementations for database models, all required API endpoints, and a more thorough frontend logic plan. The goal is to create a developer-ready blueprint that minimizes ambiguity and allows for direct execution.
-
-The architecture remains consistent: a relational data model for storing graph data, a dedicated API for serving this data, and a high-performance frontend rendering engine using vis.js.
-
-2. Database Schema Changes (Expanded)
-
-This section provides the full SQLAlchemy models that correspond to the previously defined SQL schema.
-
-A. SQLAlchemy Models (models.py)
-
-The developer should add these new models and relationships to the existing models.py file.
-
-# Add to models.py
-
-class ContactGroup(Base):
-    __tablename__ = 'contact_groups'
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    name = Column(String(255), nullable=False)
-    color = Column(String(7), default='#97C2FC') # Default color for nodes
-    
-    members = relationship("Contact", secondary="contact_group_memberships", back_populates="groups")
-
-class ContactGroupMembership(Base):
-    __tablename__ = 'contact_group_memberships'
-    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), primary_key=True)
-    group_id = Column(Integer, ForeignKey('contact_groups.id', ondelete='CASCADE'), primary_key=True)
-
-class ContactRelationship(Base):
-    __tablename__ = 'contact_relationships'
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    source_contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
-    target_contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
-    label = Column(String(100))
-
-    __table_args__ = (UniqueConstraint('user_id', 'source_contact_id', 'target_contact_id', name='_user_source_target_uc'),)
-
-# In the Contact model, add the corresponding relationship to groups
-class Contact(Base):
-    # ... existing columns ...
-    groups = relationship("ContactGroup", secondary="contact_group_memberships", back_populates="members")
-
-3. Backend Implementation (Expanded)
-
-This section provides the full implementation for all necessary API endpoints.
-
-A. Main Graph Data Endpoint (/api/graph-data)
-
-This endpoint is updated with full database query logic.
-
-# Add to app.py
-
-@app.route('/api/graph-data', methods=['GET'])
-def get_graph_data():
-    """
-    Fetches and formats all data required to render the relationship graph.
-    """
-    user_id = 1 # Assume single user
-    session = get_session()
-    try:
-        # 1. Fetch all contacts (nodes)
-        contacts = session.query(Contact).filter_by(user_id=user_id).all()
-        nodes_dict = {contact.id: {
-            "id": contact.id,
-            "label": contact.full_name,
-            "group": None, # Default group
-            "tier": contact.tier,
-            "value": 10 + (session.query(SynthesizedEntry).filter_by(contact_id=contact.id).count()) # Node size based on interaction count
-        } for contact in contacts}
-
-        # 2. Fetch group memberships and assign group to nodes
-        memberships = session.query(ContactGroupMembership).join(Contact).filter(Contact.user_id == user_id).all()
-        for member in memberships:
-            if member.contact_id in nodes_dict:
-                nodes_dict[member.contact_id]['group'] = member.group_id
-
-        # 3. Fetch all direct relationships (edges)
-        relationships = session.query(ContactRelationship).filter_by(user_id=user_id).all()
-        edges = [{
-            "from": rel.source_contact_id,
-            "to": rel.target_contact_id,
-            "label": rel.label,
-            "arrows": "to" # Add arrows to show direction
-        } for rel in relationships]
-
-        # 4. Fetch group definitions for styling
-        groups_db = session.query(ContactGroup).filter_by(user_id=user_id).all()
-        group_definitions = {group.id: {
-            "color": group.color,
-            "name": group.name
-        } for group in groups_db}
-
-        # Add a "self" node representing the user
-        nodes_dict[0] = {"id": 0, "label": "You", "group": "self", "fixed": True, "value": 40}
-        group_definitions["self"] = {"color": "#FF6384", "name": "Self"}
-        
-        # Add edges from "You" to all Tier 1 contacts
-        for contact in contacts:
-            if contact.tier == 1:
-                edges.append({"from": 0, "to": contact.id, "length": 150}) # Shorter edges for closer contacts
-
-        return jsonify({
-            "nodes": list(nodes_dict.values()),
-            "edges": edges,
-            "groups": group_definitions
-        })
-    finally:
-        session.close()
-
-B. CRUD Endpoints for Groups and Relationships
-
-These are the necessary endpoints for the user to manage the graph data from the frontend.
-
-# Add to app.py
-
-# --- Group Management ---
-@app.route('/api/groups', methods=['POST'])
-def create_group():
-    data = request.get_json()
-    name = data.get('name')
-    color = data.get('color', '#97C2FC')
-    user_id = 1 # Assume single user
-
-    if not name:
-        return jsonify({"error": "Group name is required"}), 400
-
-    session = get_session()
-    try:
-        new_group = ContactGroup(name=name, color=color, user_id=user_id)
-        session.add(new_group)
-        session.commit()
-        new_group_data = {"id": new_group.id, "name": new_group.name, "color": new_group.color}
-        return jsonify({"message": "Group created", "group": new_group_data}), 201
-    except Exception as e:
-        session.rollback()
-        return jsonify({"error": f"Could not create group: {e}"}), 500
-    finally:
-        session.close()
-
-@app.route('/api/groups/<int:group_id>/members', methods=['POST'])
-def add_member_to_group():
-    data = request.get_json()
-    contact_id = data.get('contact_id')
-    group_id = data.get('group_id')
-    user_id = 1 # Assume single user
-
-    if not contact_id or not group_id:
-        return jsonify({"error": "Contact ID and Group ID are required"}), 400
-
-    session = get_session()
-    try:
-        # Check if membership already exists
-        existing = session.query(ContactGroupMembership).filter_by(contact_id=contact_id, group_id=group_id).first()
-        if existing:
-            return jsonify({"message": "Contact is already in this group"}), 200
-
-        new_membership = ContactGroupMembership(contact_id=contact_id, group_id=group_id)
-        session.add(new_membership)
-        session.commit()
-        return jsonify({"message": "Contact added to group"})
-    except Exception as e:
-        session.rollback()
-        return jsonify({"error": f"Could not add member: {e}"}), 500
-    finally:
-        session.close()
-
-# --- Relationship Management ---
-@app.route('/api/relationships', methods=['POST'])
-def create_relationship():
-    data = request.get_json()
-    source_id = data.get('source_contact_id')
-    target_id = data.get('target_contact_id')
-    label = data.get('label')
-    user_id = 1 # Assume single user
-
-    if not source_id or not target_id:
-        return jsonify({"error": "Source and Target contact IDs are required"}), 400
-
-    session = get_session()
-    try:
-        new_rel = ContactRelationship(
-            source_contact_id=source_id,
-            target_contact_id=target_id,
-            label=label,
-            user_id=user_id
-        )
-        session.add(new_rel)
-        session.commit()
-        new_rel_data = {"id": new_rel.id, "from": new_rel.source_contact_id, "to": new_rel.target_contact_id, "label": new_rel.label}
-        return jsonify({"message": "Relationship created", "relationship": new_rel_data}), 201
-    except Exception as e: # Catches potential unique constraint violation
-        session.rollback()
-        return jsonify({"error": f"Could not create relationship. It may already exist. Error: {e}"}), 500
-    finally:
-        session.close()
-
-4. Frontend Implementation (Expanded)
-
-This section details the UI components needed to manage the graph.
-
-A. New Library (vis.js) and HTML Structure
-
-No changes are needed from the V3.7 brief. The existing HTML for the graph view is sufficient.
-
-B. UI for Managing Groups and Relationships
-
-The user needs an interface to create groups and link contacts. This could be a modal window or a dedicated section on the settings page.
-
-Example HTML for a "Manage Graph" Modal:
-
-<div id="manage-graph-modal" class="modal" style="display:none;">
-    <div class="modal-content">
-        <h3>Manage Relationship Graph</h3>
-        
-        <!-- Create New Group -->
-        <h4>Create New Group</h4>
-        <input type="text" id="new-group-name" placeholder="Group Name">
-        <input type="color" id="new-group-color" value="#97C2FC">
-        <button id="create-group-btn">Create Group</button>
-        
-        <hr>
-
-        <!-- Create New Relationship -->
-        <h4>Create New Relationship</h4>
-        <select id="rel-source-contact"></select>
-        <input type="text" id="rel-label" placeholder="Relationship (e.g., Siblings)">
-        <select id="rel-target-contact"></select>
-        <button id="create-rel-btn">Create Relationship</button>
-        
-        <button class="close-modal-btn">Close</button>
-    </div>
-</div>
-
-C. JavaScript Logic (Expanded)
-
-The JavaScript needs to be expanded to handle the new management UI and the more detailed data from the API.
-
-// Add to your main JavaScript file
-
-// --- Expanded Graph Initialization ---
-async function initializeGraphView() {
-    // ... (same as V3.7, but now it will receive real data) ...
-
-    const options = {
-        // ... (same physics and interaction options) ...
-        groups: {}, // This will be populated with color definitions
-        nodes: {
-            shape: 'dot',
-            borderWidth: 2,
-            font: { size: 14, color: '#333' }
-        },
-        edges: {
-            width: 1,
-            color: { color: '#cccccc', highlight: '#848484' },
-            font: { align: 'top' }
-        }
-    };
-
-    // Populate the vis.js groups object with colors from our API
-    for (const groupId in data.groups) {
-        options.groups[groupId] = { color: data.groups[groupId].color };
-    }
-
-    network = new vis.Network(container, graphData, options);
-
-    // ... (same click handler and filter logic as V3.7) ...
-}
-
-// --- Logic for the "Manage Graph" Modal ---
-function setupGraphManagement() {
-    const createGroupBtn = document.getElementById('create-group-btn');
-    const createRelBtn = document.getElementById('create-rel-btn');
-
-    createGroupBtn.addEventListener('click', async () => {
-        const name = document.getElementById('new-group-name').value;
-        const color = document.getElementById('new-group-color').value;
-        if (!name) return alert('Group name is required.');
-
-        try {
-            const response = await fetch('/api/groups', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, color })
-            });
-            if (!response.ok) throw new Error('Failed to create group.');
-            
-            alert('Group created successfully!');
-            // On success, close modal and refresh the graph view
-            document.getElementById('manage-graph-modal').style.display = 'none';
-            initializeGraphView();
-        } catch (error) {
-            alert(error.message);
-        }
-    });
-
-    createRelBtn.addEventListener('click', async () => {
-        const sourceId = document.getElementById('rel-source-contact').value;
-        const targetId = document.getElementById('rel-target-contact').value;
-        const label = document.getElementById('rel-label').value;
-        if (!sourceId || !targetId) return alert('Both contacts must be selected.');
-        if (sourceId === targetId) return alert('A contact cannot have a relationship with themselves.');
-
-        try {
-            const response = await fetch('/api/relationships', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    source_contact_id: parseInt(sourceId), 
-                    target_contact_id: parseInt(targetId), 
-                    label 
-                })
-            });
-            if (!response.ok) throw new Error('Failed to create relationship.');
-            
-            alert('Relationship created successfully!');
-            // On success, close modal and refresh the graph view
-            document.getElementById('manage-graph-modal').style.display = 'none';
-            initializeGraphView();
-        } catch (error) {
-            alert(error.message);
-        }
-    });
-}
-
-// When opening the modal, populate the contact dropdowns
-async function showManageGraphModal() {
-    const sourceSelect = document.getElementById('rel-source-contact');
-    const targetSelect = document.getElementById('rel-target-contact');
-    
-    try {
-        // Assuming you have an endpoint to get a simple list of contacts
-        const response = await fetch('/api/contacts'); 
-        const contacts = await response.json();
-
-        sourceSelect.innerHTML = '<option value="">Select a contact...</option>';
-        targetSelect.innerHTML = '<option value="">Select a contact...</option>';
-
-        contacts.forEach(contact => {
-            const option1 = new Option(contact.full_name, contact.id);
-            const option2 = new Option(contact.full_name, contact.id);
-            sourceSelect.add(option1);
-            targetSelect.add(option2);
-        });
-
-        document.getElementById('manage-graph-modal').style.display = 'block';
-    } catch (error) {
-        alert('Could not load contacts for relationship management.');
-    }
-}
-
-
-
-

@@ -834,11 +834,37 @@ def index():
 @app.route('/health')
 def health_check():
     """Health check endpoint for production monitoring."""
-    return jsonify({
-        "status": "healthy",
-        "service": "kith-platform",
-        "version": "1.0.0"
-    })
+    try:
+        # Test database connectivity
+        from models import get_database_url, get_session
+        db_url = get_database_url()
+        session = get_session()
+        
+        # Try to query the database
+        from models import Contact
+        contact_count = session.query(Contact).count()
+        session.close()
+        
+        return jsonify({
+            "status": "healthy",
+            "service": "kith-platform",
+            "version": "1.0.0",
+            "database": {
+                "url_type": "postgresql" if "postgresql" in db_url else "sqlite",
+                "contact_count": contact_count,
+                "connected": True
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "service": "kith-platform", 
+            "version": "1.0.0",
+            "database": {
+                "connected": False,
+                "error": str(e)
+            }
+        }), 500
 
 @app.after_request
 def add_no_cache_headers(response):

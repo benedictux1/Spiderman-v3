@@ -3373,23 +3373,6 @@ def create_relationship():
     finally:
         session.close()
 
-@app.route('/health')
-def health_check():
-    """Health check endpoint for Render deployment."""
-    try:
-        # Quick DB connectivity test
-        conn = get_db_connection()
-        conn.execute("SELECT 1")
-        conn.close()
-        
-        return jsonify({
-            'status': 'healthy',
-            'database': 'connected',
-            'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
-
 # Initialize database on startup (moved to end to ensure all routes are registered first)
 if __name__ == '__main__':
     bootstrap_database_once()

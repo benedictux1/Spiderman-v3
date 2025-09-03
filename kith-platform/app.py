@@ -69,7 +69,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configure OpenAI API
-openai.api_key = os.getenv('OPENAI_API_KEY', '')
+def get_openai_api_key():
+    """Get OpenAI API key, refreshing from environment if needed."""
+    key = os.getenv('OPENAI_API_KEY', '')
+    if key and not openai.api_key:
+        openai.api_key = key
+    return openai.api_key or key
+
+# Set initial API key
+openai.api_key = get_openai_api_key()
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)
 OPENAI_MODEL_VERSION = os.getenv('OPENAI_MODEL_VERSION', '')  # optional extra pin
 OPENAI_VISION_MODEL = os.getenv('OPENAI_VISION_MODEL', 'gpt-5')  # used for image/PDF processing
@@ -855,7 +863,7 @@ def health_check():
                 "connected": True
             },
             "ai": {
-                "openai_configured": bool(openai.api_key),
+                "openai_configured": bool(get_openai_api_key()),
                 "model": OPENAI_MODEL
             }
         })
@@ -869,7 +877,7 @@ def health_check():
                 "error": str(e)
             },
             "ai": {
-                "openai_configured": bool(openai.api_key),
+                "openai_configured": bool(get_openai_api_key()),
                 "model": OPENAI_MODEL
             }
         }), 500
@@ -877,16 +885,48 @@ def health_check():
 @app.route('/api/config')
 def get_config():
     """Get configuration status."""
+    api_key = get_openai_api_key()
     return jsonify({
-        "openai_configured": bool(openai.api_key),
+        "openai_configured": bool(api_key),
         "openai_model": OPENAI_MODEL,
+        "api_key_length": len(api_key) if api_key else 0,
+        "api_key_format_valid": api_key.startswith('sk-') if api_key else False,
         "database_type": "postgresql" if "postgresql" in get_database_url() else "sqlite",
         "features": {
-            "ai_analysis": bool(openai.api_key),
+            "ai_analysis": bool(api_key),
             "mock_analysis": True,
             "database_persistence": True
         }
     })
+
+@app.route('/api/test-openai', methods=['POST'])
+def test_openai():
+    """Test OpenAI API connection with a simple request."""
+    api_key = get_openai_api_key()
+    if not api_key:
+        return jsonify({"error": "OpenAI API key not configured"}), 400
+    
+    try:
+        logger.info("Testing OpenAI API connection")
+        response_content = _openai_chat(
+            messages=[{"role": "user", "content": "Say 'Hello, OpenAI is working!' and nothing else."}],
+            model=OPENAI_MODEL,
+            max_tokens=50,
+            temperature=0.1,
+        )
+        logger.info(f"OpenAI test successful: {response_content}")
+        return jsonify({
+            "success": True,
+            "response": response_content,
+            "model_used": OPENAI_MODEL
+        })
+    except Exception as e:
+        logger.exception("OpenAI test failed")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "model_attempted": OPENAI_MODEL
+        }), 500
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -1366,7 +1406,8 @@ def process_note_endpoint():
         master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=raw_note_text, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
         
         # If OpenAI isn't configured, provide clear instructions
-        if not openai.api_key:
+        current_api_key = get_openai_api_key()
+        if not current_api_key:
             logger.warning("OpenAI API key not configured")
             return jsonify({
                 "error": "OpenAI API key not configured",
@@ -1380,14 +1421,27 @@ def process_note_endpoint():
             }), 400
 
         try:
+            logger.info(f"Making OpenAI API call with model: {OPENAI_MODEL}")
             response_content = _openai_chat(
                 messages=[{"role": "user", "content": master_prompt}],
                 model=OPENAI_MODEL,
                 max_tokens=DEFAULT_MAX_TOKENS,
                 temperature=DEFAULT_AI_TEMPERATURE,
             )
+            logger.info("OpenAI API call successful")
         except Exception as openai_error:
-            return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
+            logger.exception("OpenAI API call failed")
+            error_msg = str(openai_error)
+            
+            # Provide specific error messages for common issues
+            if "invalid_api_key" in error_msg.lower():
+                return jsonify({"error": "Invalid OpenAI API key. Please check your API key in Render dashboard."}), 500
+            elif "insufficient_quota" in error_msg.lower():
+                return jsonify({"error": "OpenAI API quota exceeded. Please add credits to your OpenAI account."}), 500
+            elif "rate_limit" in error_msg.lower():
+                return jsonify({"error": "OpenAI API rate limit exceeded. Please try again in a moment."}), 500
+            else:
+                return jsonify({"error": f"OpenAI API Error: {error_msg}"}), 500
         
         # Clean up the response content to extract JSON
         if response_content.startswith('```json'):

@@ -123,20 +123,50 @@ def get_database_url():
 
 def init_db():
     """Initialize the database and create tables."""
+    database_url = get_database_url()
+    
+    # In production (when DATABASE_URL is PostgreSQL), don't fall back to SQLite
+    is_production = database_url and database_url.startswith('postgresql://')
+    
     try:
-        engine = create_engine(get_database_url())
+        engine = create_engine(database_url)
         Base.metadata.create_all(engine)
+        print(f"✅ Database initialized successfully: {'PostgreSQL' if is_production else 'SQLite'}")
         return engine
     except Exception as e:
-        print(f"Error initializing database: {e}")
-        # Fallback to SQLite
-        engine = create_engine('sqlite:///kith_platform.db')
-        Base.metadata.create_all(engine)
-        return engine
+        print(f"❌ Error initializing database: {e}")
+        
+        if is_production:
+            # In production, don't fall back to SQLite - this causes data loss!
+            print("🚨 CRITICAL: PostgreSQL connection failed in production. Not falling back to SQLite to prevent data loss.")
+            print("🔧 Check your DATABASE_URL and PostgreSQL service status.")
+            raise e  # Re-raise the exception to prevent silent fallback
+        else:
+            # Only fall back to SQLite in development
+            print("💡 Development mode: Falling back to SQLite")
+            engine = create_engine('sqlite:///kith_platform.db')
+            Base.metadata.create_all(engine)
+            return engine
 
 def get_session():
-    """Get a database session."""
-    engine = create_engine(get_database_url())
+    """Get a database session with connection retry logic."""
+    database_url = get_database_url()
+    
+    # Add connection pooling and retry logic for production
+    if database_url and database_url.startswith('postgresql://'):
+        # PostgreSQL connection with connection pooling
+        engine = create_engine(
+            database_url,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,  # Validate connections before use
+            pool_recycle=3600,   # Recycle connections after 1 hour
+            echo=False
+        )
+    else:
+        # SQLite connection for development
+        engine = create_engine(database_url)
+    
     Session = sessionmaker(bind=engine)
     return Session()
 

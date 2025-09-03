@@ -853,14 +853,25 @@ def health_check():
         contact_count = session.query(Contact).count()
         session.close()
         
+        # Check for potential data loss issues
+        expected_db_type = "postgresql" if os.getenv('DATABASE_URL', '').startswith('postgresql://') else "sqlite"
+        actual_db_type = "postgresql" if "postgresql" in db_url else "sqlite"
+        data_loss_risk = expected_db_type != actual_db_type
+        
+        status = "healthy"
+        if data_loss_risk:
+            status = "warning"
+        
         return jsonify({
-            "status": "healthy",
+            "status": status,
             "service": "kith-platform",
             "version": "1.0.0",
             "database": {
-                "url_type": "postgresql" if "postgresql" in db_url else "sqlite",
+                "url_type": actual_db_type,
+                "expected_type": expected_db_type,
                 "contact_count": contact_count,
-                "connected": True
+                "connected": True,
+                "data_loss_risk": data_loss_risk
             },
             "ai": {
                 "openai_configured": bool(get_openai_api_key()),
@@ -2612,8 +2623,11 @@ def bootstrap_database_once():
     if _BOOTSTRAPPED:
         return
     try:
+        logger.info("🚀 Starting database bootstrap...")
         init_db()
+        logger.info("✅ Database initialized successfully")
         ensure_runtime_migrations()
+        logger.info("✅ Database migrations ensured")
         # Minimal backfill: seed one marker event per up to 5 most recent contacts if audit log is empty
         try:
             with get_db_connection() as conn:
@@ -2631,10 +2645,15 @@ def bootstrap_database_once():
         except Exception:
             # Backfill is best-effort
             pass
+        logger.info("✅ Bootstrap complete: DB initialized and migrations ensured")
         _BOOTSTRAPPED = True
-        logger.info('✅ Bootstrap complete: DB initialized and migrations ensured')
     except Exception as e:
         logger.error(f'❌ Bootstrap failed: {e}')
+        # In production, don't continue with a broken database
+        database_url = os.getenv('DATABASE_URL', '')
+        if database_url.startswith('postgresql://'):
+            logger.error("🚨 CRITICAL: Database bootstrap failed in production. Application cannot continue safely.")
+            raise e
 
 # Initialize runtime when module is imported (safe now that defs exist)
 initialize_runtime()

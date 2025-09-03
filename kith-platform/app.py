@@ -3343,6 +3343,48 @@ def add_member_to_group(group_id):
         session.close()
 
 
+# --- Contact Management ---
+@app.route('/api/contacts/seed', methods=['POST'])
+def seed_contacts():
+    """Seed the database with sample contacts for testing."""
+    session = get_session()
+    try:
+        # Check if contacts already exist
+        existing_count = session.query(Contact).count()
+        if existing_count > 0:
+            return jsonify({"message": f"Database already has {existing_count} contacts"}), 200
+        
+        # Create sample contacts
+        sample_contacts = [
+            {"full_name": "sarah", "tier": 2, "telegram_username": "sarah_user"},
+            {"full_name": "Bryan", "tier": 2, "telegram_username": "bryan_user"},
+            {"full_name": "Jacob", "tier": 2, "telegram_username": "jacob_user"},
+        ]
+        
+        created_contacts = []
+        for contact_data in sample_contacts:
+            contact = Contact(
+                user_id=1,
+                full_name=contact_data["full_name"],
+                tier=contact_data["tier"],
+                telegram_username=contact_data["telegram_username"]
+            )
+            session.add(contact)
+            created_contacts.append(contact_data["full_name"])
+        
+        session.commit()
+        return jsonify({
+            "message": f"Successfully created {len(created_contacts)} contacts",
+            "contacts": created_contacts
+        }), 201
+        
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to seed contacts")
+        return jsonify({"error": f"Could not seed contacts: {e}"}), 500
+    finally:
+        session.close()
+
 # --- Relationship Management ---
 @app.route('/api/relationships', methods=['POST'])
 def create_relationship():

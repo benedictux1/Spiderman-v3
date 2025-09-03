@@ -2717,3 +2717,235 @@ Integrated Features:
 
 For additional support, refer to the troubleshooting section and log files.
 ================================================================================
+
+
+
+
+
+
+Kith Platform - Full Deployment Plan (V5.0)
+
+Version: 5.0
+
+Date: September 2, 2025
+
+Status: New Feature Implementation Plan
+
+Goal: To deploy the Kith platform as a live, publicly accessible web application.
+
+1. Executive Overview & Architectural Shift
+
+This document outlines the complete process for deploying the Kith application, transitioning it from a local development environment to a production-ready web service. This involves a fundamental architectural shift from local-first resources to cloud-based, scalable services.
+
+The core changes are:
+
+Database Migration: From a local sqlite3 file to a managed PostgreSQL database on Render.
+
+File Storage Migration: From a local uploads/ folder to a secure AWS S3 Bucket.
+
+Application Hosting: From local Flask/Vite development servers to a two-service model on Render.com:
+
+A Static Site for the compiled React frontend.
+
+A Web Service for the Python/Flask backend, running on a production-grade server (Gunicorn).
+
+2. Prerequisites
+
+Before starting, the developer must ensure the following are set up:
+
+A Render.com account.
+
+An Amazon Web Services (AWS) account.
+
+The project code pushed to a GitHub repository.
+
+Step 1: Database Migration (SQLite to PostgreSQL)
+
+A. Create PostgreSQL Instance on Render:
+
+In the Render dashboard, create a new "PostgreSQL" service.
+
+Choose a name (e.g., kith-database) and a region.
+
+Once created, Render will provide a "PSQL Connection String / External URL". Copy this URL.
+
+B. Update Backend Configuration:
+
+Add the copied PostgreSQL URL to the .env file:
+
+DATABASE_URL="postgres://user:password@host:port/database"
+
+
+Ensure the psycopg2-binary library is in requirements.txt.
+
+Modify the database setup in models.py or app.py to handle both SQLite and PostgreSQL.
+
+C. Data Migration (Local Task):
+The developer will run a one-time script to move data from the local SQLite DB to the new PostgreSQL DB. A library like pgloader is ideal, or a Python script can be used.
+
+Python Script Pseudocode (migrate_db.py):
+
+# 1. Connect to local SQLite DB.
+# 2. Connect to remote PostgreSQL DB using the DATABASE_URL.
+# 3. For each table (users, contacts, raw_notes, etc.):
+#    a. SELECT all rows from the SQLite table.
+#    b. For each row, construct an INSERT statement for the PostgreSQL table.
+#    c. Execute the INSERT statement on the PostgreSQL connection.
+# 4. Commit the transaction to PostgreSQL.
+
+
+Step 2: File Storage Migration (Local to AWS S3)
+
+A. Create an AWS S3 Bucket & IAM User:
+
+Create the Bucket: In the AWS Management Console, navigate to the S3 service. Create a new, private bucket with a unique name (e.g., kith-platform-uploads).
+
+Create IAM User: In the IAM (Identity and Access Management) service, create a new user with programmatic access.
+
+Create & Attach a Custom Policy (Detailed Steps):
+a. In the "Set permissions" step of creating the user, select "Attach policies directly".
+b. Click the "Create policy" button (this will open a new tab).
+c. In the new tab, use the Visual editor:
+i. Service: Click "Choose a service," search for and select S3.
+ii. Actions: Expand the "Write" actions and check PutObject and DeleteObject. Expand the "Read" actions and check GetObject.
+iii. Resources: To ensure the policy only affects your specific bucket, click "Add ARN" next to bucket and enter your bucket name (e.g., kith-platform-uploads). Then, click "Add ARN" next to object, enter your bucket name again, and check the "Any" box for the object name.
+iv. Review & Create: Click through the next steps, give the policy a descriptive name (e.g., Kith-S3-File-Access-Policy), and click "Create policy".
+d. Attach the Policy: Return to the user creation tab. Click the "Refresh" button above the policy list, search for your new Kith-S3-File-Access-Policy, and check the box next to it.
+
+Get Access Keys: Complete the user creation process and copy the generated Access Key ID and Secret Access Key.
+
+B. Update Backend Configuration:
+
+Add the AWS credentials and bucket name to the .env file:
+
+AWS_ACCESS_KEY_ID="your_access_key_id"
+AWS_SECRET_ACCESS_KEY="your_secret_access_key"
+S3_BUCKET_NAME="kith-platform-uploads"
+AWS_REGION="your_bucket_region" # e.g., "us-east-1"
+
+
+Add the AWS SDK for Python to requirements.txt:
+
+boto3
+
+
+Refactor File Handling Logic: The developer must replace all local file system operations (os.path.join, file.save) with boto3 S3 client operations (s3_client.upload_fileobj, s3_client.generate_presigned_url).
+
+Example Refactor for File Upload:
+
+# Refactor /api/files/upload in app.py
+import boto3
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.getenv('AWS_REGION')
+)
+
+# ... inside the endpoint ...
+# Instead of file.save(local_path):
+s3_client.upload_fileobj(
+    file, # The file object from the request
+    os.getenv('S3_BUCKET_NAME'),
+    stored_filename # The unique filename for the object in S3
+)
+
+# The 'file_path' in the database should now store the S3 object key (stored_filename).
+
+
+Step 3: Preparing the Apps for Production
+
+A. Frontend (React):
+
+Build Command: The developer will run the build command in the frontend directory:
+
+npm run build
+
+
+This will create a dist folder containing the optimized, static HTML, CSS, and JavaScript files.
+
+API URL: The api.js service file must be updated to use the production backend URL, which will be provided by Render. This should be done using environment variables (VITE_API_URL).
+
+B. Backend (Flask):
+
+Production Server: Add gunicorn to requirements.txt. Gunicorn will be used as the production WSGI server instead of Flask's built-in development server.
+
+CORS: The Flask app must be configured with Flask-CORS to allow requests from the frontend domain.
+
+Step 4: Deploying to Render.com
+
+The simplest way to manage the deployment is with a render.yaml file placed in the root of the GitHub repository.
+
+render.yaml Configuration:
+
+services:
+  # 1. The React Frontend (Static Site)
+  - type: static
+    name: kith-frontend
+    env: react
+    # The directory where the React app lives
+    rootDir: kith-frontend
+    # Command to build the static files
+    buildCommand: npm install && npm run build
+    # The directory that `buildCommand` creates
+    publishDir: dist
+    # Rewrite rule to handle client-side routing
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # 2. The Flask Backend (Web Service)
+  - type: web
+    name: kith-backend
+    env: python
+    # The directory where the Flask app lives
+    rootDir: kith-backend
+    # Command to install dependencies
+    buildCommand: pip install -r requirements.txt
+    # Command to start the production server
+    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    # Linking environment variables from Render's dashboard
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-database # Must match the name of the PostgreSQL service
+          property: externalUrl
+      - key: OPENAI_API_KEY
+        sync: false # User sets this manually in the Render dashboard
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: AWS_REGION
+        sync: false
+
+
+Deployment Steps:
+
+Commit the render.yaml file and all code changes to the GitHub repository.
+
+In the Render dashboard, create a new "Blueprint" service.
+
+Connect the GitHub repository. Render will automatically detect the render.yaml file.
+
+Manually add the secret environment variables (like OPENAI_API_KEY, AWS keys) in the Render dashboard for the kith-backend service.
+
+Click "Create." Render will now build and deploy both the frontend and backend services.
+
+Step 5: Final Touches
+
+Once deployed, Render will provide a URL for the frontend (e.g., kith-frontend.onrender.com). You can now access the application from any device. For a more professional setup, you can connect a custom domain name through the Render dashboard settings.
+
+
+
+Access key: [Set in Render Environment Variables]
+Secret access key: [Set in Render Environment Variables]
+BucketName: spiderman-v3-bucket1
+AWS Region: Asia Pacific (Singapore) ap-southeast-1
+
+Note: AWS credentials should be set as environment variables in Render dashboard for security.
+

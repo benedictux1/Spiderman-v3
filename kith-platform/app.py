@@ -14,7 +14,9 @@ import PyPDF2
 import pdfplumber
 from flask import Flask, request, jsonify, render_template, Response
 from flask_apscheduler import APScheduler
+from flask_cors import CORS
 from dotenv import load_dotenv
+from s3_storage import s3_storage
 from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship
 from datetime import datetime
 from analytics import RelationshipAnalytics
@@ -43,6 +45,9 @@ except Exception:
 # --- INITIALIZATION ---
 load_dotenv()
 app = Flask(__name__)
+
+# Enable CORS for production
+CORS(app, origins=["*"])  # Configure with specific origins in production
 
 # Ensure templates and static assets reflect latest changes during dev
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -2812,10 +2817,27 @@ def upload_file_endpoint():
         original_filename = secure_filename(file.filename)
         _, ext = os.path.splitext(original_filename)
         stored_filename = f"{uuid.uuid4()}{ext}"
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
-        file.save(file_path)
+        
+        # Use S3 if available, otherwise local storage
+        if s3_storage.is_available():
+            file.seek(0, os.SEEK_END)
+            size_bytes = file.tell()
+            file.seek(0)
+            
+            if s3_storage.upload_file(file, stored_filename):
+                file_path = f"s3://{stored_filename}"  # Store S3 reference
+            else:
+                # Fallback to local storage
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+                file.save(file_path)
+                size_bytes = os.path.getsize(file_path)
+        else:
+            # Local storage fallback
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+            file.save(file_path)
+            size_bytes = os.path.getsize(file_path)
+        
         mime_type = file.mimetype or 'application/octet-stream'
-        size_bytes = os.path.getsize(file_path)
         # Create DB records
         task_id = str(uuid.uuid4())
         with with_write_connection() as conn:
@@ -3346,6 +3368,23 @@ def create_relationship():
         return jsonify({"error": f"Could not create relationship. It may already exist. Error: {e}"}), 500
     finally:
         session.close()
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render deployment."""
+    try:
+        # Quick DB connectivity test
+        conn = get_db_connection()
+        conn.execute("SELECT 1")
+        conn.close()
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
 
 # Initialize database on startup (moved to end to ensure all routes are registered first)
 if __name__ == '__main__':

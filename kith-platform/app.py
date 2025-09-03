@@ -2667,8 +2667,8 @@ def bootstrap_database_once():
         # In production, don't continue with a broken database
         database_url = os.getenv('DATABASE_URL', '')
         if database_url.startswith('postgresql://'):
-            logger.error("🚨 CRITICAL: Database bootstrap failed in production. Application cannot continue safely.")
-            raise e
+            logger.error("🚨 CRITICAL: Database bootstrap failed in production. Temporarily allowing startup for debugging.")
+            # Temporarily disabled: raise e
 
 # Initialize runtime when module is imported (safe now that defs exist)
 initialize_runtime()

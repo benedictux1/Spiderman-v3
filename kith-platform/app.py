@@ -896,6 +896,7 @@ def health_check():
 @app.route('/api/config')
 def get_config():
     """Get configuration status."""
+    from models import get_database_url
     api_key = get_openai_api_key()
     return jsonify({
         "openai_configured": bool(api_key),

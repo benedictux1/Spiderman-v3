@@ -406,7 +406,13 @@ function wireProfileButtons() {
         alert('Note analyzed and saved.');
       } catch (e) {
         console.error(e);
-        alert('Failed to analyze note.');
+        
+        // Check if it's an OpenAI configuration error
+        if (e.message && e.message.includes('OpenAI API key not configured')) {
+          alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Set OPENAI_API_KEY in your Render dashboard\n3. Restart your service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
+        } else {
+          alert('Failed to analyze note. Check the console for details.');
+        }
       } finally {
         analyzeBtn.disabled = false;
         analyzeBtn.textContent = 'Analyze Note';

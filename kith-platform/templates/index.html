@@ -448,7 +448,14 @@
                 showReviewView();
                 
             } catch (error) {
-                alert('Error analyzing note: ' + error.message);
+                console.error('Analysis error:', error);
+                
+                // Check if it's an OpenAI configuration error
+                if (error.message && error.message.includes('OpenAI API key not configured')) {
+                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Set OPENAI_API_KEY in your Render dashboard\n3. Restart your service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
+                } else {
+                    alert('Error analyzing note: ' + error.message);
+                }
             } finally {
                 analyzeBtn.disabled = false;
                 analyzeBtn.textContent = 'Analyze Note';
@@ -492,7 +499,14 @@
                 document.getElementById('profile-note-input-area').style.display = 'none';
                 
             } catch (error) {
-                alert('Error analyzing note: ' + error.message);
+                console.error('Profile analysis error:', error);
+                
+                // Check if it's an OpenAI configuration error
+                if (error.message && error.message.includes('OpenAI API key not configured')) {
+                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Set OPENAI_API_KEY in your Render dashboard\n3. Restart your service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
+                } else {
+                    alert('Error analyzing note: ' + error.message);
+                }
             } finally {
                 analyzeBtn.disabled = false;
                 analyzeBtn.textContent = 'Analyze Note';

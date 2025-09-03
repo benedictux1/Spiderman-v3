@@ -853,6 +853,10 @@ def health_check():
                 "url_type": "postgresql" if "postgresql" in db_url else "sqlite",
                 "contact_count": contact_count,
                 "connected": True
+            },
+            "ai": {
+                "openai_configured": bool(openai.api_key),
+                "model": OPENAI_MODEL
             }
         })
     except Exception as e:
@@ -863,8 +867,26 @@ def health_check():
             "database": {
                 "connected": False,
                 "error": str(e)
+            },
+            "ai": {
+                "openai_configured": bool(openai.api_key),
+                "model": OPENAI_MODEL
             }
         }), 500
+
+@app.route('/api/config')
+def get_config():
+    """Get configuration status."""
+    return jsonify({
+        "openai_configured": bool(openai.api_key),
+        "openai_model": OPENAI_MODEL,
+        "database_type": "postgresql" if "postgresql" in get_database_url() else "sqlite",
+        "features": {
+            "ai_analysis": bool(openai.api_key),
+            "mock_analysis": True,
+            "database_persistence": True
+        }
+    })
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -1343,21 +1365,19 @@ def process_note_endpoint():
 
         master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=raw_note_text, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
         
-        # If OpenAI isn't configured, return a minimal deterministic mock to keep UX flowing
+        # If OpenAI isn't configured, provide clear instructions
         if not openai.api_key:
-            chunks = [seg.strip() for seg in re.split(r'[\.!?\n;]+', raw_note_text) if seg.strip()]
-            bucketed = {}
-            for seg in chunks:
-                cat = infer_category_from_text(seg)
-                bucketed.setdefault(cat, []).append(seg)
-            mock_updates = [{"category": c, "details": ds} for c, ds in bucketed.items()]
-            mock = {
-                "synthesized_narrative": "",
-                "confidence_score": 1.0,
-                "reasoning_chain": "",
-                "categorized_updates": mock_updates
-            }
-            return jsonify(normalize_ai_output(mock))
+            logger.warning("OpenAI API key not configured")
+            return jsonify({
+                "error": "OpenAI API key not configured",
+                "message": "To use AI analysis, please configure your OpenAI API key",
+                "instructions": {
+                    "step1": "Get an API key from https://platform.openai.com/api-keys",
+                    "step2": "Set OPENAI_API_KEY environment variable in your Render dashboard",
+                    "step3": "Restart your Render service"
+                },
+                "mock_available": True
+            }), 400
 
         try:
             response_content = _openai_chat(
@@ -1386,7 +1406,8 @@ def process_note_endpoint():
         
         return jsonify(normalize_ai_output(ai_json_response))
     except Exception as e:
-        return jsonify({"error": f"An internal error occurred: {e}"}), 500
+        logger.exception("Failed to process note")
+        return jsonify({"error": f"An internal error occurred: {str(e)}"}), 500
 
 @app.route('/api/save-synthesis', methods=['POST'])
 def save_synthesis_endpoint():

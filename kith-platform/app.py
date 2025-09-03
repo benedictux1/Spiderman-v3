@@ -72,11 +72,14 @@ logger = logging.getLogger(__name__)
 def get_openai_api_key():
     """Get OpenAI API key, refreshing from environment if needed."""
     key = os.getenv('OPENAI_API_KEY', '')
+    # Clean up the API key - remove whitespace and newlines
+    if key:
+        key = key.strip()
     if key and not openai.api_key:
         openai.api_key = key
     return openai.api_key or key
 
-# Set initial API key
+# Set initial API key (cleaned)
 openai.api_key = get_openai_api_key()
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)
 OPENAI_MODEL_VERSION = os.getenv('OPENAI_MODEL_VERSION', '')  # optional extra pin
@@ -898,11 +901,22 @@ def get_config():
     """Get configuration status."""
     from models import get_database_url
     api_key = get_openai_api_key()
+    # Check for common API key issues
+    raw_key = os.getenv('OPENAI_API_KEY', '')
+    has_whitespace = raw_key != raw_key.strip() if raw_key else False
+    has_newlines = '\n' in raw_key if raw_key else False
+    
     return jsonify({
         "openai_configured": bool(api_key),
         "openai_model": OPENAI_MODEL,
         "api_key_length": len(api_key) if api_key else 0,
         "api_key_format_valid": api_key.startswith('sk-') if api_key else False,
+        "api_key_issues": {
+            "has_whitespace": has_whitespace,
+            "has_newlines": has_newlines,
+            "raw_length": len(raw_key),
+            "cleaned_length": len(api_key) if api_key else 0
+        },
         "database_type": "postgresql" if "postgresql" in get_database_url() else "sqlite",
         "features": {
             "ai_analysis": bool(api_key),

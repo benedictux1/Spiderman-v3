@@ -103,7 +103,7 @@ tqdm==4.67.1
 typing-inspection==0.4.1
 typing_extensions==4.14.1
 uritemplate==4.2.0
-urllib3==2.5.0
+urllib3>=1.26.11,<1.27
 uvicorn==0.35.0
 # uvloop==0.21.0  # Performance dependency for asyncio - not explicitly used
 vobject==0.9.6.1
@@ -119,5 +119,5 @@ sentry-sdk==2.19.2
 PyPDF2==3.0.1
 pdfplumber==0.11.7
 google-cloud-vision==3.10.2
-boto3==1.35.82  # AWS SDK for S3 file storage
+boto3>=1.35.0,<1.36.0  # AWS SDK for S3 file storage
 Flask-CORS==4.0.0  # CORS support for production

@@ -42,6 +42,21 @@ def get_sqlite_connection():
     
     return sqlite3.connect(db_path)
 
+def convert_sqlite_to_postgres_value(value, column_name, table_name):
+    """Convert SQLite values to PostgreSQL compatible values"""
+    # Handle boolean conversions for specific columns
+    boolean_columns = {
+        'contacts': ['is_verified', 'is_premium'],
+        'synthesized_entries': ['is_approved']
+    }
+    
+    if table_name in boolean_columns and column_name in boolean_columns[table_name]:
+        if value is None:
+            return None
+        return bool(value)
+    
+    return value
+
 def migrate_table(sqlite_conn, postgres_conn, table_name, column_mapping=None):
     """
     Migrate data from SQLite table to PostgreSQL table
@@ -54,8 +69,15 @@ def migrate_table(sqlite_conn, postgres_conn, table_name, column_mapping=None):
     """
     logger.info(f"Migrating table: {table_name}")
     
-    # Get data from SQLite
+    # Check if table exists in SQLite
     sqlite_cursor = sqlite_conn.cursor()
+    try:
+        sqlite_cursor.execute(f"SELECT * FROM {table_name} LIMIT 1")
+    except Exception as e:
+        logger.info(f"Table {table_name} does not exist in SQLite: {e}")
+        return
+    
+    # Get data from SQLite
     sqlite_cursor.execute(f"SELECT * FROM {table_name}")
     
     # Get column names
@@ -70,8 +92,23 @@ def migrate_table(sqlite_conn, postgres_conn, table_name, column_mapping=None):
     if column_mapping:
         columns = [column_mapping.get(col, col) for col in columns]
     
-    # Prepare PostgreSQL insert
+    # Convert SQLite values to PostgreSQL compatible values
+    converted_rows = []
+    for row in rows:
+        converted_row = []
+        for i, value in enumerate(row):
+            column_name = columns[i]
+            converted_value = convert_sqlite_to_postgres_value(value, column_name, table_name)
+            converted_row.append(converted_value)
+        converted_rows.append(converted_row)
+    
+    # Check if table exists in PostgreSQL
     postgres_cursor = postgres_conn.cursor()
+    try:
+        postgres_cursor.execute(f"SELECT 1 FROM {table_name} LIMIT 1")
+    except Exception as e:
+        logger.warning(f"Table {table_name} does not exist in PostgreSQL: {e}")
+        return
     
     # Build INSERT statement
     placeholders = ', '.join(['%s'] * len(columns))
@@ -80,13 +117,13 @@ def migrate_table(sqlite_conn, postgres_conn, table_name, column_mapping=None):
     
     # Insert data
     try:
-        postgres_cursor.executemany(insert_sql, rows)
+        postgres_cursor.executemany(insert_sql, converted_rows)
         postgres_conn.commit()
-        logger.info(f"Successfully migrated {len(rows)} rows to {table_name}")
+        logger.info(f"Successfully migrated {len(converted_rows)} rows to {table_name}")
     except Exception as e:
         logger.error(f"Error migrating {table_name}: {e}")
         postgres_conn.rollback()
-        raise
+        # Don't raise - continue with other tables
 
 def create_tables_if_not_exist(postgres_conn):
     """Create tables in PostgreSQL if they don't exist"""

@@ -17,6 +17,7 @@ from flask_apscheduler import APScheduler
 from flask_cors import CORS
 from dotenv import load_dotenv
 from s3_storage import s3_storage
+from google_credentials import setup_google_credentials
 from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship
 from datetime import datetime
 from analytics import RelationshipAnalytics
@@ -48,6 +49,9 @@ app = Flask(__name__)
 
 # Enable CORS for production
 CORS(app, origins=["*"])  # Configure with specific origins in production
+
+# Setup Google Cloud credentials
+setup_google_credentials()
 
 # Ensure templates and static assets reflect latest changes during dev
 app.config['TEMPLATES_AUTO_RELOAD'] = True

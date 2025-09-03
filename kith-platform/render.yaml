@@ -1,9 +1,3 @@
-databases:
-  - name: kith-database
-    databaseName: kith_platform
-    user: kith_user
-    plan: free
-
 services:
   - type: web
     name: kith-platform
@@ -15,9 +9,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.9.6
       - key: DATABASE_URL
-        fromDatabase:
-          name: kith-database
-          property: connectionString
+        value: postgresql://db1_ubtp_user:WmY6Orqrf8sDeQd5UOM0eIYIYsXozvjr@dpg-d2rao9be5dus73d2l7vg-a.oregon-postgres.render.com/db1_ubtp
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY

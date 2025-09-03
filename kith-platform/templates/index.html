@@ -398,6 +398,10 @@
         document.addEventListener('DOMContentLoaded', () => {
           const search = document.getElementById('contact-search');
           if (search) search.addEventListener('input', handleContactSearch);
+          
+          // Load tier contacts on page load
+          loadTier1Contacts();
+          loadTier2Contacts();
         });
 
         // Normalize analysis response to synthesis array for review UI

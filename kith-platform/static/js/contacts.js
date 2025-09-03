@@ -69,7 +69,7 @@ function displayTier1Contacts(contacts) {
         contactDiv.innerHTML = `
             <h4>${contact.full_name || 'Unknown'}</h4>
             <p>@${contact.telegram_username || 'N/A'}</p>
-            <span class="contact-id">${contact.id}</span>
+
         `;
         contactDiv.onclick = () => window.openContactProfile(contact.id, contact.full_name);
         container.appendChild(contactDiv);
@@ -87,7 +87,7 @@ function displayTier2Contacts(contacts) {
         contactDiv.innerHTML = `
             <h4>${contact.full_name || 'Unknown'}</h4>
             <p>@${contact.telegram_username || 'N/A'}</p>
-            <span class="contact-id">${contact.id}</span>
+
         `;
         contactDiv.onclick = () => window.openContactProfile(contact.id, contact.full_name);
         container.appendChild(contactDiv);

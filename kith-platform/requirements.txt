@@ -121,3 +121,5 @@ pdfplumber==0.11.7
 google-cloud-vision==3.10.2
 boto3>=1.35.0,<1.36.0  # AWS SDK for S3 file storage
 Flask-CORS==4.0.0  # CORS support for production
+Flask-APScheduler==1.13.0  # Background task scheduling
+gevent==23.9.1  # Async support for Gunicorn

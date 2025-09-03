@@ -72,8 +72,9 @@ logger = logging.getLogger(__name__)
 def get_openai_api_key():
     """Get OpenAI API key, refreshing from environment if needed."""
     key = os.getenv('OPENAI_API_KEY', '')
-    # Clean up the API key - remove whitespace and newlines
+    # Aggressive cleanup - remove all whitespace, newlines, and control characters
     if key:
+        key = ''.join(key.split())  # Removes all whitespace including newlines
         key = key.strip()
     if key and not openai.api_key:
         openai.api_key = key

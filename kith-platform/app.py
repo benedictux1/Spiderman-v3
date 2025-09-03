@@ -3342,6 +3342,58 @@ def add_member_to_group(group_id):
     finally:
         session.close()
 
+# --- Contact Management ---
+@app.route('/api/contacts', methods=['GET'])
+def get_contacts():
+    """Get all contacts, optionally filtered by tier."""
+    tier = request.args.get('tier', type=int)
+    
+    session = get_session()
+    try:
+        query = session.query(Contact)
+        if tier:
+            query = query.filter(Contact.tier == tier)
+        
+        contacts = query.all()
+        
+        contact_list = []
+        for contact in contacts:
+            contact_data = {
+                'id': contact.id,
+                'full_name': contact.full_name,
+                'tier': contact.tier,
+                'telegram_username': contact.telegram_username,
+                'telegram_id': contact.telegram_id,
+                'created_at': contact.created_at.isoformat() if contact.created_at else None
+            }
+            contact_list.append(contact_data)
+        
+        return jsonify(contact_list)
+    except Exception as e:
+        logger.exception("Failed to get contacts")
+        return jsonify({"error": f"Could not retrieve contacts: {e}"}), 500
+    finally:
+        session.close()
+
+@app.route('/api/contacts/<int:contact_id>', methods=['DELETE'])
+def delete_contact(contact_id):
+    """Delete a contact and all associated data."""
+    session = get_session()
+    try:
+        contact = session.query(Contact).filter(Contact.id == contact_id).first()
+        if not contact:
+            return jsonify({"error": "Contact not found"}), 404
+        
+        session.delete(contact)
+        session.commit()
+        return jsonify({"message": "Contact deleted successfully"})
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to delete contact")
+        return jsonify({"error": f"Could not delete contact: {e}"}), 500
+    finally:
+        session.close()
+
 # --- Relationship Management ---
 @app.route('/api/relationships', methods=['POST'])
 def create_relationship():

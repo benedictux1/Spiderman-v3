@@ -12,8 +12,8 @@ async function initializeGraphView() {
     console.log('Initializing relationship graph...');
     
     try {
-        // Fetch graph data from API
-        const response = await fetch('/api/graph-data');
+        // Fetch graph data from API with cache busting
+        const response = await fetch(`/api/graph-data?t=${Date.now()}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -364,7 +364,7 @@ async function refreshGraphData() {
     if (!network) return;
     
     try {
-        const response = await fetch('/api/graph-data');
+        const response = await fetch(`/api/graph-data?t=${Date.now()}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }

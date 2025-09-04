@@ -329,62 +329,25 @@ def setup_telegram_routes(app):
     @app.route('/api/telegram/status', methods=['GET'])
     def telegram_status():
         """Check Telegram integration status."""
-        try:
-            api_id = os.getenv('TELEGRAM_API_ID')
-            api_hash = os.getenv('TELEGRAM_API_HASH')
-            
-            if not api_id or not api_hash:
-                return jsonify({
-                    'authenticated': False,
-                    'status': 'not_configured',
-                    'message': 'Telegram API credentials not configured'
-                })
-            
-            # Check if session file exists
-            session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
-            session_file = f"{session_name}.session"
-            
-            extra = {}
-            try:
-                import sqlite3, os, time
-                from flask import g
-                from constants import DEFAULT_DB_NAME
-                db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_DB_NAME)
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-                try:
-                    cur = conn.execute('SELECT MAX(telegram_last_sync) AS last_sync FROM contacts')
-                    row = cur.fetchone()
-                    extra['last_sync'] = row['last_sync'] if row and row['last_sync'] else None
-                finally:
-                    conn.close()
-                if os.path.exists(session_file):
-                    extra['session_updated_at'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(session_file)))
-            except Exception:
-                pass
-            
-            if os.path.exists(session_file):
-                # Session file exists, assume it's authenticated
-                return jsonify({
-                    'authenticated': True,
-                    'status': 'connected',
-                    'message': 'Telegram session authenticated',
-                    **extra
-                })
-            else:
-                return jsonify({
-                    'authenticated': False,
-                    'status': 'not_authenticated',
-                    'message': 'Telegram session not found. Please run authentication setup.',
-                    **extra
-                })
-            
-        except Exception as e:
+        from flask import jsonify
+        import os
+        
+        # Simple test - just check if API credentials are set
+        api_id = os.getenv('TELEGRAM_API_ID')
+        api_hash = os.getenv('TELEGRAM_API_HASH')
+        
+        if not api_id or not api_hash:
             return jsonify({
                 'authenticated': False,
-                'status': 'error',
-                'message': f'Error checking status: {e}'
-            }), 500
+                'status': 'not_configured',
+                'message': 'Telegram API credentials not configured. Set TELEGRAM_API_ID and TELEGRAM_API_HASH in your .env file.'
+            })
+        else:
+            return jsonify({
+                'authenticated': False,
+                'status': 'not_authenticated',
+                'message': 'Telegram API credentials found, but session not authenticated. Please run: python telegram_setup.py'
+            })
     
     @app.route('/api/telegram/contacts-list', methods=['GET'])
     def get_telegram_contacts_list():

@@ -233,24 +233,58 @@
             <!-- Import/Export -->
             <div class="settings-section">
                 <h3>📁 Import & Export</h3>
-                <div class="import-export-controls">
-                    <div>
-                        <label for="vcf-upload">Import vCard:</label>
-                        <input type="file" id="vcf-upload" accept=".vcf">
+                
+                <div class="import-export-grid">
+                    <!-- Card 1: Import vCard -->
+                    <div class="import-card">
+                        <div class="import-card-header">
+                            <span class="import-card-icon">📇</span>
+                            <h4>Import vCard</h4>
                     </div>
-                    <a id="download-csv-btn" href="/api/export/csv" download>Download All Data as CSV</a>
+                        <p class="import-card-description">Upload a vCard (.vcf) file to import contacts into your system.</p>
+                        <div class="import-card-content">
+                            <input type="file" id="vcf-upload" accept=".vcf" class="file-input">
+                            <label for="vcf-upload" class="file-input-label">
+                                <span>Choose File</span>
+                                <span class="file-input-status">no file selected</span>
+                            </label>
                 </div>
-                <div class="restore-area card">
-                    <h4>Import and Merge from Backup</h4>
-                    <div class="info-box">
-                        <strong>Note:</strong> This tool will add new contacts and details from your CSV file. Existing data will not be deleted or overwritten.
                     </div>
+
+                    <!-- Card 2: Download CSV -->
+                    <div class="import-card">
+                        <div class="import-card-header">
+                            <span class="import-card-icon">📥</span>
+                            <h4>Download All Data as CSV</h4>
+                        </div>
+                        <p class="import-card-description">Export all your contacts and data as a CSV file for backup or external use.</p>
+                        <div class="import-card-content">
+                            <a id="download-csv-btn" href="/api/export/csv" download class="import-card-button primary">
+                                Download CSV
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Card 3: Import and Merge -->
+                    <div class="import-card">
+                        <div class="import-card-header">
+                            <span class="import-card-icon">🔄</span>
+                    <h4>Import and Merge from Backup</h4>
+                    </div>
+                        <p class="import-card-description">Upload a CSV file to merge contacts and data. Existing data will not be deleted.</p>
+                        <div class="import-card-content">
                     <form id="merge-form">
-                        <input type="file" id="merge-file-input" accept=".csv" required>
+                                <input type="file" id="merge-file-input" accept=".csv" required class="file-input">
+                                <label for="merge-file-input" class="file-input-label">
+                                    <span>Choose File</span>
+                                    <span class="file-input-status">no file selected</span>
+                                </label>
+                                
+                                <div class="merge-options" style="display:none;">
                         <div class="form-group">
-                            <label for="merge-dry-run">
+                                        <label for="merge-dry-run" class="checkbox-label">
                                 <input type="checkbox" id="merge-dry-run">
-                                Dry Run (preview changes without applying)
+                                            <span>Dry Run (preview changes without applying)</span>
                             </label>
                         </div>
                         <div class="form-group">
@@ -268,23 +302,152 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="merge-force">
+                                        <label for="merge-force" class="checkbox-label">
                                 <input type="checkbox" id="merge-force">
-                                Force Merge (Overwrite existing data)
+                                            <span>Force Merge (Overwrite existing data)</span>
                             </label>
                         </div>
-                        <button type="submit" id="merge-btn">🔄 Upload & Merge</button>
+                                </div>
+                                
+                                <button type="submit" id="merge-btn" class="import-card-button primary" disabled>
+                                    Upload & Merge
+                                </button>
                     </form>
-                    <div id="merge-preview" class="card" style="display:none;"></div>
-                    <p id="merge-status"></p>
+                            <div id="merge-preview" class="merge-preview" style="display:none;"></div>
+                            <p id="merge-status" class="status-message"></p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <!-- Telegram Integration -->
             <div class="settings-section">
                 <h3>💬 Telegram Integration</h3>
-                <div id="telegram-status"></div>
-                <div id="import-status" style="display:none;"></div>
+                
+                <div class="telegram-grid">
+                    <!-- Card 1: Setup & Status -->
+                    <div class="telegram-card">
+                        <div class="telegram-card-header">
+                            <span class="telegram-card-icon">⚙️</span>
+                            <h4>Setup & Status</h4>
+                        </div>
+                        <p class="telegram-card-description">Check your Telegram API configuration and connection status.</p>
+                        <div class="telegram-card-content">
+                            <div id="telegram-status-display" class="status-display">
+                                <div class="status-indicator">
+                                    <span class="status-dot" id="telegram-status-dot"></span>
+                                    <span class="status-text" id="telegram-status-text">Checking...</span>
+                                </div>
+                                <div class="status-details" id="telegram-status-details"></div>
+                            </div>
+                            
+                            <!-- API Credentials Form (shown when not configured) -->
+                            <div id="telegram-credentials-form" class="telegram-credentials-form" style="display:none;">
+                                <h5>📱 Enter Your Telegram API Credentials</h5>
+                                <p class="form-help-text">
+                                    Get your API credentials from <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>
+                                </p>
+                                <div class="form-group">
+                                    <label for="telegram-api-id">API ID:</label>
+                                    <input type="text" id="telegram-api-id" placeholder="e.g., 1234567" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="telegram-api-hash">API Hash:</label>
+                                    <input type="text" id="telegram-api-hash" placeholder="e.g., abcdef123456..." required>
+                                </div>
+                                <div class="form-actions">
+                                    <button id="telegram-save-credentials-btn" class="telegram-card-button primary">
+                                        💾 Save Credentials
+                                    </button>
+                                    <button id="telegram-cancel-credentials-btn" class="telegram-card-button secondary">
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="telegram-card-actions" id="telegram-main-actions">
+                                <button id="telegram-check-status-btn" class="telegram-card-button secondary">
+                                    Check Status
+                                </button>
+                                <button id="telegram-configure-btn" class="telegram-card-button secondary" style="display:none;">
+                                    ⚙️ Configure API
+                                </button>
+                                <button id="telegram-relink-btn" class="telegram-card-button primary" style="display:none;">
+                                    🔗 Relink Account
+                                </button>
+                                <button id="telegram-delink-btn" class="telegram-card-button danger" style="display:none;">
+                                    🔓 Delink Account
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 2: Import Contacts -->
+                    <div class="telegram-card">
+                        <div class="telegram-card-header">
+                            <span class="telegram-card-icon">👥</span>
+                            <h4>Import Contacts</h4>
+                        </div>
+                        <p class="telegram-card-description">Import all your Telegram contacts to the platform automatically.</p>
+                        <div class="telegram-card-content">
+                            <div class="import-options">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="telegram-skip-bots" checked>
+                                    <span>Skip bots and deleted accounts</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="telegram-check-duplicates" checked>
+                                    <span>Check for duplicates</span>
+                                </label>
+                            </div>
+                            <button id="telegram-import-contacts-btn" class="telegram-card-button primary" disabled>
+                                Import Contacts
+                            </button>
+                            <div id="telegram-import-status" class="status-message" style="display:none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Card 3: Sync Chat History -->
+                    <div class="telegram-card">
+                        <div class="telegram-card-header">
+                            <span class="telegram-card-icon">💬</span>
+                            <h4>Sync Chat History</h4>
+                        </div>
+                        <p class="telegram-card-description">Import chat history for a specific contact to analyze conversations.</p>
+                        <div class="telegram-card-content">
+                            <div class="form-group">
+                                <label for="telegram-contact-select">Select Contact:</label>
+                                <select id="telegram-contact-select" class="contact-select">
+                                    <option value="">Choose a contact...</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="telegram-days-back">Days to sync back:</label>
+                                <select id="telegram-days-back">
+                                    <option value="7">Last 7 days</option>
+                                    <option value="30" selected>Last 30 days</option>
+                                    <option value="90">Last 90 days</option>
+                                    <option value="180">Last 180 days</option>
+                                </select>
+                            </div>
+                            <button id="telegram-sync-chat-btn" class="telegram-card-button primary" disabled>
+                                Sync Chat History
+                            </button>
+                            <div id="telegram-sync-status" class="status-message" style="display:none;"></div>
+                            
+                            <!-- Progress bar for sync -->
+                            <div id="telegram-sync-progress" class="sync-progress" style="display:none;">
+                                <div class="progress-header">
+                                    <span class="progress-label">Syncing messages...</span>
+                                    <span class="progress-percent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="telegram-progress-fill"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -643,7 +806,7 @@
 
         async function checkTelegramStatus() {
             try {
-                const response = await fetch('/api/telegram/status');
+                const response = await fetch('/api/telegram/connection-status');
                 const status = await response.json();
                 
                 const statusDiv = document.getElementById('telegram-status');
@@ -1013,6 +1176,541 @@
         }
 
         // Additional event listeners
+        // Helper functions for file inputs
+        function updateFileInputStatus(event) {
+            const input = event.target;
+            const label = input.nextElementSibling;
+            const statusSpan = label.querySelector('.file-input-status');
+            
+            if (input.files.length > 0) {
+                const fileName = input.files[0].name;
+                statusSpan.textContent = fileName;
+                statusSpan.style.color = 'var(--primary-color)';
+            } else {
+                statusSpan.textContent = 'no file selected';
+                statusSpan.style.color = 'var(--text-secondary)';
+            }
+        }
+        
+        function toggleMergeOptions(show) {
+            const mergeOptions = document.querySelector('.merge-options');
+            if (mergeOptions) {
+                mergeOptions.style.display = show ? 'block' : 'none';
+            }
+        }
+        
+        // Telegram Integration Functions
+        function setupTelegramIntegration() {
+            // Check status button
+            const checkStatusBtn = document.getElementById('telegram-check-status-btn');
+            if (checkStatusBtn) {
+                checkStatusBtn.addEventListener('click', checkTelegramStatus);
+            }
+            
+            // Relink button
+            const relinkBtn = document.getElementById('telegram-relink-btn');
+            if (relinkBtn) {
+                relinkBtn.addEventListener('click', relinkTelegramAccount);
+            }
+            
+            // Configure API button
+            const configureBtn = document.getElementById('telegram-configure-btn');
+            if (configureBtn) {
+                configureBtn.addEventListener('click', showCredentialsForm);
+            }
+            
+            // Save credentials button
+            const saveCredentialsBtn = document.getElementById('telegram-save-credentials-btn');
+            if (saveCredentialsBtn) {
+                saveCredentialsBtn.addEventListener('click', saveTelegramCredentials);
+            }
+            
+            // Cancel credentials button
+            const cancelCredentialsBtn = document.getElementById('telegram-cancel-credentials-btn');
+            if (cancelCredentialsBtn) {
+                cancelCredentialsBtn.addEventListener('click', hideCredentialsForm);
+            }
+            
+            // Delink button
+            const delinkBtn = document.getElementById('telegram-delink-btn');
+            if (delinkBtn) {
+                delinkBtn.addEventListener('click', delinkTelegramAccount);
+            }
+            
+            // Import contacts button
+            const importContactsBtn = document.getElementById('telegram-import-contacts-btn');
+            if (importContactsBtn) {
+                importContactsBtn.addEventListener('click', importTelegramContacts);
+            }
+            
+            // Sync chat button
+            const syncChatBtn = document.getElementById('telegram-sync-chat-btn');
+            if (syncChatBtn) {
+                syncChatBtn.addEventListener('click', syncTelegramChat);
+            }
+            
+            // Contact select change
+            const contactSelect = document.getElementById('telegram-contact-select');
+            if (contactSelect) {
+                contactSelect.addEventListener('change', function(e) {
+                    const syncBtn = document.getElementById('telegram-sync-chat-btn');
+                    if (syncBtn) {
+                        syncBtn.disabled = !e.target.value;
+                    }
+                });
+            }
+            
+            // Initial status check
+            checkTelegramStatus();
+            loadContactsForTelegram();
+        }
+        
+        async function checkTelegramStatus() {
+            const statusDot = document.getElementById('telegram-status-dot');
+            const statusText = document.getElementById('telegram-status-text');
+            const statusDetails = document.getElementById('telegram-status-details');
+            const importBtn = document.getElementById('telegram-import-contacts-btn');
+            const relinkBtn = document.getElementById('telegram-relink-btn');
+            const configureBtn = document.getElementById('telegram-configure-btn');
+            const delinkBtn = document.getElementById('telegram-delink-btn');
+            
+            try {
+                statusText.textContent = 'Checking...';
+                statusDot.className = 'status-dot';
+                
+                const response = await fetch('/api/telegram/status');
+                const data = await response.json();
+                
+                if (data.authenticated) {
+                    statusDot.className = 'status-dot connected';
+                    statusText.textContent = 'Connected';
+                    statusDetails.textContent = data.message || 'Telegram integration is ready';
+                    if (importBtn) importBtn.disabled = false;
+                    if (relinkBtn) relinkBtn.style.display = 'none';
+                    if (configureBtn) configureBtn.style.display = 'none';
+                    if (delinkBtn) delinkBtn.style.display = 'inline-block';
+                    
+                    if (data.last_sync) {
+                        statusDetails.textContent += `\nLast sync: ${new Date(data.last_sync).toLocaleString()}`;
+                    }
+                } else if (data.status === 'not_configured') {
+                    statusDot.className = 'status-dot error';
+                    statusText.textContent = 'Not Configured';
+                    statusDetails.textContent = data.message || 'Please enter your Telegram API credentials to get started.';
+                    if (importBtn) importBtn.disabled = true;
+                    if (relinkBtn) relinkBtn.style.display = 'none';
+                    if (configureBtn) configureBtn.style.display = 'inline-block';
+                    if (delinkBtn) delinkBtn.style.display = 'none';
+                } else {
+                    statusDot.className = 'status-dot warning';
+                    statusText.textContent = 'Not Authenticated';
+                    statusDetails.textContent = data.message || 'Please relink your Telegram account or delink to start fresh.';
+                    if (importBtn) importBtn.disabled = true;
+                    if (relinkBtn) relinkBtn.style.display = 'inline-block';
+                    if (configureBtn) configureBtn.style.display = 'none';
+                    if (delinkBtn) delinkBtn.style.display = 'inline-block';
+                }
+            } catch (error) {
+                statusDot.className = 'status-dot error';
+                statusText.textContent = 'Error';
+                statusDetails.textContent = 'Failed to check status. Click "Configure API" to set up your Telegram integration.';
+                if (importBtn) importBtn.disabled = true;
+                if (relinkBtn) relinkBtn.style.display = 'none';
+                if (configureBtn) configureBtn.style.display = 'inline-block';
+                if (delinkBtn) delinkBtn.style.display = 'none';
+            }
+        }
+        
+        async function relinkTelegramAccount() {
+            const relinkBtn = document.getElementById('telegram-relink-btn');
+            const statusText = document.getElementById('telegram-status-text');
+            const statusDetails = document.getElementById('telegram-status-details');
+            
+            try {
+                // Disable button and show loading
+                relinkBtn.disabled = true;
+                relinkBtn.textContent = '🔄 Relinking...';
+                statusText.textContent = 'Relinking...';
+                statusDetails.textContent = 'Enter your phone to receive a code.';
+
+                // Step 1: phone
+                const phone = prompt('Enter your phone number with country code (e.g., +1234567890):');
+                if (!phone) throw new Error('Phone number is required.');
+                let resp = await fetch('/api/telegram/auth/start', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                let data = await resp.json();
+                if (!data.success) throw new Error(data.message || 'Failed to send code');
+                statusDetails.textContent = 'Code sent. Check Telegram and enter it next.';
+
+                // Step 2: code
+                const code = prompt('Enter the login code sent to your Telegram app/SMS:');
+                if (!code) throw new Error('Code is required.');
+                resp = await fetch('/api/telegram/auth/verify', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, code })
+                });
+                data = await resp.json();
+                if (data.password_required) {
+                    const password = prompt('Two-step verification is enabled. Enter your Telegram password:');
+                    if (!password) throw new Error('Password is required.');
+                    resp = await fetch('/api/telegram/auth/password', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone, password })
+                    });
+                    data = await resp.json();
+                }
+
+                if (data.success) {
+                    statusText.textContent = 'Connected';
+                    statusDetails.textContent = 'Telegram authenticated successfully.';
+                    setTimeout(() => { checkTelegramStatus(); }, 1000);
+                } else {
+                    throw new Error(data.message || 'Authentication failed');
+                }
+            } catch (error) {
+                statusDetails.textContent = 'Relink failed: ' + error.message;
+                statusText.textContent = 'Relink Failed';
+            } finally {
+                // Re-enable button
+                relinkBtn.disabled = false;
+                relinkBtn.textContent = '🔗 Relink Account';
+            }
+        }
+        
+        function showCredentialsForm() {
+            const form = document.getElementById('telegram-credentials-form');
+            const mainActions = document.getElementById('telegram-main-actions');
+            
+            if (form && mainActions) {
+                form.style.display = 'block';
+                mainActions.style.display = 'none';
+            }
+        }
+        
+        function hideCredentialsForm() {
+            const form = document.getElementById('telegram-credentials-form');
+            const mainActions = document.getElementById('telegram-main-actions');
+            
+            if (form && mainActions) {
+                form.style.display = 'none';
+                mainActions.style.display = 'flex';
+                
+                // Clear form fields
+                document.getElementById('telegram-api-id').value = '';
+                document.getElementById('telegram-api-hash').value = '';
+            }
+        }
+        
+        async function saveTelegramCredentials() {
+            const saveBtn = document.getElementById('telegram-save-credentials-btn');
+            const apiId = document.getElementById('telegram-api-id').value.trim();
+            const apiHash = document.getElementById('telegram-api-hash').value.trim();
+            const statusText = document.getElementById('telegram-status-text');
+            const statusDetails = document.getElementById('telegram-status-details');
+            
+            // Basic validation
+            if (!apiId || !apiHash) {
+                alert('Please enter both API ID and API Hash.');
+                return;
+            }
+            
+            try {
+                // Disable button and show loading
+                saveBtn.disabled = true;
+                saveBtn.textContent = '💾 Saving...';
+                statusText.textContent = 'Saving credentials...';
+                statusDetails.textContent = 'Please wait while we save your API credentials...';
+                
+                const response = await fetch('/api/telegram/save-credentials', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        api_id: apiId,
+                        api_hash: apiHash
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    statusDetails.textContent = data.message;
+                    hideCredentialsForm();
+                    // Refresh status after a delay
+                    setTimeout(() => {
+                        checkTelegramStatus();
+                    }, 1000);
+                } else {
+                    statusDetails.textContent = data.message;
+                    statusText.textContent = 'Save Failed';
+                }
+            } catch (error) {
+                statusDetails.textContent = `Failed to save credentials: ${error.message}`;
+                statusText.textContent = 'Save Failed';
+            } finally {
+                // Re-enable button
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save Credentials';
+            }
+        }
+        
+        async function delinkTelegramAccount() {
+            // Show main confirmation dialog
+            const confirmDelink = confirm(
+                '🔓 Delink Telegram Account\n\n' +
+                'This will completely disconnect your Telegram integration and remove all stored credentials.\n\n' +
+                'Click "OK" to proceed with full delink, or "Cancel" to abort.'
+            );
+            
+            if (!confirmDelink) {
+                return; // User cancelled
+            }
+            
+            // Ask if they want to keep credentials (advanced option)
+            const keepCredentials = confirm(
+                '💾 Keep API Credentials?\n\n' +
+                'By default, we\'ll remove everything for a clean slate.\n\n' +
+                'Click "OK" if you want to KEEP your API credentials for easier re-setup later.\n' +
+                'Click "Cancel" for FULL REMOVAL (recommended - complete clean slate).'
+            );
+            
+            // Invert the logic - we want to remove credentials by default
+            const alsoRemoveCredentials = !keepCredentials;
+            
+            const delinkBtn = document.getElementById('telegram-delink-btn');
+            const statusText = document.getElementById('telegram-status-text');
+            const statusDetails = document.getElementById('telegram-status-details');
+            
+            try {
+                // Disable button and show loading
+                delinkBtn.disabled = true;
+                delinkBtn.textContent = '🔄 Delinking...';
+                statusText.textContent = 'Delinking...';
+                statusDetails.textContent = 'Removing Telegram connection...';
+                
+                const response = await fetch('/api/telegram/delink', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        remove_credentials: alsoRemoveCredentials
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    statusDetails.textContent = data.message;
+                    statusText.textContent = 'Delinked';
+                    
+                    // Immediately update UI based on what was removed
+                    const importBtn = document.getElementById('telegram-import-contacts-btn');
+                    const relinkBtn = document.getElementById('telegram-relink-btn');
+                    const configureBtn = document.getElementById('telegram-configure-btn');
+                    const delinkBtn = document.getElementById('telegram-delink-btn');
+                    
+                    const statusDot = document.getElementById('telegram-status-dot');
+                    
+                    if (data.removed_items && data.removed_items.includes('API credentials')) {
+                        // Full delink (default behavior) - show configure button
+                        statusDot.className = 'status-dot error';
+                        statusText.textContent = 'Fully Delinked';
+                        statusDetails.textContent = '✅ Telegram account and credentials completely removed. Click "Configure API" to start fresh.';
+                        if (relinkBtn) relinkBtn.style.display = 'none';
+                        if (configureBtn) configureBtn.style.display = 'inline-block';
+                        if (delinkBtn) delinkBtn.style.display = 'none';
+                    } else {
+                        // Session-only delink (advanced option) - show relink button
+                        statusDot.className = 'status-dot warning';
+                        statusText.textContent = 'Session Removed';
+                        statusDetails.textContent = '💾 API credentials preserved. Click "Relink Account" to reconnect quickly.';
+                        if (relinkBtn) relinkBtn.style.display = 'inline-block';
+                        if (configureBtn) configureBtn.style.display = 'none';
+                        if (delinkBtn) delinkBtn.style.display = 'inline-block';
+                    }
+                    
+                    if (importBtn) importBtn.disabled = true;
+                    
+                    // Also refresh status after a delay to double-check
+                    setTimeout(() => {
+                        checkTelegramStatus();
+                    }, 3000);
+                } else {
+                    statusDetails.textContent = data.message;
+                    statusText.textContent = 'Delink Failed';
+                }
+            } catch (error) {
+                statusDetails.textContent = `Failed to delink: ${error.message}`;
+                statusText.textContent = 'Delink Failed';
+            } finally {
+                // Re-enable button
+                delinkBtn.disabled = false;
+                delinkBtn.textContent = '🔓 Delink Account';
+            }
+        }
+        
+        async function importTelegramContacts() {
+            const btn = document.getElementById('telegram-import-contacts-btn');
+            const statusDiv = document.getElementById('telegram-import-status');
+            const skipBots = document.getElementById('telegram-skip-bots').checked;
+            const checkDuplicates = document.getElementById('telegram-check-duplicates').checked;
+            
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Importing...';
+                statusDiv.style.display = 'block';
+                statusDiv.textContent = 'Starting contact import...';
+                statusDiv.className = 'status-message';
+                
+                const response = await fetch('/api/telegram/import-contacts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ skip_bots: skipBots, check_duplicates: checkDuplicates })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    statusDiv.textContent = data.message || 'Contact import completed successfully!';
+                    statusDiv.style.color = '#10b981';
+                    // Reload contacts list
+                    setTimeout(() => {
+                        loadContactsForTelegram();
+                        loadContacts(); // Refresh main contacts list
+                    }, 1000);
+                } else {
+                    throw new Error(data.error || 'Import failed');
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Error: ' + error.message;
+                statusDiv.style.color = '#ef4444';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Import Contacts';
+            }
+        }
+        
+        async function syncTelegramChat() {
+            const btn = document.getElementById('telegram-sync-chat-btn');
+            const statusDiv = document.getElementById('telegram-sync-status');
+            const progressDiv = document.getElementById('telegram-sync-progress');
+            const contactSelect = document.getElementById('telegram-contact-select');
+            const daysBack = document.getElementById('telegram-days-back').value;
+            
+            const contactId = contactSelect.value;
+            if (!contactId) {
+                alert('Please select a contact first');
+                return;
+            }
+            
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Starting Sync...';
+                statusDiv.style.display = 'block';
+                statusDiv.textContent = 'Initializing chat sync...';
+                statusDiv.className = 'status-message';
+                
+                const response = await fetch('/api/telegram/start-import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        contact_id: parseInt(contactId), 
+                        days_back: parseInt(daysBack) 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    statusDiv.textContent = 'Chat sync started successfully!';
+                    statusDiv.style.color = '#10b981';
+                    
+                    // Start polling for progress
+                    if (data.task_id) {
+                        pollTelegramProgress(data.task_id);
+                    }
+                } else {
+                    throw new Error(data.error || 'Sync failed to start');
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Error: ' + error.message;
+                statusDiv.style.color = '#ef4444';
+                btn.disabled = false;
+                btn.textContent = 'Sync Chat History';
+            }
+        }
+        
+        async function pollTelegramProgress(taskId) {
+            const progressDiv = document.getElementById('telegram-sync-progress');
+            const progressFill = document.getElementById('telegram-progress-fill');
+            const progressPercent = document.querySelector('.progress-percent');
+            const progressLabel = document.querySelector('.progress-label');
+            const btn = document.getElementById('telegram-sync-chat-btn');
+            
+            progressDiv.style.display = 'block';
+            
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/telegram/import-status/${taskId}`);
+                    const data = await response.json();
+                    
+                    if (data.progress !== undefined) {
+                        progressFill.style.width = data.progress + '%';
+                        progressPercent.textContent = data.progress + '%';
+                    }
+                    
+                    if (data.status_message) {
+                        progressLabel.textContent = data.status_message;
+                    }
+                    
+                    if (data.status === 'completed') {
+                        clearInterval(pollInterval);
+                        progressLabel.textContent = 'Sync completed successfully!';
+                        progressPercent.textContent = '100%';
+                        progressFill.style.width = '100%';
+                        btn.disabled = false;
+                        btn.textContent = 'Sync Chat History';
+                        
+                        // Hide progress after delay
+                        setTimeout(() => {
+                            progressDiv.style.display = 'none';
+                        }, 3000);
+                    } else if (data.status === 'failed') {
+                        clearInterval(pollInterval);
+                        progressLabel.textContent = 'Sync failed: ' + (data.error_details || 'Unknown error');
+                        btn.disabled = false;
+                        btn.textContent = 'Sync Chat History';
+                    }
+                } catch (error) {
+                    console.error('Error polling progress:', error);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+        
+        async function loadContactsForTelegram() {
+            const contactSelect = document.getElementById('telegram-contact-select');
+            if (!contactSelect) return;
+            
+            try {
+                const response = await fetch('/api/contacts');
+                const data = await response.json();
+                
+                // Clear existing options except the first one
+                contactSelect.innerHTML = '<option value="">Choose a contact...</option>';
+                
+                if (data.contacts) {
+                    data.contacts.forEach(contact => {
+                        const option = document.createElement('option');
+                        option.value = contact.id;
+                        option.textContent = contact.full_name;
+                        contactSelect.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load contacts:', error);
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             // Core functionality
             document.getElementById('analyze-btn').addEventListener('click', handleAnalyzeNote);
@@ -1074,7 +1772,26 @@
             const vCardInput = document.getElementById('vcf-upload');
             if (vCardInput) {
                 vCardInput.addEventListener('change', handleVCardImport);
+                vCardInput.addEventListener('change', updateFileInputStatus);
             }
+            
+            // Merge file input
+            const mergeFileInput = document.getElementById('merge-file-input');
+            if (mergeFileInput) {
+                mergeFileInput.addEventListener('change', function(e) {
+                    updateFileInputStatus(e);
+                    toggleMergeOptions(e.target.files.length > 0);
+                    
+                    // Enable/disable merge button
+                    const mergeBtn = document.getElementById('merge-btn');
+                    if (mergeBtn) {
+                        mergeBtn.disabled = e.target.files.length === 0;
+                    }
+                });
+            }
+            
+            // Telegram Integration
+            setupTelegramIntegration();
 
             // Merge import
             const mergeForm = document.getElementById('merge-form');

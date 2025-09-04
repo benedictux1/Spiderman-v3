@@ -21,18 +21,32 @@ logging.basicConfig(
     ]
 )
 
-# --- CONFIGURATION (loaded from .env) ---
-API_ID = os.getenv('TELEGRAM_API_ID')
-API_HASH = os.getenv('TELEGRAM_API_HASH')
+# --- CONFIGURATION (env or encrypted) ---
 KITH_API_URL = os.getenv('KITH_API_URL', 'http://127.0.0.1:5001')  # Important: Use the local loopback for internal calls
 KITH_API_TOKEN = os.getenv('KITH_API_TOKEN', 'dev_token')
 SESSION_NAME = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
 
+def _load_api_credentials():
+    api_id = os.getenv('TELEGRAM_API_ID')
+    api_hash = os.getenv('TELEGRAM_API_HASH')
+    if api_id and api_hash:
+        return api_id, api_hash
+    try:
+        from secure_credentials import load_telegram_credentials
+        api_id, api_hash = load_telegram_credentials()
+    except Exception:
+        api_id, api_hash = None, None
+    return api_id, api_hash
+
+API_ID, API_HASH = _load_api_credentials()
+# Always use absolute path for the Telethon session to avoid cwd inconsistencies
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SESSION_PATH = os.path.join(BASE_DIR, SESSION_NAME)
+
 # Check for required Telegram API credentials
 if not API_ID or not API_HASH:
-    logging.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env file")
-    logging.error("Get these credentials from https://my.telegram.org/apps")
-    exit(1)
+    logging.error("Missing Telegram API credentials. Save them in the app (encrypted) or set env vars.")
+    # We don't exit immediately; downstream code will surface a clearer error when connecting
 
 def get_db_connection():
     """Get database connection with retry logic."""
@@ -172,7 +186,7 @@ async def _async_run_telegram_import(task_id, identifier, contact_id, days_back)
 
     client = None
     try:
-        client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+        client = TelegramClient(SESSION_PATH, API_ID, API_HASH)
         update_task_status(task_id, "connecting", "Connecting to Telegram...", progress=10)
         
         # Connect with a timeout to prevent hangs
@@ -263,6 +277,10 @@ async def _async_run_telegram_import(task_id, identifier, contact_id, days_back)
             headers = {'Authorization': f'Bearer {KITH_API_TOKEN}', 'Content-Type': 'application/json'}
             payload = {'contact_id': contact_id, 'transcript': full_transcript}
             
+            # Enhanced logging for debugging
+            logging.info(f"[Task {task_id}] Sending transcript to API. Length: {len(full_transcript)} chars")
+            logging.info(f"[Task {task_id}] First 200 chars: {repr(full_transcript[:200])}")
+            
             response = requests.post(f"{KITH_API_URL}/api/process-transcript", headers=headers, json=payload, timeout=300)
             response.raise_for_status() # Raise an exception for bad status codes
 
@@ -271,6 +289,9 @@ async def _async_run_telegram_import(task_id, identifier, contact_id, days_back)
             error_details = f"API request failed: {e}. "
             if e.response:
                 error_details += f"Status: {e.response.status_code}, Body: {e.response.text}"
+            logging.error(f"[Task {task_id}] {error_details}")
+            logging.error(f"[Task {task_id}] Failed transcript length: {len(full_transcript)} chars")
+            logging.error(f"[Task {task_id}] Failed transcript sample: {repr(full_transcript[:500])}")
             raise ConnectionError(error_details)
         except Exception as e:
             raise RuntimeError(f"An unexpected error occurred during API call: {e}")

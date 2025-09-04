@@ -22,7 +22,7 @@ from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, Use
 from datetime import datetime
 from analytics import RelationshipAnalytics
 from calendar_integration import CalendarIntegration
-from telegram_integration import setup_telegram_routes
+# from telegram_integration import setup_telegram_routes  # Temporarily disabled
 from constants import (
     Categories, DEFAULT_PORT, DEFAULT_HOST, DEFAULT_MAX_TOKENS, 
     DEFAULT_AI_TEMPERATURE, DEFAULT_OPENAI_MODEL, DEFAULT_API_TOKEN,
@@ -70,7 +70,22 @@ logger = logging.getLogger(__name__)
 
 # Configure OpenAI API
 def get_openai_api_key():
-    """Get OpenAI API key, refreshing from environment if needed."""
+    """Get OpenAI API key from encrypted storage or environment."""
+    # First try encrypted storage
+    try:
+        from secure_credentials import load_openai_api_key
+        encrypted_key, encrypted_model = load_openai_api_key()
+        if encrypted_key and encrypted_key.strip():
+            openai.api_key = encrypted_key.strip()
+            # Also update the model if available
+            if encrypted_model:
+                global OPENAI_MODEL
+                OPENAI_MODEL = encrypted_model
+            return encrypted_key.strip()
+    except Exception:
+        pass  # Fall back to environment variable
+    
+    # Fallback to environment variable
     key = os.getenv('OPENAI_API_KEY', '')
     # Aggressive cleanup - remove all whitespace, newlines, and control characters
     if key:
@@ -107,8 +122,9 @@ def _openai_chat(**kwargs):
             kwargs.pop('temperature')
     
     if hasattr(openai, 'OpenAI'):  # New SDK (>=1.0.0)
-        if _openai_client_v1 is None:
-            _openai_client_v1 = openai.OpenAI()
+        # Always create a fresh client with the current API key to handle encrypted keys
+        api_key = get_openai_api_key()
+        _openai_client_v1 = openai.OpenAI(api_key=api_key)
         return _openai_client_v1.chat.completions.create(**kwargs).choices[0].message.content
     else:  # Old SDK (<=0.28.x)
         return openai.ChatCompletion.create(**kwargs).choices[0].message.content
@@ -228,10 +244,485 @@ analytics = RelationshipAnalytics()
 calendar_integration = CalendarIntegration()
 
 # Setup Telegram integration routes
-setup_telegram_routes(app)
+# setup_telegram_routes(app)  # Temporarily disabled due to import issue
+
+# Test endpoint to verify the issue
+@app.route('/api/telegram/test-status', methods=['GET'])
+def telegram_test_status():
+    """Test endpoint to verify the issue."""
+    return jsonify({
+        'test': 'working',
+        'message': 'This is a test endpoint'
+    })
+
+# Telegram status endpoint (with encrypted credentials)
+@app.route('/api/telegram/status', methods=['GET'])
+def telegram_status_secure():
+    """Telegram status endpoint with encrypted credential support."""
+    try:
+        import os
+        
+        # Try to load encrypted credentials first
+        api_id = None
+        api_hash = None
+        
+        try:
+            from secure_credentials import load_telegram_credentials
+            api_id, api_hash = load_telegram_credentials()
+            if api_id and api_hash:
+                # Update environment for immediate use
+                os.environ['TELEGRAM_API_ID'] = api_id
+                os.environ['TELEGRAM_API_HASH'] = api_hash
+        except ImportError:
+            # Fallback to environment variables if encryption not available
+            pass
+        except Exception:
+            # If decryption fails, try environment variables
+            pass
+        
+        # Fallback to environment variables
+        if not api_id or not api_hash:
+            api_id = os.getenv('TELEGRAM_API_ID')
+            api_hash = os.getenv('TELEGRAM_API_HASH')
+        
+        if not api_id or not api_hash:
+            return jsonify({
+                'authenticated': False,
+                'status': 'not_configured',
+                'message': 'Telegram API credentials not configured. Please set up your API credentials.'
+            })
+        
+        # Actually test if session is authorized
+        session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        session_file = f"{session_name}.session"
+        
+        if not os.path.exists(session_file):
+            return jsonify({
+                'authenticated': False,
+                'status': 'not_authenticated',
+                'message': '🔐 Telegram credentials found (encrypted) but session not authenticated. Please relink your account.'
+            })
+        
+        # Test actual authorization
+        try:
+            import asyncio
+            from telethon import TelegramClient
+            
+            async def test_auth():
+                async with TelegramClient(session_name, api_id, api_hash) as client:
+                    return await client.is_user_authorized()
+            
+            is_authorized = asyncio.run(test_auth())
+            
+            if is_authorized:
+                return jsonify({
+                    'authenticated': True,
+                    'status': 'connected',
+                    'message': '🔐 Telegram session authenticated and ready (credentials encrypted)'
+                })
+            else:
+                return jsonify({
+                    'authenticated': False,
+                    'status': 'not_authenticated',
+                    'message': '🔐 Session file exists but not authorized. Please relink your account.'
+                })
+        except Exception as e:
+            return jsonify({
+                'authenticated': False,
+                'status': 'not_authenticated',
+                'message': f'🔐 Failed to verify session: {str(e)}. Please relink your account.'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'authenticated': False,
+            'status': 'error',
+            'message': f'Status check failed: {str(e)}'
+        }), 500
+
+# Working Telegram status endpoint (new path to avoid conflicts)
+@app.route('/api/telegram/connection-status', methods=['GET'])
+def telegram_connection_status():
+    """Working Telegram status endpoint."""
+    try:
+        import os
+        
+        # Check API credentials
+        api_id = os.getenv('TELEGRAM_API_ID')
+        api_hash = os.getenv('TELEGRAM_API_HASH')
+        
+        if not api_id or not api_hash:
+            return jsonify({
+                'authenticated': False,
+                'status': 'not_configured',
+                'message': 'Telegram API credentials not configured. Please set TELEGRAM_API_ID and TELEGRAM_API_HASH in your environment.'
+            })
+        
+        # Check if session file exists
+        session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        session_file = f"{session_name}.session"
+        
+        if os.path.exists(session_file):
+            return jsonify({
+                'authenticated': True,
+                'status': 'connected',
+                'message': 'Telegram session authenticated and ready'
+            })
+        else:
+            return jsonify({
+                'authenticated': False,
+                'status': 'not_authenticated',
+                'message': 'Telegram credentials found but session not authenticated. Please relink your account.'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'authenticated': False,
+            'status': 'error',
+            'message': f'Status check failed: {str(e)}'
+        }), 500
+
+# Telegram save credentials endpoint (with encryption)
+@app.route('/api/telegram/save-credentials', methods=['POST'])
+def telegram_save_credentials_secure():
+    """Save Telegram API credentials with encryption."""
+    try:
+        from secure_credentials import save_telegram_credentials as save_encrypted_credentials
+        import os
+        
+        data = request.get_json()
+        api_id = data.get('api_id', '').strip()
+        api_hash = data.get('api_hash', '').strip()
+        password = data.get('password', '').strip()  # Optional password for extra security
+        
+        # Validate inputs
+        if not api_id or not api_hash:
+            return jsonify({
+                'success': False,
+                'message': 'Both API ID and API Hash are required.'
+            }), 400
+            
+        # Validate API ID is numeric
+        if not api_id.isdigit():
+            return jsonify({
+                'success': False,
+                'message': 'API ID must be a number.'
+            }), 400
+            
+        # Validate API Hash format (basic check)
+        if len(api_hash) < 20:
+            return jsonify({
+                'success': False,
+                'message': 'API Hash appears to be too short. Please check your credentials.'
+            }), 400
+        
+        # Save with encryption
+        success = save_encrypted_credentials(api_id, api_hash, password if password else None)
+        
+        if success:
+            # Also update environment for immediate use
+            os.environ['TELEGRAM_API_ID'] = api_id
+            os.environ['TELEGRAM_API_HASH'] = api_hash
+            
+            return jsonify({
+                'success': True,
+                'message': '🔐 Telegram API credentials saved with encryption! Your credentials are now securely stored.'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Failed to save encrypted credentials. Please try again.'
+            }), 500
+        
+    except ImportError as e:
+        # Fallback to old method if encryption library not available
+        logger.error(f"Encryption library not available: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Encryption library not available. Please install cryptography: pip install cryptography'
+        }), 500
+    except Exception as e:
+        logger.error(f"Failed to save credentials: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to save credentials: {str(e)}'
+        }), 500
+
+# Telegram delink endpoint
+@app.route('/api/telegram/delink', methods=['POST'])
+def telegram_delink():
+    """Delink/disconnect Telegram account by removing session and optionally credentials."""
+    try:
+        import os
+        
+        data = request.get_json() or {}
+        remove_credentials = data.get('remove_credentials', False)
+        
+        removed_items = []
+        
+        # Remove session file if it exists
+        session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        session_file = f"{session_name}.session"
+        
+        if os.path.exists(session_file):
+            os.remove(session_file)
+            removed_items.append('session file')
+        
+        # Remove credentials if requested
+        if remove_credentials:
+            # Try to remove encrypted credentials first
+            try:
+                from secure_credentials import delete_telegram_credentials
+                deleted_files = delete_telegram_credentials()
+                if deleted_files:
+                    removed_items.extend(deleted_files)
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"Failed to delete encrypted credentials: {e}")
+            
+            # Also remove from .env file (fallback/legacy)
+            env_file_path = '.env'
+            if os.path.exists(env_file_path):
+                with open(env_file_path, 'r') as f:
+                    lines = f.readlines()
+                
+                # Filter out Telegram-related lines
+                new_lines = []
+                for line in lines:
+                    if not (line.strip().startswith('TELEGRAM_API_ID=') or 
+                           line.strip().startswith('TELEGRAM_API_HASH=') or
+                           line.strip().startswith('TELEGRAM_SESSION_NAME=')):
+                        new_lines.append(line)
+                
+                # Write back the filtered content
+                with open(env_file_path, 'w') as f:
+                    f.writelines(new_lines)
+                
+                removed_items.append('legacy credentials')
+            
+            # Remove from current environment
+            if 'TELEGRAM_API_ID' in os.environ:
+                del os.environ['TELEGRAM_API_ID']
+            if 'TELEGRAM_API_HASH' in os.environ:
+                del os.environ['TELEGRAM_API_HASH']
+            
+            if 'API credentials' not in removed_items:
+                removed_items.append('API credentials')
+        
+        if removed_items:
+            message = f"Successfully delinked Telegram account. Removed: {', '.join(removed_items)}."
+        else:
+            message = "Telegram account was already delinked."
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'removed_items': removed_items
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to delink account: {str(e)}'
+        }), 500
+
+# Telegram relink endpoint
+@app.route('/api/telegram/relink', methods=['POST'])
+def telegram_relink():
+    """Relink/reconnect to Telegram with better user guidance."""
+    try:
+        import os
+        
+        # Remove existing session file if it exists
+        session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        session_file = f"{session_name}.session"
+        
+        if os.path.exists(session_file):
+            os.remove(session_file)
+            logger.info(f"Removed existing session file: {session_file}")
+        
+        # Check if we have API credentials
+        api_id = None
+        api_hash = None
+        
+        # Try to load from encrypted storage first
+        try:
+            from secure_credentials import load_telegram_credentials
+            api_id, api_hash = load_telegram_credentials()
+        except:
+            # Fallback to environment variables
+            api_id = os.getenv('TELEGRAM_API_ID')
+            api_hash = os.getenv('TELEGRAM_API_HASH')
+        
+        if not api_id or not api_hash:
+            return jsonify({
+                'success': False,
+                'message': 'No Telegram API credentials found. Please configure your API credentials first.'
+            }), 400
+        
+        # Instead of running the interactive script, provide clear instructions
+        working_dir = os.getcwd()
+        return jsonify({
+            'success': False,
+            'message': '''🔧 Manual Setup Required
+
+Telegram authentication requires interactive input that cannot be done through the web interface.
+
+To complete the setup:
+
+1. Open Terminal and navigate to your project directory:
+   cd "''' + working_dir + '''"
+
+2. Run the setup script:
+   python3 telegram_setup.py
+
+3. Follow the prompts to enter:
+   • Your phone number (with country code, e.g., +1234567890)
+   • Verification code from Telegram app
+   • 2FA password (if enabled)
+
+4. Once complete, return to this page and refresh to check your status.
+
+The setup only needs to be done once!''',
+            'manual_setup_required': True,
+            'setup_command': 'python3 telegram_setup.py',
+            'working_directory': working_dir
+        })
+            
+    except Exception as e:
+        logger.error(f"Failed to prepare Telegram relink: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to prepare Telegram relink: {str(e)}'
+        }), 500
 
 # Security token for local script authentication
 KITH_SCRIPT_SECRET_TOKEN = os.getenv("KITH_API_TOKEN", DEFAULT_API_TOKEN)
+
+# --- Telegram in-browser authentication support ---
+try:
+    import asyncio
+    from telethon import TelegramClient
+    from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+    _TELETHON_AVAILABLE = True
+except Exception:
+    _TELETHON_AVAILABLE = False
+
+# Pending auth sessions kept in-memory (dev/local use)
+PENDING_TG_AUTH = {}  # phone -> { 'session_name': str, 'phone_code_hash': str }
+
+def _load_api_credentials():
+    """Load API ID/Hash from encrypted store or env."""
+    api_id = None
+    api_hash = None
+    try:
+        from secure_credentials import load_telegram_credentials
+        api_id, api_hash = load_telegram_credentials()
+    except Exception:
+        pass
+    if not api_id or not api_hash:
+        api_id = os.getenv('TELEGRAM_API_ID')
+        api_hash = os.getenv('TELEGRAM_API_HASH')
+    return api_id, api_hash
+
+@app.route('/api/telegram/auth/start', methods=['POST'])
+def telegram_auth_start():
+    """Begin Telegram auth by sending a login code to the phone number."""
+    if not _TELETHON_AVAILABLE:
+        return jsonify({'success': False, 'message': 'Telethon library not installed'}), 500
+    data = request.get_json() or {}
+    phone = (data.get('phone') or '').strip()
+    if not phone:
+        return jsonify({'success': False, 'message': 'Phone number is required.'}), 400
+
+    api_id, api_hash = _load_api_credentials()
+    if not api_id or not api_hash:
+        return jsonify({'success': False, 'message': 'API credentials not configured.'}), 400
+
+    try:
+        session_name = os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        async def _send_code():
+            async with TelegramClient(session_name, api_id, api_hash) as client:
+                sent = await client.send_code_request(phone)
+                return sent.phone_code_hash
+        phone_code_hash = asyncio.run(_send_code())
+        PENDING_TG_AUTH[phone] = {'session_name': session_name, 'phone_code_hash': phone_code_hash}
+        return jsonify({'success': True, 'message': 'Code sent. Check your Telegram app/SMS and enter the code.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Failed to send code: {str(e)}'}), 500
+
+@app.route('/api/telegram/auth/verify', methods=['POST'])
+def telegram_auth_verify():
+    """Verify the login code and finalize login (or request password)."""
+    if not _TELETHON_AVAILABLE:
+        return jsonify({'success': False, 'message': 'Telethon library not installed'}), 500
+    data = request.get_json() or {}
+    phone = (data.get('phone') or '').strip()
+    code = (data.get('code') or '').strip()
+    if not phone or not code:
+        return jsonify({'success': False, 'message': 'Phone and code are required.'}), 400
+
+    api_id, api_hash = _load_api_credentials()
+    if not api_id or not api_hash:
+        return jsonify({'success': False, 'message': 'API credentials not configured.'}), 400
+
+    try:
+        session_name = PENDING_TG_AUTH.get(phone, {}).get('session_name') or os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        phone_code_hash = PENDING_TG_AUTH.get(phone, {}).get('phone_code_hash')
+        async def _verify():
+            async with TelegramClient(session_name, api_id, api_hash) as client:
+                try:
+                    await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+                except SessionPasswordNeededError:
+                    return 'PASSWORD_NEEDED'
+                except PhoneCodeInvalidError:
+                    return 'INVALID_CODE'
+                return 'OK'
+        result = asyncio.run(_verify())
+        if result == 'PASSWORD_NEEDED':
+            return jsonify({'success': False, 'password_required': True, 'message': 'Two-step verification enabled. Please provide your password.'})
+        if result == 'INVALID_CODE':
+            return jsonify({'success': False, 'message': 'Invalid code. Please try again.'}), 400
+        PENDING_TG_AUTH.pop(phone, None)
+        return jsonify({'success': True, 'message': 'Telegram authenticated successfully.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Failed to verify code: {str(e)}'}), 500
+
+@app.route('/api/telegram/auth/password', methods=['POST'])
+def telegram_auth_password():
+    """Provide 2FA password to complete login."""
+    if not _TELETHON_AVAILABLE:
+        return jsonify({'success': False, 'message': 'Telethon library not installed'}), 500
+    data = request.get_json() or {}
+    phone = (data.get('phone') or '').strip()
+    password = (data.get('password') or '').strip()
+    if not phone or not password:
+        return jsonify({'success': False, 'message': 'Phone and password are required.'}), 400
+
+    api_id, api_hash = _load_api_credentials()
+    if not api_id or not api_hash:
+        return jsonify({'success': False, 'message': 'API credentials not configured.'}), 400
+
+    try:
+        session_name = PENDING_TG_AUTH.get(phone, {}).get('session_name') or os.getenv('TELEGRAM_SESSION_NAME', 'kith_telegram_session')
+        async def _password():
+            async with TelegramClient(session_name, api_id, api_hash) as client:
+                await client.sign_in(password=password)
+        asyncio.run(_password())
+        PENDING_TG_AUTH.pop(phone, None)
+        return jsonify({'success': True, 'message': 'Telegram authenticated successfully with password.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Failed to complete authentication: {str(e)}'}), 500
+
+@app.route('/api/telegram/auth/cancel', methods=['POST'])
+def telegram_auth_cancel():
+    """Cancel an in-progress login and clean up."""
+    data = request.get_json() or {}
+    phone = (data.get('phone') or '').strip()
+    if phone and phone in PENDING_TG_AUTH:
+        PENDING_TG_AUTH.pop(phone, None)
+    return jsonify({'success': True})
 
 # Thread safety locks
 DB_LOCK = threading.RLock()  # Reentrant lock for database operations
@@ -1726,6 +2217,9 @@ def process_transcript_endpoint():
                 temperature=DEFAULT_AI_TEMPERATURE,
             )
         except Exception as openai_error:
+            logger.error(f"OpenAI API Error: {str(openai_error)}")
+            logger.error(f"Prompt length: {len(master_prompt)}")
+            logger.error(f"Transcript length: {len(transcript)}")
             return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
         
         if response_content.startswith('```json'):
@@ -1857,6 +2351,18 @@ def start_telegram_import():
         def run_import_subprocess():
             """Run the import in a subprocess to avoid threading issues."""
             try:
+                # Force database connection cleanup before subprocess to prevent locks
+                import gc
+                gc.collect()  # Force garbage collection to close any lingering connections
+                
+                # Also force SQLite to checkpoint WAL files
+                try:
+                    temp_conn = get_db_connection()
+                    temp_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    temp_conn.close()
+                except:
+                    pass  # Ignore errors, just trying to clean up
+                
                 # Determine the correct python executable from the virtualenv
                 # This makes the assumption that the venv is in the project root.
                 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -3334,35 +3840,76 @@ def transcribe_audio_endpoint():
     try:
         if 'audio_file' not in request.files:
             return jsonify({"error": "No audio file part"}), 400
+        
         audio_file = request.files['audio_file']
+        if audio_file.filename == '':
+            return jsonify({"error": "No audio file selected"}), 400
+        
+        # Log audio file info for debugging
+        logger.info(f"Transcribing audio file: {audio_file.filename}, Content-Type: {audio_file.content_type}")
+        
         tmp_dir = '/tmp'
         os.makedirs(tmp_dir, exist_ok=True)
-        tmp_path = os.path.join(tmp_dir, f"temp_audio_{uuid.uuid4()}.webm")
+        
+        # Use original extension if possible, fallback to webm
+        original_ext = os.path.splitext(audio_file.filename)[1] if audio_file.filename else '.webm'
+        if not original_ext:
+            original_ext = '.webm'
+        
+        tmp_path = os.path.join(tmp_dir, f"temp_audio_{uuid.uuid4()}{original_ext}")
         audio_file.save(tmp_path)
+        
+        # Check file size for debugging
+        file_size = os.path.getsize(tmp_path)
+        logger.info(f"Audio file saved: {tmp_path}, Size: {file_size} bytes")
+        
         transcript_text = ''
         try:
             # Prefer new SDK if available
             if hasattr(openai, 'OpenAI'):
-                client = getattr(openai, 'OpenAI')()
+                # Use the encrypted API key
+                api_key = get_openai_api_key()
+                client = openai.OpenAI(api_key=api_key)
+                
                 with open(tmp_path, 'rb') as f:
-                    resp = client.audio.transcriptions.create(model='whisper-1', file=f)
-                transcript_text = (getattr(resp, 'text', None) or '')
+                    # Enhanced Whisper parameters for better transcription
+                    resp = client.audio.transcriptions.create(
+                        model='whisper-1', 
+                        file=f,
+                        language='en',  # Specify English for better accuracy
+                        prompt="This is a voice memo or conversation.",  # Context prompt
+                        temperature=0.2  # Lower temperature for more consistent results
+                    )
+                transcript_text = (getattr(resp, 'text', None) or '').strip()
+                logger.info(f"Whisper response: '{transcript_text}' (length: {len(transcript_text)})")
             else:
                 with open(tmp_path, 'rb') as f:
-                    resp = openai.Audio.transcribe(model='whisper-1', file=f)
-                transcript_text = (resp.get('text') if isinstance(resp, dict) else '')
+                    resp = openai.Audio.transcribe(
+                        model='whisper-1', 
+                        file=f,
+                        language='en',
+                        prompt="This is a voice memo or conversation."
+                    )
+                transcript_text = (resp.get('text') if isinstance(resp, dict) else '').strip()
+                logger.info(f"Whisper response: '{transcript_text}' (length: {len(transcript_text)})")
         finally:
             try:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
-            except Exception:
-                pass
+                    logger.info(f"Cleaned up temp file: {tmp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
+        
         if not transcript_text:
-            return jsonify({"error": "Transcription returned no text"}), 502
+            logger.warning("Transcription returned empty text")
+            return jsonify({"error": "Transcription returned no text. Audio may be too quiet, unclear, or in an unsupported format."}), 502
+        
+        logger.info(f"Transcription successful: '{transcript_text[:100]}...' (total length: {len(transcript_text)})")
         return jsonify({"transcript": transcript_text})
+        
     except Exception as e:
-        logger.error(f"Transcription failed: {e}")
-        return jsonify({"error": "Failed to transcribe audio."}), 500
+        logger.error(f"Transcription failed: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to transcribe audio: {str(e)}"}), 500
 
 # === RELATIONSHIP GRAPH API ENDPOINTS ===
 

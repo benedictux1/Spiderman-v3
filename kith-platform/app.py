@@ -1458,77 +1458,89 @@ def add_no_cache_headers(response):
 
 @app.route('/api/contacts', methods=['GET'])
 def get_contacts():
-    """Get all contacts."""
+    """Get all contacts (uses SQLAlchemy so data persists on Render/PostgreSQL)."""
     try:
-        conn = get_db_connection()
+        from models import get_session, Contact
+        session = get_session()
         try:
-            # Optimized query with user filtering and limit
-            limit = min(int(request.args.get('limit', 1000)), 1000)  # Max 1000 contacts
+            limit = min(int(request.args.get('limit', 1000)), 1000)
             offset = max(int(request.args.get('offset', 0)), 0)
             tier_param = request.args.get('tier')
-            params = [1]
-            where_clause = 'WHERE user_id = ?'
-            if tier_param and tier_param.isdigit():
-                where_clause += ' AND tier = ?'
-                params.append(int(tier_param))
 
-            params.extend([limit, offset])
-            cursor = conn.execute(f'''
-                SELECT id, full_name, tier, telegram_username, is_verified, is_premium, created_at
-                FROM contacts 
-                {where_clause}
-                ORDER BY full_name COLLATE NOCASE
-                LIMIT ? OFFSET ?
-            ''', params)
-            contacts = [dict(row) for row in cursor.fetchall()]
-            
-            return jsonify(contacts)
+            query = session.query(Contact).filter(Contact.user_id == 1)
+            if tier_param and str(tier_param).isdigit():
+                query = query.filter(Contact.tier == int(tier_param))
+
+            query = query.order_by(Contact.full_name.asc())
+            contacts = query.offset(offset).limit(limit).all()
+
+            result = [{
+                'id': c.id,
+                'full_name': c.full_name,
+                'tier': c.tier,
+                'telegram_username': c.telegram_username,
+                'is_verified': c.is_verified,
+                'is_premium': c.is_premium,
+                'created_at': c.created_at.isoformat() if c.created_at else None
+            } for c in contacts]
+
+            return jsonify(result)
         finally:
-            conn.close()
+            session.close()
     except Exception as e:
         logger.error(f"Failed to get contacts: {e}")
         return jsonify({"error": f"Failed to get contacts: {e}"}), 500
 
 @app.route('/api/contacts', methods=['POST'])
 def create_contact():
-    """Create a new contact."""
+    """Create a new contact (stores in PostgreSQL/SQLite via SQLAlchemy)."""
     try:
         data = request.get_json()
         if not data:
             logger.warning("Create contact: No data provided")
             return jsonify({"error": "No data provided"}), 400
-        
+
         full_name = validate_input('contact_name', data.get('full_name'))
         tier = validate_input('tier', data.get('tier', 2))
-        
+
         if not full_name:
             logger.warning(f"Create contact: Invalid full name provided: {data.get('full_name')}")
             return jsonify({"error": "Valid full name is required (1-255 characters)"}), 400
-        
+
+        from models import get_session, Contact
+        from sqlalchemy import func
+
         with CONTACT_CREATION_LOCK:  # Thread-safe contact creation
-            conn = get_db_connection()
+            session = get_session()
             try:
-                # Check for duplicate (case-insensitive)
-                cursor = conn.execute('SELECT id FROM contacts WHERE LOWER(full_name) = LOWER(?)', (full_name,))
-                if cursor.fetchone():
+                # Duplicate check (case-insensitive)
+                existing = session.query(Contact).filter(
+                    Contact.user_id == 1,
+                    func.lower(Contact.full_name) == func.lower(full_name)
+                ).first()
+                if existing:
                     return jsonify({"error": "Contact already exists"}), 409
-                
-                # Create new contact
-                cursor = conn.execute(
-                    'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at) VALUES (?, ?, ?, ?, ?)',
-                    (full_name, tier, 1, f"contact_{uuid.uuid4().hex[:8]}", datetime.now().isoformat())
+
+                new_contact = Contact(
+                    full_name=full_name,
+                    tier=int(tier) if str(tier).isdigit() else 2,
+                    user_id=1,
+                    vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
                 )
-                contact_id = cursor.lastrowid
-                conn.commit()
-                
-                logger.info(f"Created new contact: '{full_name}' (ID: {contact_id})")
+                session.add(new_contact)
+                session.commit()
+
+                logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
                 return jsonify({
                     "message": f"Contact '{full_name}' created successfully",
-                    "contact_id": contact_id
+                    "contact_id": new_contact.id
                 }), 201
+            except Exception as e:
+                session.rollback()
+                raise
             finally:
-                conn.close()
-        
+                session.close()
+
     except Exception as e:
         return jsonify({"error": f"Failed to create contact: {e}"}), 500
 

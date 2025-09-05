@@ -1519,6 +1519,7 @@ def create_contact():
                     func.lower(Contact.full_name) == func.lower(full_name)
                 ).first()
                 if existing:
+                    # If a duplicate exists, return the error immediately and do not proceed.
                     return jsonify({"error": "Contact already exists"}), 409
 
                 new_contact = Contact(
@@ -1557,14 +1558,8 @@ def delete_contact(contact_id):
         
         contact_name = contact.full_name
         
-        # Delete associated data (cascade delete)
-        # Delete synthesized entries
-        session.query(SynthesizedEntry).filter_by(contact_id=contact_id).delete()
-        
-        # Delete raw notes
-        session.query(RawNote).filter_by(contact_id=contact_id).delete()
-        
-        # Delete the contact
+        # Delete the contact. Associated raw_notes and synthesized_entries will be cascade deleted
+        # due to `ondelete='CASCADE'` in models and `cascade='all, delete-orphan'` in relationships.
         session.delete(contact)
         session.commit()
         
@@ -1582,6 +1577,7 @@ def delete_contact(contact_id):
         
     except Exception as e:
         session.rollback()
+        logger.error(f"Failed to delete contact {contact_id}: {e}")
         return jsonify({"error": f"Failed to delete contact: {e}"}), 500
     finally:
         session.close()
@@ -1699,55 +1695,39 @@ def import_vcard_endpoint():
 @app.route('/api/contact/<int:contact_id>', methods=['GET'])
 def get_contact_details(contact_id):
     """Fetches all synthesized data for a single contact, ordered correctly."""
+    from models import get_session, Contact, SynthesizedEntry
+    from constants import CATEGORY_ORDER
+
+    session = get_session()
     try:
-        # Use direct database connection instead of SQLAlchemy to avoid schema issues
-        conn = get_db_connection()
-        try:
-            # Check if contact exists and get contact info including telegram fields
-            cursor = conn.execute('SELECT id, full_name, tier, telegram_username, telegram_handle FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
-            contact_info = cursor.fetchone()
-            if not contact_info:
-                return jsonify({"error": "Contact not found"}), 404
+        contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+        if not contact:
+            return jsonify({"error": "Contact not found"}), 404
 
-            # Get synthesized entries using direct SQL to avoid schema issues
-            cursor = conn.execute('''
-                SELECT category, content, created_at 
-                FROM synthesized_entries 
-                WHERE contact_id = ? 
-                ORDER BY created_at DESC 
-                LIMIT 500
-            ''', (contact_id,))
-            
-            all_entries = cursor.fetchall()
+        synthesized_entries = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).order_by(SynthesizedEntry.created_at.desc()).limit(500).all()
 
-            # Use the category order defined in constants
-            categorized_data = {category: [] for category in CATEGORY_ORDER}
+        categorized_data = {category: [] for category in CATEGORY_ORDER}
+        for entry in synthesized_entries:
+            if entry.category in categorized_data:
+                categorized_data[entry.category].append(entry.content)
 
-            for entry in all_entries:
-                if entry['category'] in categorized_data:
-                    categorized_data[entry['category']].append(entry['content'])
+        final_response = {
+            "contact_info": {
+                "id": contact.id,
+                "full_name": contact.full_name,
+                "tier": contact.tier,
+                "telegram_username": contact.telegram_username,
+                "telegram_handle": contact.telegram_handle
+            },
+            "categorized_data": categorized_data
+        }
 
-            # Do not filter out empty categories so the UI can show all 20
-            final_categorized_data = categorized_data
-
-            final_response = {
-                "contact_info": {
-                    "id": contact_info['id'], 
-                    "full_name": contact_info['full_name'], 
-                    "tier": contact_info['tier'],
-                    "telegram_username": contact_info['telegram_username'],
-                    "telegram_handle": contact_info['telegram_handle']
-                },
-                "categorized_data": final_categorized_data
-            }
-            
-            return jsonify(final_response)
-            
-        finally:
-            conn.close()
+        return jsonify(final_response)
     except Exception as e:
         logger.error(f"Could not retrieve contact data: {e}")
         return jsonify({"error": f"Could not retrieve contact data: {e}"}), 500
+    finally:
+        session.close()
 
 @app.route('/api/contact/<int:contact_id>', methods=['PATCH'])
 def update_contact(contact_id):

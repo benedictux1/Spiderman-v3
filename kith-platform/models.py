@@ -48,7 +48,7 @@ class RawNote(Base):
     __tablename__ = 'raw_notes'
     
     id = Column(Integer, primary_key=True)
-    contact_id = Column(Integer, ForeignKey('contacts.id'), nullable=False)
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     tags = Column(String)  # Store as JSON string for SQLite compatibility

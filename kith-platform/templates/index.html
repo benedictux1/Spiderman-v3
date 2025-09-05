@@ -108,6 +108,25 @@
                 <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
                 <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
             </div>
+            
+            <!-- Tags Section -->
+            <div class="tags-section card">
+                <div class="tags-header">
+                    <h3>Tags</h3>
+                    <button id="manage-tags-btn" class="secondary-btn">Manage Tags</button>
+                </div>
+                <div id="contact-tags-container" class="tags-container">
+                    <!-- Tags will be dynamically loaded here -->
+                </div>
+                <div id="add-tag-section" style="display:none;">
+                    <select id="tag-select" class="tag-select">
+                        <option value="">Select a tag to assign...</option>
+                    </select>
+                    <button id="assign-tag-btn" class="primary-btn">Assign Tag</button>
+                    <button id="cancel-assign-tag-btn" class="secondary-btn">Cancel</button>
+                </div>
+                <button id="add-tag-btn" class="primary-btn">+ Add Tag</button>
+            </div>
             <div id="file-upload-status" style="margin-top:8px;"></div>
 
             <!-- Profile Note Input Area (hidden by default) -->
@@ -176,6 +195,24 @@
                 <button id="back-to-main-from-settings">← Back to Main</button>
             </div>
             
+            <!-- Tag Management -->
+            <div class="settings-section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3>🏷️ Manage Tags</h3>
+                        <div id="tags-count" class="tags-count">Loading tags...</div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <button id="create-tag-btn" class="primary-btn">+ Create Tag</button>
+                    </div>
+                </div>
+                
+                <!-- Tags List -->
+                <div id="tags-container" class="tags-management-container">
+                    <!-- Tags will be dynamically loaded here -->
+                </div>
+            </div>
+
             <!-- Contacts Management -->
             <div class="settings-section">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -538,6 +575,66 @@
             </div>
         </div>
 
+        <!-- Create Tag Modal -->
+        <div id="create-tag-modal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Create New Tag</h3>
+                    <button class="close-modal-btn" data-modal="create-tag-modal">×</button>
+                </div>
+                
+                <div class="modal-section">
+                    <div class="form-group">
+                        <label for="tag-name">Tag Name</label>
+                        <input type="text" id="tag-name" placeholder="Enter tag name" maxlength="255">
+                    </div>
+                    <div class="form-group">
+                        <label for="tag-color">Color</label>
+                        <input type="color" id="tag-color" value="#97C2FC">
+                    </div>
+                    <div class="form-group">
+                        <label for="tag-description">Description (Optional)</label>
+                        <textarea id="tag-description" placeholder="Enter tag description" rows="3"></textarea>
+                    </div>
+                </div>
+                
+                <div class="modal-actions">
+                    <button id="save-tag-btn" class="primary-btn">Create Tag</button>
+                    <button class="close-modal-btn secondary-btn" data-modal="create-tag-modal">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Tag Confirmation Modal -->
+        <div id="delete-tag-modal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Delete Tag: <span id="delete-tag-name"></span></h3>
+                    <button class="close-modal-btn" data-modal="delete-tag-modal">×</button>
+                </div>
+                
+                <div class="modal-section">
+                    <p id="delete-tag-description">This tag is currently assigned to <span id="affected-contacts-count">0</span> contacts.</p>
+                    
+                    <div id="affected-contacts-list" class="affected-contacts">
+                        <!-- Affected contacts will be listed here -->
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="reassign-tag-select">Optionally, reassign these contacts to another tag:</label>
+                        <select id="reassign-tag-select">
+                            <option value="">No reassignment</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="modal-actions">
+                    <button id="confirm-delete-tag-btn" class="danger-btn">Delete Tag</button>
+                    <button class="close-modal-btn secondary-btn" data-modal="delete-tag-modal">Cancel</button>
+                </div>
+            </div>
+        </div>
+
 
     </div>
 
@@ -548,6 +645,7 @@
     <script src="/static/js/contacts.js"></script>
     <script src="/static/js/settings.js"></script>
     <script src="/static/js/relationship-graph.js"></script>
+    <script src="/static/js/tag-management.js"></script>
     
     <!-- Minimal inline script for remaining functions -->
     <script>
@@ -561,6 +659,11 @@
         document.addEventListener('DOMContentLoaded', () => {
           const search = document.getElementById('contact-search');
           if (search) search.addEventListener('input', handleContactSearch);
+          
+          // Initialize tag management
+          if (window.tagManagement && window.tagManagement.initializeTagManagement) {
+            window.tagManagement.initializeTagManagement();
+          }
           
           // Load tier contacts on page load
           loadTier1Contacts();

@@ -18,7 +18,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from s3_storage import s3_storage
 from google_credentials import setup_google_credentials
-from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship
+from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship, Tag, ContactTag
 from datetime import datetime
 from analytics import RelationshipAnalytics
 from calendar_integration import CalendarIntegration
@@ -4092,6 +4092,335 @@ def create_relationship():
         return jsonify({"error": f"Could not create relationship. It may already exist. Error: {e}"}), 500
     finally:
         session.close()
+
+# ==================== TAG MANAGEMENT API ENDPOINTS ====================
+
+@app.route('/api/tags', methods=['GET'])
+def get_tags():
+    """Get all tags for the current user."""
+    try:
+        session = get_session()
+        try:
+            tags = session.query(Tag).filter_by(user_id=1).order_by(Tag.name.asc()).all()
+            result = [{
+                'id': tag.id,
+                'name': tag.name,
+                'color': tag.color,
+                'description': tag.description,
+                'created_at': tag.created_at.isoformat() if tag.created_at else None,
+                'contact_count': len(tag.contacts)
+            } for tag in tags]
+            return jsonify(result)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Failed to get tags: {e}")
+        return jsonify({"error": f"Failed to get tags: {e}"}), 500
+
+@app.route('/api/tags', methods=['POST'])
+def create_tag():
+    """Create a new tag."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        name = data.get('name', '').strip()
+        color = data.get('color', '#97C2FC')
+        description = data.get('description', '').strip()
+        
+        if not name:
+            return jsonify({"error": "Tag name is required"}), 400
+        
+        session = get_session()
+        try:
+            # Check for duplicate tag name
+            existing = session.query(Tag).filter_by(user_id=1, name=name).first()
+            if existing:
+                return jsonify({"error": "Tag with this name already exists"}), 409
+            
+            new_tag = Tag(
+                name=name,
+                color=color,
+                description=description,
+                user_id=1
+            )
+            session.add(new_tag)
+            session.commit()
+            
+            logger.info(f"Created new tag: '{name}' (ID: {new_tag.id})")
+            return jsonify({
+                "message": f"Tag '{name}' created successfully",
+                "tag_id": new_tag.id,
+                "tag": {
+                    'id': new_tag.id,
+                    'name': new_tag.name,
+                    'color': new_tag.color,
+                    'description': new_tag.description
+                }
+            }), 201
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": f"Failed to create tag: {e}"}), 500
+
+@app.route('/api/tags/<int:tag_id>', methods=['GET'])
+def get_tag(tag_id):
+    """Get a specific tag by ID."""
+    try:
+        session = get_session()
+        try:
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            if not tag:
+                return jsonify({"error": "Tag not found"}), 404
+            
+            result = {
+                'id': tag.id,
+                'name': tag.name,
+                'color': tag.color,
+                'description': tag.description,
+                'created_at': tag.created_at.isoformat() if tag.created_at else None,
+                'contact_count': len(tag.contacts),
+                'contacts': [{'id': c.id, 'full_name': c.full_name} for c in tag.contacts]
+            }
+            return jsonify(result)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Failed to get tag: {e}")
+        return jsonify({"error": f"Failed to get tag: {e}"}), 500
+
+@app.route('/api/tags/<int:tag_id>/contacts', methods=['GET'])
+def get_contacts_for_tag(tag_id):
+    """Get all contacts associated with a specific tag."""
+    try:
+        session = get_session()
+        try:
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            if not tag:
+                return jsonify({"error": "Tag not found"}), 404
+            
+            contacts = [{'id': c.id, 'full_name': c.full_name} for c in tag.contacts]
+            return jsonify(contacts)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Failed to get contacts for tag: {e}")
+        return jsonify({"error": f"Failed to get contacts for tag: {e}"}), 500
+
+@app.route('/api/tags/<int:tag_id>', methods=['PATCH'])
+def update_tag(tag_id):
+    """Update a tag's properties."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        session = get_session()
+        try:
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            if not tag:
+                return jsonify({"error": "Tag not found"}), 404
+            
+            # Update fields if provided
+            if 'name' in data and data['name'].strip():
+                new_name = data['name'].strip()
+                # Check for duplicate name (excluding current tag)
+                existing = session.query(Tag).filter_by(user_id=1, name=new_name).filter(Tag.id != tag_id).first()
+                if existing:
+                    return jsonify({"error": "Tag with this name already exists"}), 409
+                tag.name = new_name
+            
+            if 'color' in data:
+                tag.color = data['color']
+            
+            if 'description' in data:
+                tag.description = data['description'].strip()
+            
+            session.commit()
+            
+            logger.info(f"Updated tag: '{tag.name}' (ID: {tag.id})")
+            return jsonify({
+                "message": f"Tag '{tag.name}' updated successfully",
+                "tag": {
+                    'id': tag.id,
+                    'name': tag.name,
+                    'color': tag.color,
+                    'description': tag.description
+                }
+            })
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": f"Failed to update tag: {e}"}), 500
+
+@app.route('/api/tags/<int:tag_id>', methods=['DELETE'])
+def delete_tag(tag_id):
+    """Delete a tag with optional reassignment of contacts to another tag."""
+    try:
+        data = request.get_json() or {}
+        reassign_to_tag_id = data.get('reassign_to_tag_id')
+        user_id = 1
+        
+        session = get_session()
+        try:
+            # Find the tag to delete
+            tag_to_delete = session.query(Tag).filter_by(id=tag_id, user_id=user_id).first()
+            if not tag_to_delete:
+                return jsonify({"error": "Tag not found"}), 404
+            
+            # Get affected contacts
+            affected_contacts = tag_to_delete.contacts
+            affected_contact_ids = [contact.id for contact in affected_contacts]
+            
+            # Handle reassignment if requested
+            if reassign_to_tag_id and len(affected_contact_ids) > 0:
+                reassign_tag = session.query(Tag).filter_by(id=reassign_to_tag_id, user_id=user_id).first()
+                if not reassign_tag:
+                    return jsonify({"error": "Reassignment tag not found"}), 400
+                
+                # Reassign contacts to the new tag
+                for contact in affected_contacts:
+                    # Check if contact is already associated with the new tag
+                    if reassign_tag not in contact.tags:
+                        contact.tags.append(reassign_tag)
+            
+            # Delete the tag (cascade will handle contact_tags entries)
+            session.delete(tag_to_delete)
+            session.commit()
+            
+            message = f"Tag '{tag_to_delete.name}' successfully deleted."
+            if reassign_to_tag_id and len(affected_contact_ids) > 0:
+                message += f" {len(affected_contact_ids)} contacts reassigned to '{reassign_tag.name}'."
+            elif len(affected_contact_ids) > 0:
+                message += f" {len(affected_contact_ids)} contacts had this tag removed."
+            
+            logger.info(f"Deleted tag: '{tag_to_delete.name}' (ID: {tag_id})")
+            return jsonify({"message": message})
+            
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Failed to delete tag: {e}")
+        return jsonify({"error": f"Failed to delete tag: {e}"}), 500
+
+@app.route('/api/contacts/<int:contact_id>/tags', methods=['GET'])
+def get_contact_tags(contact_id):
+    """Get all tags for a specific contact."""
+    try:
+        session = get_session()
+        try:
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+            
+            tags = [{
+                'id': tag.id,
+                'name': tag.name,
+                'color': tag.color,
+                'description': tag.description
+            } for tag in contact.tags]
+            
+            return jsonify(tags)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Failed to get contact tags: {e}")
+        return jsonify({"error": f"Failed to get contact tags: {e}"}), 500
+
+@app.route('/api/contacts/<int:contact_id>/tags', methods=['POST'])
+def assign_tag_to_contact(contact_id):
+    """Assign a tag to a contact."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        tag_id = data.get('tag_id')
+        if not tag_id:
+            return jsonify({"error": "tag_id is required"}), 400
+        
+        session = get_session()
+        try:
+            # Verify contact exists
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+            
+            # Verify tag exists
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            if not tag:
+                return jsonify({"error": "Tag not found"}), 404
+            
+            # Check if already assigned
+            if tag in contact.tags:
+                return jsonify({"error": "Tag already assigned to this contact"}), 409
+            
+            # Assign the tag
+            contact.tags.append(tag)
+            session.commit()
+            
+            logger.info(f"Assigned tag '{tag.name}' to contact '{contact.full_name}'")
+            return jsonify({
+                "message": f"Tag '{tag.name}' assigned to '{contact.full_name}'",
+                "tag": {
+                    'id': tag.id,
+                    'name': tag.name,
+                    'color': tag.color
+                }
+            })
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": f"Failed to assign tag: {e}"}), 500
+
+@app.route('/api/contacts/<int:contact_id>/tags/<int:tag_id>', methods=['DELETE'])
+def remove_tag_from_contact(contact_id, tag_id):
+    """Remove a tag from a contact."""
+    try:
+        session = get_session()
+        try:
+            # Verify contact exists
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+            
+            # Verify tag exists
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            if not tag:
+                return jsonify({"error": "Tag not found"}), 404
+            
+            # Check if tag is assigned
+            if tag not in contact.tags:
+                return jsonify({"error": "Tag not assigned to this contact"}), 404
+            
+            # Remove the tag
+            contact.tags.remove(tag)
+            session.commit()
+            
+            logger.info(f"Removed tag '{tag.name}' from contact '{contact.full_name}'")
+            return jsonify({
+                "message": f"Tag '{tag.name}' removed from '{contact.full_name}'"
+            })
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": f"Failed to remove tag: {e}"}), 500
 
 # Initialize database on startup (moved to end to ensure all routes are registered first)
 if __name__ == '__main__':

@@ -199,6 +199,11 @@ function showSettingsView() {
         settingsView.style.display = 'block';
         currentView = 'settings';
         console.log('✅ Successfully switched to settings view');
+        
+        // Load tags for management if tag management is available
+        if (window.tagManagement && window.tagManagement.loadAllTags) {
+            window.tagManagement.loadAllTags();
+        }
     } else {
         console.log('❌ Settings view not found in DOM');
     }
@@ -226,6 +231,12 @@ async function loadContactProfile(contactId) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     renderContactProfile(data);
+    
+    // Load contact tags if tag management is available
+    if (window.tagManagement && window.tagManagement.loadContactTags) {
+      window.tagManagement.loadContactTags(contactId);
+    }
+    
     // Preload raw logs
     try {
         // Prefer the detailed renderer if available

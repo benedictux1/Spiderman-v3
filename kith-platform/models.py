@@ -43,6 +43,7 @@ class Contact(Base):
     raw_notes = relationship("RawNote", back_populates="contact", cascade="all, delete-orphan")
     synthesized_entries = relationship("SynthesizedEntry", back_populates="contact", cascade="all, delete-orphan")
     groups = relationship("ContactGroup", secondary="contact_group_memberships", back_populates="members")
+    tags = relationship("Tag", secondary="contact_tags", back_populates="contacts")
 
 class RawNote(Base):
     __tablename__ = 'raw_notes'
@@ -110,6 +111,34 @@ class ContactRelationship(Base):
     label = Column(String(100))
 
     __table_args__ = (UniqueConstraint('user_id', 'source_contact_id', 'target_contact_id', name='_user_source_target_uc'),)
+
+class Tag(Base):
+    __tablename__ = 'tags'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    color = Column(String(7), default='#97C2FC')  # Hex color for tag display
+    description = Column(Text)  # Optional description
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User")
+    contacts = relationship("Contact", secondary="contact_tags", back_populates="tags")
+    
+    __table_args__ = (UniqueConstraint('user_id', 'name', name='_user_tag_name_uc'),)
+
+class ContactTag(Base):
+    __tablename__ = 'contact_tags'
+    
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), primary_key=True)
+    tag_id = Column(Integer, ForeignKey('tags.id', ondelete='CASCADE'), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    contact = relationship("Contact")
+    tag = relationship("Tag")
 
 # Database setup
 def get_database_url():

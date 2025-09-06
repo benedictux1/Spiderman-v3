@@ -70,8 +70,21 @@ logger = logging.getLogger(__name__)
 
 # Configure OpenAI API
 def get_openai_api_key():
-    """Get OpenAI API key from encrypted storage or environment."""
-    # First try encrypted storage
+    """Get OpenAI API key from environment variables (Render) or encrypted storage."""
+    # In production (Render), prioritize environment variables
+    if os.getenv('FLASK_ENV') == 'production' or os.getenv('DATABASE_URL'):
+        # Production: Use environment variable first
+        key = os.getenv('OPENAI_API_KEY', '')
+        if key:
+            # Aggressive cleanup - remove all whitespace, newlines, and control characters
+            key = ''.join(key.split())  # Removes all whitespace including newlines
+            key = key.strip()
+            if key:
+                openai.api_key = key
+                logger.info("🔑 Using OpenAI API key from Render environment variables")
+                return key
+    
+    # Development: Try encrypted storage first, then environment variable
     try:
         from secure_credentials import load_openai_api_key
         encrypted_key, encrypted_model = load_openai_api_key()
@@ -81,6 +94,7 @@ def get_openai_api_key():
             if encrypted_model:
                 global OPENAI_MODEL
                 OPENAI_MODEL = encrypted_model
+            logger.info("🔐 Using OpenAI API key from encrypted storage")
             return encrypted_key.strip()
     except Exception:
         pass  # Fall back to environment variable
@@ -93,6 +107,7 @@ def get_openai_api_key():
         key = key.strip()
     if key and not openai.api_key:
         openai.api_key = key
+        logger.info("🔑 Using OpenAI API key from environment variable")
     return openai.api_key or key
 
 # Set initial API key (cleaned)
@@ -124,6 +139,8 @@ def _openai_chat(**kwargs):
     if hasattr(openai, 'OpenAI'):  # New SDK (>=1.0.0)
         # Always create a fresh client with the current API key to handle encrypted keys
         api_key = get_openai_api_key()
+        if not api_key:
+            raise Exception("OpenAI API key not configured")
         _openai_client_v1 = openai.OpenAI(api_key=api_key)
         return _openai_client_v1.chat.completions.create(**kwargs).choices[0].message.content
     else:  # Old SDK (<=0.28.x)
@@ -1924,8 +1941,9 @@ def process_note_endpoint():
                 "message": "To use AI analysis, please configure your OpenAI API key",
                 "instructions": {
                     "step1": "Get an API key from https://platform.openai.com/api-keys",
-                    "step2": "Set OPENAI_API_KEY environment variable in your Render dashboard",
-                    "step3": "Restart your Render service"
+                    "step2": "Go to your Render dashboard → Environment tab",
+                    "step3": "Add OPENAI_API_KEY with your API key",
+                    "step4": "Restart your Render service"
                 },
                 "mock_available": True
             }), 400
@@ -3121,9 +3139,19 @@ _BOOTSTRAPPED = False
 
 def validate_config():
     missing = []
-    # Only warn for now to avoid blocking local usage
-    if not os.getenv('OPENAI_API_KEY'):
-        logger.warning('OPENAI_API_KEY is not set; AI synthesis may fail.')
+    # Check OpenAI API key configuration
+    api_key = get_openai_api_key()
+    if not api_key:
+        if os.getenv('FLASK_ENV') == 'production' or os.getenv('DATABASE_URL'):
+            logger.error('OPENAI_API_KEY is not set in Render environment variables; AI synthesis will fail.')
+        else:
+            logger.warning('OPENAI_API_KEY is not set; AI synthesis may fail.')
+    else:
+        if os.getenv('FLASK_ENV') == 'production' or os.getenv('DATABASE_URL'):
+            logger.info('✅ OpenAI API key configured from Render environment variables')
+        else:
+            logger.info('✅ OpenAI API key configured from local storage')
+    
     # Telegram creds required for imports
     for key in ['TELEGRAM_API_ID', 'TELEGRAM_API_HASH']:
         if not os.getenv(key):
@@ -3711,7 +3739,7 @@ def run_file_analysis_job(task_id: str, file_id: int):
         # Attempt OpenAI multimodal first (user requested gpt-5)
         used_openai_mm = False
         try:
-            if openai.api_key and OPENAI_VISION_MODEL and not mime_type.startswith('text/') and not used_google_ocr:
+            if get_openai_api_key() and OPENAI_VISION_MODEL and not mime_type.startswith('text/') and not used_google_ocr:
                 import base64
                 with open(file_path, 'rb') as f:
                     b64 = base64.b64encode(f.read()).decode('utf-8')
@@ -3859,8 +3887,10 @@ def transcribe_audio_endpoint():
         try:
             # Prefer new SDK if available
             if hasattr(openai, 'OpenAI'):
-                # Use the encrypted API key
+                # Use the current API key (from environment or encrypted storage)
                 api_key = get_openai_api_key()
+                if not api_key:
+                    raise Exception("OpenAI API key not configured")
                 client = openai.OpenAI(api_key=api_key)
                 
                 with open(tmp_path, 'rb') as f:

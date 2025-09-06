@@ -452,7 +452,7 @@ function wireProfileButtons() {
         
         // Check if it's an OpenAI configuration error
         if (e.message && e.message.includes('OpenAI API key not configured')) {
-          alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Set OPENAI_API_KEY in your Render dashboard\n3. Restart your service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
+          alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Go to your Render dashboard → Environment tab\n3. Add OPENAI_API_KEY with your API key\n4. Restart your Render service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
         } else {
           alert('Failed to analyze note. Check the console for details.');
         }

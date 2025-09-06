@@ -718,7 +718,9 @@
                 
                 // Check if it's an OpenAI configuration error
                 if (error.message && error.message.includes('OpenAI API key not configured')) {
-                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Set OPENAI_API_KEY in your Render dashboard\n3. Restart your service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
+                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Go to your Render dashboard → Environment tab
+3. Add OPENAI_API_KEY with your API key
+4. Restart your Render service\n\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
                 } else {
                     alert('Error analyzing note: ' + error.message);
                 }
@@ -769,7 +771,9 @@
                 
                 // Check if it's an OpenAI configuration error
                 if (error.message && error.message.includes('OpenAI API key not configured')) {
-                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Set OPENAI_API_KEY in your Render dashboard\n3. Restart your service\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
+                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Go to your Render dashboard → Environment tab
+3. Add OPENAI_API_KEY with your API key
+4. Restart your Render service\n\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
                 } else {
                     alert('Error analyzing note: ' + error.message);
                 }

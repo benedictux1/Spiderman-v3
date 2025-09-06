@@ -3498,12 +3498,20 @@ def upload_file_endpoint():
             return jsonify({"error": f"Failed to create file records: {e}"}), 500
         finally:
             session.close()
-        # Schedule job
+        # Schedule job via APScheduler and also start a safe fallback thread
         try:
             scheduler.add_job(id=task_id, func=run_file_analysis_job, trigger='date', args=[task_id, file_id])
+            logger.info(f"📌 Scheduled file analysis job {task_id} for uploaded file {file_id}")
         except Exception as e:
             logger.error(f"Failed to schedule file analysis job: {e}")
             return jsonify({"error": f"Failed to schedule job: {e}"}), 500
+        # Fallback: kick off a background thread in case scheduler isn't running in this dyno
+        try:
+            import threading
+            threading.Thread(target=run_file_analysis_job, args=(task_id, file_id), daemon=True).start()
+            logger.info(f"🧵 Fallback thread started for job {task_id}")
+        except Exception as thread_err:
+            logger.warning(f"Could not start fallback analysis thread: {thread_err}")
         return jsonify({"task_id": task_id, "message": "File uploaded and analysis started."}), 202
     except Exception as e:
         logger.error(f"Upload failed: {e}")

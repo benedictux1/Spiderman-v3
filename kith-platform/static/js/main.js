@@ -73,9 +73,14 @@ function setupEventListeners() {
     const settingsBtn = document.getElementById('settings-btn');
     
     if (settingsBtn) {
-        settingsBtn.addEventListener('click', function() {
+        console.log('✅ Settings button found, adding event listener');
+        settingsBtn.addEventListener('click', function(e) {
+            console.log('🔧 Settings button clicked!');
+            e.preventDefault();
             showSettingsView();
         });
+    } else {
+        console.log('❌ Settings button not found in DOM');
     }
 }
 
@@ -193,21 +198,48 @@ function showSettingsView() {
     const settingsView = document.getElementById('settings-view');
     if (settingsView) {
         console.log('✅ Settings view found, switching views');
-        document.getElementById('main-view').style.display = 'none';
-        document.getElementById('review-view').style.display = 'none';
-        document.getElementById('profile-view').style.display = 'none';
+        
+        // Hide all other views
+        const mainView = document.getElementById('main-view');
+        const reviewView = document.getElementById('review-view');
+        const profileView = document.getElementById('profile-view');
+        const graphView = document.getElementById('graph-view');
+        
+        if (mainView) mainView.style.display = 'none';
+        if (reviewView) reviewView.style.display = 'none';
+        if (profileView) profileView.style.display = 'none';
+        if (graphView) graphView.style.display = 'none';
+        
+        // Show settings view
         settingsView.style.display = 'block';
         currentView = 'settings';
         console.log('✅ Successfully switched to settings view');
         
+        // Set active navigation button
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        const settingsBtn = document.getElementById('settings-btn');
+        if (settingsBtn) settingsBtn.classList.add('active');
+        
         // Load tags for management if tag management is available
         if (window.tagManagement && window.tagManagement.loadAllTags) {
+            console.log('🏷️ Loading tags for management');
             window.tagManagement.loadAllTags();
+        }
+        
+        // Load contacts for management
+        if (typeof loadContacts === 'function') {
+            console.log('👥 Loading contacts for management');
+            loadContacts();
         }
     } else {
         console.log('❌ Settings view not found in DOM');
     }
 }
+
+// Make showSettingsView globally available
+window.showSettingsView = showSettingsView;
 
 // Open a contact profile from anywhere
 function openContactProfile(contactId, contactName) {

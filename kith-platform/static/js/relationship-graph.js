@@ -127,6 +127,7 @@ function setupNavigationControls() {
     const mainViewBtn = document.getElementById('main-view-btn');
     const graphViewBtn = document.getElementById('graph-view-btn');
     const manageGraphBtn = document.getElementById('manage-graph-btn');
+    const settingsBtn = document.getElementById('settings-btn');
     const backToMainBtn = document.getElementById('back-to-main-from-graph');
     
     const mainView = document.getElementById('main-view');
@@ -161,6 +162,28 @@ function setupNavigationControls() {
         showManageGraphModal();
     });
     
+    // Show settings view
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => {
+            hideAllViews();
+            const settingsView = document.getElementById('settings-view');
+            if (settingsView) {
+                settingsView.style.display = 'block';
+                setActiveNavButton('settings-btn');
+                
+                // Load tags for management if tag management is available
+                if (window.tagManagement && window.tagManagement.loadAllTags) {
+                    window.tagManagement.loadAllTags();
+                }
+                
+                // Load contacts for management
+                if (typeof loadContacts === 'function') {
+                    loadContacts();
+                }
+            }
+        });
+    }
+    
     // Back to main from graph
     backToMainBtn.addEventListener('click', () => {
         hideAllViews();
@@ -173,6 +196,8 @@ function setupNavigationControls() {
         graphView.style.display = 'none';
         profileView.style.display = 'none';
         reviewView.style.display = 'none';
+        const settingsView = document.getElementById('settings-view');
+        if (settingsView) settingsView.style.display = 'none';
     }
     
     function setActiveNavButton(activeId) {

@@ -1301,11 +1301,11 @@ You must categorize information into exactly these 20 categories:
 - "Deeper_Insights" - Psychological patterns or deeper understanding
 - "Financial_Situation" - Money, resources, or financial status
 - "Admin_Matters" - Logistical details, contact info, or practical matters
-- "ESTABLISHED_PATTERNS" - Recurring behaviors or habits
-- "CORE_IDENTITY" - Fundamental aspects of who they are
-- "INFORMATION_GAPS" - Missing information or areas to explore
-- "MEMORY_ANCHORS" - Key details to remember about them
-- "POSITIONALITY" - Their role, status, or position in various contexts
+- "Established patterns" - Recurring behaviors or habits
+- "Core identity" - Fundamental aspects of who they are
+- "Information gaps" - Missing information or areas to explore
+- "Memory anchors" - Key details to remember about them
+- "Positionality" - Their role, status, or position in various contexts
 - "Others" - Information that doesn't fit other categories
 
 **CONTEXT PACKAGE:**

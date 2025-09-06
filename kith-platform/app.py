@@ -1797,28 +1797,22 @@ def update_contact(contact_id):
 def get_raw_logs_for_contact(contact_id):
     """Fetches all raw notes for a single contact, ordered by creation date."""
     try:
-        conn = get_db_connection()
+        session = get_session()
         try:
             # Check if contact exists
-            cursor = conn.execute('SELECT id FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
-            if not cursor.fetchone():
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
                 return jsonify({"error": "Contact not found"}), 404
             
             # Get all raw notes for this contact, include tags for details
-            cursor = conn.execute('''
-                SELECT content, created_at, tags 
-                FROM raw_notes 
-                WHERE contact_id = ? 
-                ORDER BY created_at DESC
-            ''', (contact_id,))
+            raw_notes = session.query(RawNote).filter_by(contact_id=contact_id).order_by(RawNote.created_at.desc()).all()
             
-            raw_logs = cursor.fetchall()
             formatted_logs = []
-            for log in raw_logs:
+            for log in raw_notes:
                 details = None
                 try:
-                    if log['tags']:
-                        details = json.loads(log['tags'])
+                    if log.tags:
+                        details = json.loads(log.tags)
                 except Exception:
                     details = None
                 # Compute engine badge info when applicable
@@ -1836,15 +1830,15 @@ def get_raw_logs_for_contact(contact_id):
                 except Exception:
                     engine = None
                 formatted_logs.append({
-                    "content": log['content'],
-                    "date": log['created_at'],
+                    "content": log.content,
+                    "date": log.created_at.isoformat() if log.created_at else None,
                     "details": details,
                     "engine": engine
                 })
             
             return jsonify(formatted_logs)
         finally:
-            conn.close()
+            session.close()
             
     except Exception as e:
         logger.error(f"Could not retrieve raw logs: {e}")
@@ -2005,31 +1999,44 @@ def save_synthesis_endpoint():
         if not contact_id or not synthesis_data:
             return jsonify({"error": "Missing required data"}), 400
 
+        # Use SQLAlchemy session for database operations
+        session = get_session()
         try:
-            conn = get_db_connection()
-            try:
-                # Log the raw note with full details
-                if isinstance(raw_note_text, str) and raw_note_text.strip():
-                    tags_obj = {
-                        "type": "manual_note",
-                        "raw_note": raw_note_text.strip(),
-                        "categorized_updates": synthesis_data.get('categorized_updates', [])
-                    }
-                    conn.execute(
-                        'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
-                        (contact_id, 'Manual note analyzed and saved', json.dumps(tags_obj), datetime.now().isoformat())
-                    )
+            # Verify contact exists
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
 
-                # Save synthesized entries
-                for category_data in synthesis_data.get('categorized_updates', []):
-                    for detail in category_data.get('details', []):
-                        conn.execute(
-                            'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
-                            (contact_id, category_data['category'], detail)
-                        )
-                conn.commit()
-            finally:
-                conn.close()
+            # Log the raw note with full details
+            if isinstance(raw_note_text, str) and raw_note_text.strip():
+                tags_obj = {
+                    "type": "manual_note",
+                    "raw_note": raw_note_text.strip(),
+                    "categorized_updates": synthesis_data.get('categorized_updates', [])
+                }
+                raw_note = RawNote(
+                    contact_id=contact_id,
+                    content='Manual note analyzed and saved',
+                    tags=json.dumps(tags_obj)
+                )
+                session.add(raw_note)
+
+            # Save synthesized entries
+            for category_data in synthesis_data.get('categorized_updates', []):
+                for detail in category_data.get('details', []):
+                    synthesized_entry = SynthesizedEntry(
+                        contact_id=contact_id,
+                        category=category_data['category'],
+                        content=detail
+                    )
+                    session.add(synthesized_entry)
+            
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
             # Audit logging
             try:
@@ -2068,55 +2075,9 @@ def save_synthesis_endpoint():
             except Exception:
                 pass
             return jsonify({"status": "success", "message": "Analysis saved successfully."})
-        except sqlite3.OperationalError as e:
-            if "no such column: content" in str(e):
-                logger.warning("Schema mismatch detected. Applying on-the-fly migration for 'synthesized_entries' (manual save).")
-                try:
-                    conn = get_db_connection()
-                    try:
-                        conn.execute('ALTER TABLE synthesized_entries ADD COLUMN content TEXT NOT NULL DEFAULT ""')
-                        conn.commit()
-                    finally:
-                        conn.close()
-                    # Retry the operation
-                    conn = get_db_connection()
-                    try:
-                        if isinstance(raw_note_text, str) and raw_note_text.strip():
-                            tags_obj = {
-                                "type": "manual_note",
-                                "raw_note": raw_note_text.strip(),
-                                "categorized_updates": synthesis_data.get('categorized_updates', [])
-                            }
-                            conn.execute(
-                                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
-                                (contact_id, 'Manual note analyzed and saved', json.dumps(tags_obj), datetime.now().isoformat())
-                            )
-                        for category_data in synthesis_data.get('categorized_updates', []):
-                            for detail in category_data.get('details', []):
-                                conn.execute(
-                                    'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
-                                    (contact_id, category_data['category'], detail)
-                                )
-                        conn.commit()
-                    finally:
-                        conn.close()
-                    logger.info("✅ On-the-fly migration successful. Manual analysis saved.")
-                    try:
-                        user_id = 1
-                        if ai_synthesis:
-                            log_audit_event(contact_id, user_id, 'AI_ANALYSIS_CREATED', 'AI_ANALYSIS', None, ai_synthesis, raw_note_text)
-                        if ai_synthesis and user_edited_synthesis and ai_synthesis != user_edited_synthesis:
-                            log_audit_event(contact_id, user_id, 'SYNTHESIS_EDITED', 'MANUAL_USER', ai_synthesis, user_edited_synthesis, None)
-                        if not ai_synthesis and not user_edited_synthesis:
-                            log_audit_event(contact_id, user_id, 'NOTE_ADDED', 'MANUAL_USER', None, synthesis_data, raw_note_text)
-                    except Exception:
-                        pass
-                    return jsonify({"status": "success", "message": "Analysis saved successfully after migration."})
-                except Exception as retry_e:
-                    logger.error(f"❌ Error saving manual analysis even after migration attempt: {retry_e}")
-                    return jsonify({"error": f"Database migration failed: {retry_e}"}), 500
-            else:
-                raise e  # Re-raise other operational errors
+        except Exception as e:
+            logger.error(f"Failed to save analysis: {e}")
+            return jsonify({"error": f"Failed to save analysis: {e}"}), 500
 
     except Exception as e:
         logger.error(f"Failed to save analysis: {e}")
@@ -2249,23 +2210,37 @@ def process_transcript_endpoint():
         normalized = normalize_ai_output(ai_json_response)
 
         # Auto-save the analysis and log raw transcript + AI output
+        session = get_session()
         try:
-            with get_db_connection() as conn:
-                for category_data in normalized.get('categorized_updates', []):
-                    for detail in category_data.get('details', []):
-                        conn.execute(
-                            'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
-                            (contact_id, category_data['category'], detail)
-                        )
-                # Log raw transcript with categorized result
-                tags_obj = {
-                    "type": "telegram_sync",
-                    "transcript": transcript,
-                    "categorized_updates": normalized.get('categorized_updates', [])
-                }
-                conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
-                    contact_id, 'Telegram transcript processed and saved', json.dumps(tags_obj), datetime.now().isoformat()
-                ))
+            # Verify contact exists
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+
+            # Save synthesized entries
+            for category_data in normalized.get('categorized_updates', []):
+                for detail in category_data.get('details', []):
+                    synthesized_entry = SynthesizedEntry(
+                        contact_id=contact_id,
+                        category=category_data['category'],
+                        content=detail
+                    )
+                    session.add(synthesized_entry)
+            
+            # Log raw transcript with categorized result
+            tags_obj = {
+                "type": "telegram_sync",
+                "transcript": transcript,
+                "categorized_updates": normalized.get('categorized_updates', [])
+            }
+            raw_note = RawNote(
+                contact_id=contact_id,
+                content='Telegram transcript processed and saved',
+                tags=json.dumps(tags_obj)
+            )
+            session.add(raw_note)
+            
+            session.commit()
  
             logger.info(f"✅ Successfully processed and saved transcript for contact {contact_id}")
             try:
@@ -2278,36 +2253,12 @@ def process_transcript_endpoint():
                 "message": "Transcript processed and saved successfully",
                 "analysis": normalized
             })
-        except sqlite3.OperationalError as e:
-            if "no such column: content" in str(e):
-                try:
-                    with get_db_connection() as conn:
-                        conn.execute('ALTER TABLE synthesized_entries ADD COLUMN content TEXT NOT NULL DEFAULT ""')
-                    with get_db_connection() as conn:
-                        for category_data in normalized.get('categorized_updates', []):
-                            for detail in category_data.get('details', []):
-                                conn.execute(
-                                    'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
-                                    (contact_id, category_data['category'], detail)
-                                )
-                        tags_obj = {
-                            "type": "telegram_sync",
-                            "transcript": transcript,
-                            "categorized_updates": normalized.get('categorized_updates', [])
-                        }
-                        conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
-                            contact_id, 'Telegram transcript processed and saved', json.dumps(tags_obj), datetime.now().isoformat()
-                        ))
-                    return jsonify({
-                        "status": "success", 
-                        "message": "Transcript processed and saved successfully after migration.",
-                        "analysis": normalized
-                    })
-                except Exception as retry_e:
-                    logger.error(f"❌ Error processing transcript even after migration attempt: {retry_e}")
-                    return jsonify({"error": f"Database migration failed: {retry_e}"}), 500
-            else:
-                raise e
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to save transcript: {e}")
+            return jsonify({"error": f"Failed to save transcript: {e}"}), 500
+        finally:
+            session.close()
     except Exception as e:
         print(f"❌ Error processing transcript: {e}")
         return jsonify({"error": f"An internal error occurred: {e}"}), 500

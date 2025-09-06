@@ -160,6 +160,34 @@ def init_db():
     try:
         engine = create_engine(database_url)
         Base.metadata.create_all(engine)
+        
+        # For PostgreSQL, ensure sequences are properly set up
+        if is_production:
+            try:
+                from sqlalchemy import text
+                with engine.connect() as conn:
+                    # Fix sequences for all tables with auto-incrementing IDs
+                    tables_with_sequences = ['users', 'contacts', 'raw_notes', 'synthesized_entries', 'tags']
+                    
+                    for table_name in tables_with_sequences:
+                        try:
+                            # Get max ID from table
+                            result = conn.execute(text(f"SELECT COALESCE(MAX(id), 0) FROM {table_name}"))
+                            max_id = result.scalar()
+                            
+                            # Set sequence to max_id + 1
+                            sequence_name = f"{table_name}_id_seq"
+                            conn.execute(text(f"SELECT setval('{sequence_name}', {max_id + 1}, false)"))
+                            print(f"✅ Ensured {sequence_name} is set to {max_id + 1}")
+                            
+                        except Exception as seq_error:
+                            print(f"⚠️  Could not fix sequence for {table_name}: {seq_error}")
+                            continue
+                    
+                    conn.commit()
+            except Exception as seq_fix_error:
+                print(f"⚠️  Sequence fix warning: {seq_fix_error}")
+        
         print(f"✅ Database initialized successfully: {'PostgreSQL' if is_production else 'SQLite'}")
         return engine
     except Exception as e:

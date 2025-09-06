@@ -3455,18 +3455,49 @@ def upload_file_endpoint():
                 # Keep using local file_path
         
         mime_type = file.mimetype or 'application/octet-stream'
-        # Create DB records
+        # Create DB records using SQLAlchemy
         task_id = str(uuid.uuid4())
-        with with_write_connection() as conn:
-            conn.execute(
-                'INSERT OR REPLACE INTO import_tasks (id, user_id, contact_id, task_type, status, progress, status_message) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                (task_id, 1, contact_id, 'file_analysis', 'pending', 0, 'Queued for analysis')
+        session = get_session()
+        try:
+            # Verify contact exists
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+            
+            # Create import task record
+            from models import ImportTask, UploadedFile
+            import_task = ImportTask(
+                id=task_id,
+                user_id=1,
+                contact_id=contact_id,
+                task_type='file_analysis',
+                status='pending',
+                progress=0,
+                status_message='Queued for analysis'
             )
-            cur = conn.execute(
-                'INSERT INTO uploaded_files (contact_id, user_id, original_filename, stored_filename, file_path, file_type, file_size_bytes, analysis_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                (contact_id, 1, original_filename, stored_filename, file_path, mime_type, size_bytes, task_id)
+            session.add(import_task)
+            
+            # Create uploaded file record
+            uploaded_file = UploadedFile(
+                contact_id=contact_id,
+                user_id=1,
+                original_filename=original_filename,
+                stored_filename=stored_filename,
+                file_path=file_path,
+                file_type=mime_type,
+                file_size_bytes=size_bytes,
+                analysis_task_id=task_id
             )
-            file_id = cur.lastrowid
+            session.add(uploaded_file)
+            session.commit()
+            
+            file_id = uploaded_file.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to create file records: {e}")
+            return jsonify({"error": f"Failed to create file records: {e}"}), 500
+        finally:
+            session.close()
         # Schedule job
         try:
             scheduler.add_job(id=task_id, func=run_file_analysis_job, trigger='date', args=[task_id, file_id])

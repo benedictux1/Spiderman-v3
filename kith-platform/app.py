@@ -2032,12 +2032,7 @@ def save_synthesis_endpoint():
                     session.add(synthesized_entry)
             
             session.commit()
-        except Exception as e:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
+            
             # Audit logging
             try:
                 user_id = 1
@@ -2074,10 +2069,14 @@ def save_synthesis_endpoint():
                     )
             except Exception:
                 pass
+                
             return jsonify({"status": "success", "message": "Analysis saved successfully."})
         except Exception as e:
+            session.rollback()
             logger.error(f"Failed to save analysis: {e}")
             return jsonify({"error": f"Failed to save analysis: {e}"}), 500
+        finally:
+            session.close()
 
     except Exception as e:
         logger.error(f"Failed to save analysis: {e}")

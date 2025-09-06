@@ -3434,24 +3434,25 @@ def upload_file_endpoint():
         _, ext = os.path.splitext(original_filename)
         stored_filename = f"{uuid.uuid4()}{ext}"
         
-        # Use S3 if available, otherwise local storage
+        # Always save locally first to avoid file object consumption issues
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
+        file.save(file_path)
+        size_bytes = os.path.getsize(file_path)
+        
+        # Try S3 upload if available, but keep local file as fallback
         if s3_storage.is_available():
-            file.seek(0, os.SEEK_END)
-            size_bytes = file.tell()
-            file.seek(0)
-            
-            if s3_storage.upload_file(file, stored_filename):
-                file_path = f"s3://{stored_filename}"  # Store S3 reference
-            else:
-                # Fallback to local storage
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
-                file.save(file_path)
-                size_bytes = os.path.getsize(file_path)
-        else:
-            # Local storage fallback
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
-            file.save(file_path)
-            size_bytes = os.path.getsize(file_path)
+            try:
+                # Read the saved file for S3 upload
+                with open(file_path, 'rb') as local_file:
+                    if s3_storage.upload_file(local_file, stored_filename):
+                        # S3 upload successful, update file_path to S3 reference
+                        file_path = f"s3://{stored_filename}"
+                        logger.info(f"File uploaded to S3: {stored_filename}")
+                    else:
+                        logger.info(f"S3 upload failed, keeping local file: {file_path}")
+            except Exception as s3_error:
+                logger.warning(f"S3 upload failed, keeping local file: {s3_error}")
+                # Keep using local file_path
         
         mime_type = file.mimetype or 'application/octet-stream'
         # Create DB records

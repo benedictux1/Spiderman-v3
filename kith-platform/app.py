@@ -3582,19 +3582,23 @@ def extract_pdf_text(file_path):
 
 def _update_task(task_id: str, status: str, status_message: str = '', progress: int = None, error: str = None):
     try:
-        with with_write_connection() as conn:
-            fields = ["status = ?", "status_message = ?"]
-            params = [status, status_message]
-            if progress is not None:
-                fields.append("progress = ?")
-                params.append(progress)
-            if error is not None:
-                fields.append("error_details = ?")
-                params.append(error)
-            fields.append("completed_at = CURRENT_TIMESTAMP" if status in ['completed', 'failed'] else "completed_at = completed_at")
-            sql = f"UPDATE import_tasks SET {', '.join(fields)} WHERE id = ?"
-            params.append(task_id)
-            conn.execute(sql, tuple(params))
+        session = get_session()
+        try:
+            from models import ImportTask
+            import_task = session.query(ImportTask).filter_by(id=task_id).first()
+            if import_task:
+                import_task.status = status
+                import_task.status_message = status_message
+                if progress is not None:
+                    import_task.progress = progress
+                if error is not None:
+                    import_task.error_details = error
+                if status in ['completed', 'failed']:
+                    import_task.completed_at = datetime.utcnow()
+                session.add(import_task)
+                session.commit()
+        finally:
+            session.close()
     except Exception as e:
         logger.error(f"Failed to update task {task_id}: {e}")
 
@@ -3685,17 +3689,20 @@ def run_file_analysis_job(task_id: str, file_id: int):
     """Perform a simple multimodal analysis with optional Gemini fallback."""
     _update_task(task_id, 'processing', 'Preparing file...')
     try:
-        conn = get_db_connection()
+        # Use SQLAlchemy to get file record
+        session = get_session()
         try:
-            row = conn.execute('SELECT * FROM uploaded_files WHERE id = ?', (file_id,)).fetchone()
+            from models import UploadedFile
+            uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
+            if not uploaded_file:
+                _update_task(task_id, 'failed', 'File record not found')
+                return
+            
+            file_path = uploaded_file.file_path
+            mime_type = uploaded_file.file_type
+            contact_id = uploaded_file.contact_id
         finally:
-            conn.close()
-        if not row:
-            _update_task(task_id, 'failed', 'File record not found')
-            return
-        file_path = row['file_path']
-        mime_type = row['file_type']
-        contact_id = row['contact_id']
+            session.close()
         extracted_text = ''
         used_google_ocr = False
         # Google Vision OCR for images and PDFs if enabled (STAGE 1: Text Extraction)
@@ -3815,14 +3822,33 @@ def run_file_analysis_job(task_id: str, file_id: int):
             except Exception as fe:
                 extracted_text = f"[Failed to read file: {fe}]"
         _update_task(task_id, 'processing', 'Creating note...')
-        # Store raw note
-        with with_write_connection() as conn:
-            cur = conn.execute(
-                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
-                (contact_id, f"--- Analysis of uploaded file ---\n{extracted_text}", json.dumps({"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini}), datetime.now().isoformat())
+        # Store raw note using SQLAlchemy
+        session = get_session()
+        try:
+            from models import RawNote, UploadedFile
+            # Create raw note
+            raw_note = RawNote(
+                contact_id=contact_id,
+                content=f"--- Analysis of uploaded file ---\n{extracted_text}",
+                tags=json.dumps({"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini})
             )
-            new_note_id = cur.lastrowid
-            conn.execute('UPDATE uploaded_files SET generated_raw_note_id = ? WHERE id = ?', (new_note_id, file_id))
+            session.add(raw_note)
+            session.flush()  # Get the ID without committing
+            
+            # Update uploaded file with raw note ID
+            uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
+            if uploaded_file:
+                uploaded_file.generated_raw_note_id = raw_note.id
+                session.add(uploaded_file)
+            
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to save raw note: {e}")
+            _update_task(task_id, 'failed', f'Failed to save raw note: {e}')
+            return
+        finally:
+            session.close()
         _update_task(task_id, 'processing', 'STAGE 2: OpenAI categorization and analysis...', progress=90)
         # STAGE 2: Send extracted text to OpenAI for intelligent categorization and analysis
         try:

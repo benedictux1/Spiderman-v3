@@ -38,13 +38,22 @@ function setupTagEventListeners() {
     const saveTagBtn = document.getElementById('save-tag-btn');
     const confirmDeleteTagBtn = document.getElementById('confirm-delete-tag-btn');
 
+    console.log('🔍 Tag management buttons found:', {
+        createTagBtn: !!createTagBtn,
+        saveTagBtn: !!saveTagBtn,
+        confirmDeleteTagBtn: !!confirmDeleteTagBtn
+    });
+
     if (createTagBtn) {
+        console.log('✅ Adding event listener to create-tag-btn');
         createTagBtn.addEventListener('click', showCreateTagModal);
     }
     if (saveTagBtn) {
+        console.log('✅ Adding event listener to save-tag-btn');
         saveTagBtn.addEventListener('click', createTag);
     }
     if (confirmDeleteTagBtn) {
+        console.log('✅ Adding event listener to confirm-delete-tag-btn');
         confirmDeleteTagBtn.addEventListener('click', confirmDeleteTag);
     }
 
@@ -286,24 +295,33 @@ async function removeTagFromContact(tagId) {
 
 // Show create tag modal
 function showCreateTagModal() {
+    console.log('🏷️ showCreateTagModal() called');
     const modal = document.getElementById('create-tag-modal');
     if (modal) {
+        console.log('✅ Create tag modal found, showing modal');
         modal.style.display = 'flex';
         
         // Reset form
         document.getElementById('tag-name').value = '';
         document.getElementById('tag-color').value = '#97C2FC';
         document.getElementById('tag-description').value = '';
+    } else {
+        console.log('❌ Create tag modal not found in DOM');
     }
 }
 
 // Create a new tag
 async function createTag() {
+    console.log('🏷️ createTag() function called');
+    
     const name = document.getElementById('tag-name').value.trim();
     const color = document.getElementById('tag-color').value;
     const description = document.getElementById('tag-description').value.trim();
 
+    console.log('📝 Tag data:', { name, color, description });
+
     if (!name) {
+        console.log('❌ Tag name is required');
         showToast('Tag name is required', 'error');
         return;
     }
@@ -488,9 +506,13 @@ function editTag(tag) {
 
 // Close modal
 function closeModal(modalId) {
+    console.log('🚪 closeModal() called with modalId:', modalId);
     const modal = document.getElementById(modalId);
     if (modal) {
+        console.log('✅ Modal found, hiding modal');
         modal.style.display = 'none';
+    } else {
+        console.log('❌ Modal not found:', modalId);
     }
 }
 
@@ -511,12 +533,13 @@ function escapeHtml(text) {
 
 // Utility function to show toast messages
 function showToast(message, type = 'info') {
+    console.log(`🍞 Toast: ${type.toUpperCase()} - ${message}`);
     // Use existing toast functionality if available
     if (window.showToast) {
         window.showToast(message, type);
     } else {
         // Fallback to alert
-        alert(message);
+        alert(`${type.toUpperCase()}: ${message}`);
     }
 }
 
@@ -532,3 +555,6 @@ window.tagManagement = {
     assignTagToContact,
     removeTagFromContact
 };
+
+// Make createTag globally available for onclick fallback
+window.createTag = createTag;

@@ -535,7 +535,7 @@ function escapeHtml(text) {
 function showToast(message, type = 'info') {
     console.log(`🍞 Toast: ${type.toUpperCase()} - ${message}`);
     // Use existing toast functionality if available
-    if (window.showToast) {
+    if (window.showToast && window.showToast !== showToast) {
         window.showToast(message, type);
     } else {
         // Fallback to alert

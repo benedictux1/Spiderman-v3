@@ -3512,21 +3512,24 @@ def upload_file_endpoint():
 @app.route('/api/files/status/<task_id>', methods=['GET'])
 def get_file_task_status(task_id: str):
     try:
-        conn = get_db_connection()
-        cur = conn.execute('SELECT * FROM import_tasks WHERE id = ?', (task_id,))
-        row = cur.fetchone()
-        conn.close()
-        if not row:
-            return jsonify({"error": "Task not found"}), 404
-        return jsonify({
-            "task_id": row['id'],
-            "status": row['status'],
-            "progress": row['progress'],
-            "status_message": row['status_message'],
-            "error_details": row['error_details'],
-            "created_at": row['created_at'],
-            "completed_at": row['completed_at']
-        })
+        # Use SQLAlchemy for consistent status reads from PostgreSQL
+        session = get_session()
+        try:
+            from models import ImportTask
+            task = session.query(ImportTask).filter_by(id=task_id).first()
+            if not task:
+                return jsonify({"error": "Task not found"}), 404
+            return jsonify({
+                "task_id": task.id,
+                "status": task.status,
+                "progress": task.progress,
+                "status_message": task.status_message,
+                "error_details": task.error_details,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None
+            })
+        finally:
+            session.close()
     except Exception as e:
         return jsonify({"error": f"Failed to get status: {e}"}), 500
 

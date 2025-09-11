@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from s3_storage import s3_storage
 from google_credentials import setup_google_credentials
 from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship, Tag, ContactTag
+from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime
 from analytics import RelationshipAnalytics
 from calendar_integration import CalendarIntegration
@@ -35,6 +36,7 @@ import hashlib
 from uuid import uuid4 as _uuid4
 from flask import g
 from werkzeug.exceptions import HTTPException
+from flask_caching import Cache
 
 # Optional: Google Vision client import (lazy)
 try:
@@ -49,6 +51,21 @@ app = Flask(__name__)
 
 # Enable CORS for production
 CORS(app, origins=["*"])  # Configure with specific origins in production
+
+# --- Caching (Redis preferred, fallback to SimpleCache) ---
+_REDIS_URL = os.getenv('REDIS_URL') or os.getenv('REDIS_INTERNAL_URL')
+if _REDIS_URL:
+    app.config.update({
+        "CACHE_TYPE": "RedisCache",
+        "CACHE_REDIS_URL": _REDIS_URL,
+        "CACHE_DEFAULT_TIMEOUT": 3600,
+    })
+else:
+    app.config.update({
+        "CACHE_TYPE": "SimpleCache",
+        "CACHE_DEFAULT_TIMEOUT": 600,
+    })
+cache = Cache(app)
 
 # Setup Google Cloud credentials
 setup_google_credentials()
@@ -1474,6 +1491,7 @@ def add_no_cache_headers(response):
     return response
 
 @app.route('/api/contacts', methods=['GET'])
+@cache.cached(timeout=600, query_string=True)
 def get_contacts():
     """Get all contacts (uses SQLAlchemy so data persists on Render/PostgreSQL)."""
     try:
@@ -1549,6 +1567,12 @@ def create_contact():
                 session.commit()
 
                 logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
+                # Invalidate caches affected by contact changes
+                try:
+                    cache.delete_memoized(get_contacts)
+                    cache.delete_memoized(get_graph_data)
+                except Exception:
+                    pass
                 return jsonify({
                     "message": f"Contact '{full_name}' created successfully",
                     "contact_id": new_contact.id
@@ -1598,6 +1622,13 @@ def delete_contact(contact_id):
         return jsonify({"error": f"Failed to delete contact: {e}"}), 500
     finally:
         session.close()
+    finally:
+        # Invalidate caches after deletion
+        try:
+            cache.delete_memoized(get_contacts)
+            cache.delete_memoized(get_graph_data)
+        except Exception:
+            pass
 
 @app.route('/api/contacts/bulk-delete', methods=['POST'])
 def bulk_delete_contacts():
@@ -2070,6 +2101,12 @@ def save_synthesis_endpoint():
             except Exception:
                 pass
                 
+            # Invalidate caches after synthesis save
+            try:
+                cache.delete_memoized(get_contacts)
+                cache.delete_memoized(get_graph_data)
+            except Exception:
+                pass
             return jsonify({"status": "success", "message": "Analysis saved successfully."})
         except Exception as e:
             session.rollback()
@@ -3955,6 +3992,7 @@ def transcribe_audio_endpoint():
 # === RELATIONSHIP GRAPH API ENDPOINTS ===
 
 @app.route('/api/graph-data', methods=['GET'])
+@cache.cached(timeout=3600)
 def get_graph_data():
     """
     Fetches and formats all data required to render the relationship graph.
@@ -3963,7 +4001,7 @@ def get_graph_data():
     session = get_session()
     try:
         # 1. Fetch all contacts (nodes)
-        contacts = session.query(Contact).filter_by(user_id=user_id).all()
+        contacts = session.query(Contact).options(selectinload(Contact.tags)).filter_by(user_id=user_id).all()
         nodes_dict = {contact.id: {
             "id": contact.id,
             "label": contact.full_name,
@@ -4145,12 +4183,14 @@ def create_relationship():
 # ==================== TAG MANAGEMENT API ENDPOINTS ====================
 
 @app.route('/api/tags', methods=['GET'])
+@cache.cached(timeout=600)
 def get_tags():
     """Get all tags for the current user."""
     try:
         session = get_session()
         try:
-            tags = session.query(Tag).filter_by(user_id=1).order_by(Tag.name.asc()).all()
+            # Eager load tag.contacts count with selectinload to avoid N+1
+            tags = session.query(Tag).options(selectinload(Tag.contacts)).filter_by(user_id=1).order_by(Tag.name.asc()).all()
             result = [{
                 'id': tag.id,
                 'name': tag.name,
@@ -4198,6 +4238,12 @@ def create_tag():
             session.commit()
             
             logger.info(f"Created new tag: '{name}' (ID: {new_tag.id})")
+            # Invalidate caches: tags list and graph
+            try:
+                cache.delete_memoized(get_tags)
+                cache.delete_memoized(get_graph_data)
+            except Exception:
+                pass
             return jsonify({
                 "message": f"Tag '{name}' created successfully",
                 "tag_id": new_tag.id,
@@ -4292,6 +4338,12 @@ def update_tag(tag_id):
             session.commit()
             
             logger.info(f"Updated tag: '{tag.name}' (ID: {tag.id})")
+            # Invalidate caches: tags list and graph
+            try:
+                cache.delete_memoized(get_tags)
+                cache.delete_memoized(get_graph_data)
+            except Exception:
+                pass
             return jsonify({
                 "message": f"Tag '{tag.name}' updated successfully",
                 "tag": {
@@ -4351,6 +4403,12 @@ def delete_tag(tag_id):
                 message += f" {len(affected_contact_ids)} contacts had this tag removed."
             
             logger.info(f"Deleted tag: '{tag_to_delete.name}' (ID: {tag_id})")
+            # Invalidate caches: tags list and graph
+            try:
+                cache.delete_memoized(get_tags)
+                cache.delete_memoized(get_graph_data)
+            except Exception:
+                pass
             return jsonify({"message": message})
             
         except Exception as e:
@@ -4419,6 +4477,13 @@ def assign_tag_to_contact(contact_id):
             session.commit()
             
             logger.info(f"Assigned tag '{tag.name}' to contact '{contact.full_name}'")
+            # Invalidate caches for this contact and tag lists/graph
+            try:
+                cache.delete_memoized(get_tags)
+                cache.delete_memoized(get_graph_data)
+                cache.delete(f"view/{contact_id}/tags")
+            except Exception:
+                pass
             return jsonify({
                 "message": f"Tag '{tag.name}' assigned to '{contact.full_name}'",
                 "tag": {
@@ -4460,6 +4525,13 @@ def remove_tag_from_contact(contact_id, tag_id):
             session.commit()
             
             logger.info(f"Removed tag '{tag.name}' from contact '{contact.full_name}'")
+            # Invalidate caches
+            try:
+                cache.delete_memoized(get_tags)
+                cache.delete_memoized(get_graph_data)
+                cache.delete(f"view/{contact_id}/tags")
+            except Exception:
+                pass
             return jsonify({
                 "message": f"Tag '{tag.name}' removed from '{contact.full_name}'"
             })

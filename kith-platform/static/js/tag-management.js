@@ -230,30 +230,30 @@ async function assignTagToContact() {
         return;
     }
 
+    // Optimistic UI: update immediately, then attempt API, revert on error
+    const selectedId = parseInt(tagSelect.value);
+    const selected = allTags.find(t => t.id === selectedId);
+    const previous = currentContactTags.slice();
+    if (selected) {
+        currentContactTags = [...currentContactTags, selected];
+        renderContactTags();
+    }
     try {
         const response = await fetch(`/api/contacts/${contactId}/tags`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                tag_id: parseInt(tagSelect.value)
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag_id: selectedId })
         });
-
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
-
         const result = await response.json();
         showToast(result.message, 'success');
-        
-        // Reload contact tags and hide add section
-        await loadContactTags(contactId);
         hideAddTagSection();
-        
     } catch (error) {
+        currentContactTags = previous;
+        renderContactTags();
         console.error('Error assigning tag:', error);
         showToast(`Failed to assign tag: ${error.message}`, 'error');
     }
@@ -267,27 +267,23 @@ async function removeTagFromContact(tagId) {
         return;
     }
 
-    if (!confirm('Are you sure you want to remove this tag from the contact?')) {
-        return;
-    }
-
+    if (!confirm('Are you sure you want to remove this tag from the contact?')) return;
+    // Optimistic UI removal
+    const previous = currentContactTags.slice();
+    currentContactTags = currentContactTags.filter(t => t.id !== tagId);
+    renderContactTags();
     try {
-        const response = await fetch(`/api/contacts/${contactId}/tags/${tagId}`, {
-            method: 'DELETE'
-        });
-
+        const response = await fetch(`/api/contacts/${contactId}/tags/${tagId}`, { method: 'DELETE' });
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
-
         const result = await response.json();
         showToast(result.message, 'success');
-        
-        // Reload contact tags
-        await loadContactTags(contactId);
-        
     } catch (error) {
+        // Revert UI
+        currentContactTags = previous;
+        renderContactTags();
         console.error('Error removing tag:', error);
         showToast(`Failed to remove tag: ${error.message}`, 'error');
     }

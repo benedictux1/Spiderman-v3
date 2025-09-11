@@ -14,21 +14,63 @@ async function loadContacts() {
             return;
         }
         
-        contacts.forEach(contact => {
-            const row = document.createElement('tr');
-            const tierClass = contact.tier === 1 ? 'tier-1' : contact.tier === 2 ? 'tier-2' : 'tier-3';
-            
-            row.innerHTML = `
-                <td><input type="checkbox" name="contact_ids" value="${contact.id}" onchange="updateDeleteSelectedButtonState()"></td>
-                <td><a href="#" class="contact-name" data-contact-id="${contact.id}" data-contact-name="${contact.full_name || 'Unknown'}">${contact.full_name || 'Unknown'}</a></td>
-                <td class="${tierClass}">Tier ${contact.tier}</td>
-                <td>${contact.telegram_username || 'N/A'}</td>
-                <td>
-                    <button class="danger-btn delete-contact-btn" data-contact-id="${contact.id}" data-contact-name="${contact.full_name || 'Unknown'}">Delete</button>
-                </td>
-            `;
-            tbody.appendChild(row);
-        });
+        // Virtualized chunked rendering to keep UI responsive for large lists
+        const CHUNK_SIZE = 100;
+        let index = 0;
+        function renderChunk() {
+            const end = Math.min(index + CHUNK_SIZE, contacts.length);
+            const fragment = document.createDocumentFragment();
+            for (let i = index; i < end; i++) {
+                const contact = contacts[i];
+                const row = document.createElement('tr');
+                const tierClass = contact.tier === 1 ? 'tier-1' : contact.tier === 2 ? 'tier-2' : 'tier-3';
+                row.innerHTML = `
+                    <td><input type="checkbox" name="contact_ids" value="${contact.id}" onchange="updateDeleteSelectedButtonState()"></td>
+                    <td><a href="#" class="contact-name" data-contact-id="${contact.id}" data-contact-name="${contact.full_name || 'Unknown'}">${contact.full_name || 'Unknown'}</a></td>
+                    <td class="${tierClass}">Tier ${contact.tier}</td>
+                    <td>${contact.telegram_username || 'N/A'}</td>
+                    <td>
+                        <button class="danger-btn delete-contact-btn" data-contact-id="${contact.id}" data-contact-name="${contact.full_name || 'Unknown'}">Delete</button>
+                    </td>
+                `;
+                fragment.appendChild(row);
+            }
+            tbody.appendChild(fragment);
+            index = end;
+            if (index < contacts.length) {
+                requestIdleCallback ? requestIdleCallback(renderChunk) : setTimeout(renderChunk, 0);
+            } else {
+                // Attach events after full render
+                tbody.querySelectorAll('a.contact-name').forEach(a => {
+                    a.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const id = parseInt(a.getAttribute('data-contact-id'));
+                        const name = a.getAttribute('data-contact-name') || '';
+                        window.openContactProfile(id, name);
+                    });
+                });
+                tbody.querySelectorAll('button.delete-contact-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const id = parseInt(btn.getAttribute('data-contact-id'));
+                        const name = btn.getAttribute('data-contact-name') || '';
+                        if (!confirm(`Delete contact '${name}'?`)) return;
+                        // Optimistic UI: remove row immediately
+                        const row = btn.closest('tr');
+                        if (row) row.remove();
+                        try {
+                            const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
+                            const out = await res.json();
+                            if (out.error) throw new Error(out.error);
+                        } catch (e) {
+                            // Revert by reloading if deletion failed
+                            await loadContacts();
+                            alert('Failed to delete contact: ' + (e.message || e));
+                        }
+                    });
+                });
+            }
+        }
+        renderChunk();
         
         updateDeleteSelectedButtonState();
     } catch (error) {

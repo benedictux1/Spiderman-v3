@@ -118,6 +118,7 @@ async function initializeGraphView() {
     } catch (error) {
         console.error('Failed to initialize graph:', error);
         window.showToast('Failed to load relationship graph', 'error');
+        console.error('Graph fetch error details:', error);
     }
 }
 

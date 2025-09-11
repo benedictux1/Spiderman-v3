@@ -518,47 +518,7 @@ function enhanceSettingsPage() {
         });
     }
     
-    if (saveContactBtn) {
-        saveContactBtn.addEventListener('click', async () => {
-            const nameInput = document.getElementById('new-contact-name');
-            const tierSelect = document.getElementById('new-contact-tier');
-            
-            const name = nameInput.value.trim();
-            const tier = tierSelect.value;
-            
-            if (!name) {
-                showToast('Please enter a contact name', 'error');
-                nameInput.focus();
-                return;
-            }
-            
-            setLoading(saveContactBtn, true);
-            
-            try {
-                const response = await fetchWithToast('/api/contact', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        full_name: name,
-                        tier: parseInt(tier)
-                    })
-                });
-                
-                showToast(`Contact "${name}" created successfully!`, 'success');
-                closeModal();
-                
-                // Refresh contacts list if the function exists
-                if (typeof loadContacts === 'function') loadContacts();
-                if (typeof loadTier1Contacts === 'function') loadTier1Contacts();
-                if (typeof loadTier2Contacts === 'function') loadTier2Contacts();
-                
-            } catch (error) {
-                // Error already shown by fetchWithToast
-                console.error('Failed to create contact:', error);
-            } finally {
-                setLoading(saveContactBtn, false);
-            }
-        });
-    }
+    // Note: contact creation is handled in settings.js to avoid double-binding
     
     // Enhance bulk actions with confirmations
     const deleteSelectedBtn = document.getElementById('delete-selected-btn');

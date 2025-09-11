@@ -1611,6 +1611,13 @@ def delete_contact(contact_id):
         except Exception:
             pass  # Collection might not exist
         
+        # Invalidate caches after deletion
+        try:
+            cache.delete_memoized(get_contacts)
+            cache.delete_memoized(get_graph_data)
+        except Exception:
+            pass
+
         return jsonify({
             "status": "success",
             "message": f"Contact '{contact_name}' and all associated data deleted successfully."
@@ -1622,13 +1629,6 @@ def delete_contact(contact_id):
         return jsonify({"error": f"Failed to delete contact: {e}"}), 500
     finally:
         session.close()
-    finally:
-        # Invalidate caches after deletion
-        try:
-            cache.delete_memoized(get_contacts)
-            cache.delete_memoized(get_graph_data)
-        except Exception:
-            pass
 
 @app.route('/api/contacts/bulk-delete', methods=['POST'])
 def bulk_delete_contacts():

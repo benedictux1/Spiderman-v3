@@ -30,5 +30,7 @@ services:
         value: gpt-4
       - key: FLASK_ENV
         value: production
+      - key: FLASK_SECRET_KEY
+        sync: false
     healthCheckPath: /health
     autoDeploy: true 

@@ -5887,6 +5887,75 @@ def remove_tag_from_contact(contact_id, tag_id):
     except Exception as e:
         return jsonify({"error": f"Failed to remove tag: {e}"}), 500
 
+# Temporary route to fix database schema (remove after fixing)
+@app.route('/fix-database-schema', methods=['GET'])
+def fix_database_schema():
+    """Temporary route to fix database schema - remove after use"""
+    try:
+        from sqlalchemy import text
+        
+        with get_session() as session:
+            # Check if password_plaintext column exists
+            result = session.execute(text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'users' 
+                AND column_name = 'password_plaintext'
+            """))
+            
+            if result.fetchone():
+                return jsonify({
+                    "status": "success",
+                    "message": "password_plaintext column already exists"
+                })
+            
+            # Add the missing column
+            session.execute(text("""
+                ALTER TABLE users 
+                ADD COLUMN password_plaintext VARCHAR(255)
+            """))
+            session.commit()
+            
+            # Check if we need to create a default admin user
+            result = session.execute(text("SELECT COUNT(*) FROM users"))
+            user_count = result.fetchone()[0]
+            
+            if user_count == 0:
+                from werkzeug.security import generate_password_hash
+                
+                default_admin_user = os.getenv('DEFAULT_ADMIN_USER', 'admin')
+                default_admin_pass = os.getenv('DEFAULT_ADMIN_PASS', 'admin123')
+                hashed = generate_password_hash(default_admin_pass, method='pbkdf2:sha256')
+                
+                session.execute(text("""
+                    INSERT INTO users (username, password_hash, password_plaintext, role, created_at) 
+                    VALUES (:username, :password_hash, :password_plaintext, :role, CURRENT_TIMESTAMP)
+                """), {
+                    'username': default_admin_user,
+                    'password_hash': hashed,
+                    'password_plaintext': default_admin_pass,
+                    'role': 'admin'
+                })
+                session.commit()
+                
+                return jsonify({
+                    "status": "success",
+                    "message": f"Added password_plaintext column and created default admin user: {default_admin_user}",
+                    "admin_username": default_admin_user,
+                    "admin_password": default_admin_pass
+                })
+            else:
+                return jsonify({
+                    "status": "success",
+                    "message": f"Added password_plaintext column. Found {user_count} existing users."
+                })
+                
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Failed to fix database schema: {str(e)}"
+        }), 500
+
 # Initialize database on startup (moved to end to ensure all routes are registered first)
 if __name__ == '__main__':
     bootstrap_database_once()

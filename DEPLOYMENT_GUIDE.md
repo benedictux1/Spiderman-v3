@@ -35,7 +35,12 @@ AWS_REGION=ap-southeast-1
 GOOGLE_APPLICATION_CREDENTIALS_JSON=[Your complete Google Cloud JSON from previous messages]
 ```
 
-**Note**: Use the exact credentials you provided earlier in our conversation.
+#### Admin Dashboard Authentication
+```
+FLASK_SECRET_KEY=[Generate a secure random string for session management]
+```
+
+**Note**: Use the exact credentials you provided earlier in our conversation. For FLASK_SECRET_KEY, you can generate a secure random string using: `python -c "import secrets; print(secrets.token_hex(32))"`
 
 ### Step 3: Deploy
 
@@ -66,6 +71,8 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON=[Your complete Google Cloud JSON from previo
 - **Voice Transcription**: Record voice memos with OpenAI Whisper transcription
 - **Interactive Relationship Graph**: Visualize connections with vis.js
 - **Cloud File Storage**: AWS S3 integration with local fallback
+- **Admin Dashboard**: User management, system monitoring, and administrative controls
+- **Secure Authentication**: Login system with role-based access control
 
 ### ✅ Production Infrastructure
 - **PostgreSQL Database**: Scalable cloud database on Render

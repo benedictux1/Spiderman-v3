@@ -125,3 +125,4 @@ Flask-APScheduler==1.13.0  # Background task scheduling
 gevent==23.9.1  # Async support for Gunicorn
 Flask-Caching==2.3.0  # Caching layer (Redis/SimpleCache)
 redis==5.0.4  # Redis client for Flask-Caching
+Flask-Login==0.6.3  # Session auth management

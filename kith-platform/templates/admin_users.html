@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin – Users</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body { background:#0b1020; color:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif; }
+    .container { max-width: 900px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; background: #111832; border-radius: 10px; overflow: hidden; }
+    th, td { padding: 12px 10px; border-bottom: 1px solid #1c2447; text-align: left; }
+    th { background: #0e1530; color: #b7c1ff; font-weight: 600; }
+    tr:hover td { background: #0e1632; }
+    select, button { background:#0d142b; color:#fff; border:1px solid #2a366b; border-radius:8px; padding:8px; }
+    button { background:#4f6cff; border:0; cursor:pointer; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .actions { text-align: right; }
+    .notice { margin: 16px 0; color:#9fb3ff; }
+    .error { color:#ff8080; }
+  </style>
+  <script>
+    async function fetchUsers() {
+      const res = await fetch('/admin/api/users', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load users');
+      const data = await res.json();
+      return data.users || [];
+    }
+    async function updateRole(userId, role) {
+      const res = await fetch(`/admin/api/users/${userId}/role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ role })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({error:'Unknown error'}));
+        throw new Error(err.error || 'Failed to update role');
+      }
+      return res.json();
+    }
+    async function deleteUser(userId, username) {
+      if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone and will delete all their data.`)) {
+        return;
+      }
+      const res = await fetch(`/admin/api/users/${userId}/delete`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({error:'Unknown error'}));
+        throw new Error(err.error || 'Failed to delete user');
+      }
+      return res.json();
+    }
+    async function viewPassword(userId) {
+      const res = await fetch(`/admin/api/users/${userId}/password`, {
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(()=>({error:'Unknown error'}));
+        throw new Error(err.error || 'Failed to get password');
+      }
+      const data = await res.json();
+      alert(`Username: ${data.username}\nPassword: ${data.password_plaintext}\nPassword Hash: ${data.password_hash}`);
+    }
+    async function load() {
+      const tbody = document.querySelector('tbody');
+      const errorEl = document.getElementById('error');
+      try {
+        const users = await fetchUsers();
+        tbody.innerHTML = users.map(u => `
+          <tr>
+            <td>${u.id}</td>
+            <td>${u.username}</td>
+            <td>
+              <div class="row">
+                <select id="role-${u.id}">
+                  <option value="user" ${u.role==='user'?'selected':''}>user</option>
+                  <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
+                </select>
+                <button onclick="onSave(${u.id})">Save</button>
+              </div>
+            </td>
+            <td>
+              <button onclick="viewPassword(${u.id})" style="background:#6c757d; margin-right:4px;">View Password</button>
+              <button onclick="onDelete(${u.id}, '${u.username}')" style="background:#dc3545;">Delete</button>
+            </td>
+            <td>${u.created_at || ''}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        errorEl.textContent = e.message;
+      }
+    }
+    async function onSave(userId) {
+      const select = document.getElementById(`role-${userId}`);
+      const errorEl = document.getElementById('error');
+      errorEl.textContent = '';
+      try {
+        await updateRole(userId, select.value);
+      } catch (e) {
+        errorEl.textContent = e.message;
+      }
+    }
+    async function onDelete(userId, username) {
+      const errorEl = document.getElementById('error');
+      errorEl.textContent = '';
+      try {
+        await deleteUser(userId, username);
+        // Reload the page to refresh the user list
+        load();
+      } catch (e) {
+        errorEl.textContent = e.message;
+      }
+    }
+    window.addEventListener('DOMContentLoaded', load);
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h1>Admin – Users</h1>
+    <div class="notice">Manage users: change roles, view passwords, or delete users and their data.</div>
+    <div id="error" class="error"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Actions</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
+

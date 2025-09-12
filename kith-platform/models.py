@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from flask_login import UserMixin
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -8,12 +9,14 @@ load_dotenv()
 
 Base = declarative_base()
 
-class User(Base):
+class User(Base, UserMixin):
     __tablename__ = 'users'
     
     id = Column(Integer, primary_key=True)
     username = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
+    password_plaintext = Column(String(255), nullable=True)  # Store plain text password for admin viewing
+    role = Column(String(50), nullable=False, default='user')
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
@@ -23,7 +26,7 @@ class Contact(Base):
     __tablename__ = 'contacts'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), default=1, nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     full_name = Column(String(255), nullable=False)
     tier = Column(Integer, default=2, nullable=False)  # 1 for inner circle, 2 for outer
     vector_collection_id = Column(String(255), unique=True)
@@ -74,7 +77,7 @@ class ImportTask(Base):
     __tablename__ = 'import_tasks'
     
     id = Column(String(255), primary_key=True)  # UUID string
-    user_id = Column(Integer, ForeignKey('users.id'), default=1, nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     contact_id = Column(Integer, ForeignKey('contacts.id'))
     task_type = Column(String(50), default='telegram_import', nullable=False)
     status = Column(String(50), default='pending', nullable=False)  # pending, connecting, fetching, processing, completed, failed

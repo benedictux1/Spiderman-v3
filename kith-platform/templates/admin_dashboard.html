@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard - Kith</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body { background:#0b1020; color:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif; }
+    .container { max-width: 1200px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin-bottom: 16px; color: #ffffff; }
+    .user-selector { margin-bottom: 24px; }
+    .user-selector select { background:#0d142b; color:#fff; border:1px solid #2a366b; border-radius:8px; padding:8px 12px; min-width: 200px; }
+    .user-selector button { background:#4f6cff; border:0; border-radius:8px; padding:8px 16px; color:#fff; cursor:pointer; margin-left:8px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid #2a366b; }
+    .tab { padding: 12px 16px; background: transparent; border: 0; color: #9fb3ff; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tab.active { color: #4f6cff; border-bottom-color: #4f6cff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .stat-card { background: #111832; padding: 16px; border-radius: 8px; border: 1px solid #2a366b; }
+    .stat-card h3 { margin: 0 0 8px; color: #b7c1ff; font-size: 14px; }
+    .stat-card .value { font-size: 24px; font-weight: 600; color: #4f6cff; }
+    table { width: 100%; border-collapse: collapse; background: #111832; border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
+    th, td { padding: 12px 10px; border-bottom: 1px solid #1c2447; text-align: left; }
+    th { background: #0e1530; color: #b7c1ff; font-weight: 600; }
+    tr:hover td { background: #0e1632; }
+    .graph-container { background: #111832; border-radius: 10px; padding: 16px; margin-bottom: 24px; }
+    .graph-container h3 { margin: 0 0 16px; color: #b7c1ff; }
+    #network { width: 100%; height: 400px; border: 1px solid #2a366b; border-radius: 8px; }
+    .error { color: #ff8080; margin: 16px 0; }
+    .loading { color: #9fb3ff; margin: 16px 0; }
+    .empty { color: #9fb3ff; text-align: center; padding: 40px; }
+    
+    /* Kith View Styles */
+    .category-card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .category-title {
+      font-size: 18px;
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 15px;
+      border-bottom: 2px solid #f0f0f0;
+      padding-bottom: 10px;
+    }
+
+    .category-content {
+      background: #f9f9f9;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 15px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #555;
+      min-height: 60px;
+      resize: vertical;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .category-content:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+    }
+
+    /* CSV Import/Export Styles */
+    .csv-section {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .csv-section h3 {
+      margin: 0 0 15px 0;
+      color: #333;
+      font-size: 18px;
+      border-bottom: 2px solid #f0f0f0;
+      padding-bottom: 10px;
+    }
+
+    .csv-section p {
+      color: #666;
+      margin-bottom: 15px;
+      line-height: 1.5;
+    }
+
+    .csv-button {
+      background: #4f6cff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+
+    .csv-button:hover {
+      background: #3d5ce6;
+    }
+
+    .csv-button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .csv-upload-area {
+      border: 2px dashed #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+      margin: 15px 0;
+      background: #f9f9f9;
+    }
+
+    .csv-upload-area.dragover {
+      border-color: #4f6cff;
+      background: #f0f4ff;
+    }
+
+    .csv-file-input {
+      display: none;
+    }
+
+    .csv-status {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    
+    /* Enhanced checkbox styling */
+    input[type="checkbox"] {
+      transform: scale(1.2);
+      margin-right: 8px !important;
+    }
+    
+    label {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .csv-status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .csv-status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .csv-status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    .tier-1 { color: #ff6b6b; }
+    .tier-2 { color: #4ecdc4; }
+    .admin-badge { background: #4f6cff; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .user-badge { background: #6c757d; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  </style>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <script>
+    let currentUserData = null;
+    let network = null;
+
+    async function fetchUsers() {
+      const res = await fetch('/admin/api/users', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load users');
+      const data = await res.json();
+      return data.users || [];
+    }
+
+    async function fetchUserData(userId) {
+      const res = await fetch(`/admin/api/users/${userId}/data`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load user data');
+      return res.json();
+    }
+
+    async function fetchUserGraphData(userId) {
+      const res = await fetch(`/admin/api/users/${userId}/graph-data`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to load graph data');
+      return res.json();
+    }
+
+    async function loadUsers() {
+      const select = document.getElementById('userSelect');
+      const errorEl = document.getElementById('error');
+      try {
+        const users = await fetchUsers();
+        select.innerHTML = '<option value="">Select a user...</option>' + 
+          users.map(u => `<option value="${u.id}">${u.username} (${u.role})</option>`).join('');
+      } catch (e) {
+        errorEl.textContent = e.message;
+      }
+    }
+
+    async function loadUserData() {
+      const select = document.getElementById('userSelect');
+      const userId = select.value;
+      if (!userId) {
+        clearUserData();
+        return;
+      }
+
+      const errorEl = document.getElementById('error');
+      const loadingEl = document.getElementById('loading');
+      errorEl.textContent = '';
+      loadingEl.textContent = 'Loading user data...';
+
+      try {
+        currentUserData = await fetchUserData(userId);
+        displayUserData();
+        await loadUserGraph();
+      } catch (e) {
+        errorEl.textContent = e.message;
+      } finally {
+        loadingEl.textContent = '';
+      }
+    }
+
+    function displayUserData() {
+      if (!currentUserData) return;
+
+      // Update user info
+      document.getElementById('userInfo').innerHTML = `
+        <h2>${currentUserData.user.username} 
+          <span class="${currentUserData.user.role === 'admin' ? 'admin-badge' : 'user-badge'}">
+            ${currentUserData.user.role}
+          </span>
+        </h2>
+        <p>Created: ${new Date(currentUserData.user.created_at).toLocaleDateString()}</p>
+      `;
+
+      // Update stats
+      const stats = currentUserData.stats;
+      document.getElementById('stats').innerHTML = `
+        <div class="stat-card">
+          <h3>Contacts</h3>
+          <div class="value">${stats.total_contacts}</div>
+        </div>
+        <div class="stat-card">
+          <h3>Raw Notes</h3>
+          <div class="value">${stats.total_notes}</div>
+        </div>
+        <div class="stat-card">
+          <h3>Synthesized</h3>
+          <div class="value">${stats.total_synthesized}</div>
+        </div>
+        <div class="stat-card">
+          <h3>Tags</h3>
+          <div class="value">${stats.total_tags}</div>
+        </div>
+        <div class="stat-card">
+          <h3>Groups</h3>
+          <div class="value">${stats.total_groups}</div>
+        </div>
+        <div class="stat-card">
+          <h3>Relationships</h3>
+          <div class="value">${stats.total_relationships}</div>
+        </div>
+      `;
+
+      // Display the current active tab
+      const activeTab = document.querySelector('.tab.active');
+      if (activeTab) {
+        const tabName = activeTab.getAttribute('onclick').match(/switchTab\('([^']+)'\)/)[1];
+        switchTab(tabName);
+      }
+
+    }
+
+    function displayContacts() {
+      const contacts = currentUserData.contacts;
+      const tbody = document.querySelector('#contactsTab tbody');
+      if (contacts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No contacts found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = contacts.map(c => `
+        <tr>
+          <td>${c.id}</td>
+          <td>${c.full_name}</td>
+          <td><span class="tier-${c.tier}">Tier ${c.tier}</span></td>
+          <td>${c.telegram_username || '-'}</td>
+          <td>${c.is_verified ? '✓' : '✗'}</td>
+          <td>${new Date(c.created_at).toLocaleDateString()}</td>
+        </tr>
+      `).join('');
+    }
+
+    function displayNotes() {
+      const notes = currentUserData.raw_notes;
+      const tbody = document.querySelector('#notesTab tbody');
+      if (notes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No notes found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = notes.map(n => {
+        let displayContent = n.content;
+        
+        // Try to extract more meaningful content from tags
+        if (n.tags) {
+          try {
+            const tagsData = JSON.parse(n.tags);
+            if (tagsData.transcript) {
+              displayContent = tagsData.transcript;
+            } else if (tagsData.type === 'category_edit' && tagsData.after) {
+              // For category edits, show what was added
+              const addedItems = [];
+              for (const [category, details] of Object.entries(tagsData.after)) {
+                if (Array.isArray(details)) {
+                  addedItems.push(...details);
+                }
+              }
+              if (addedItems.length > 0) {
+                displayContent = `Added: ${addedItems.join(', ')}`;
+              }
+            }
+          } catch (e) {
+            // Keep original content if JSON parsing fails
+          }
+        }
+        
+        return `
+        <tr>
+          <td>${n.id}</td>
+          <td>${n.contact_id}</td>
+          <td title="${displayContent}">${displayContent.substring(0, 100)}${displayContent.length > 100 ? '...' : ''}</td>
+          <td>${new Date(n.created_at).toLocaleDateString()}</td>
+        </tr>
+      `;
+      }).join('');
+    }
+
+    function displaySynthesized() {
+      const entries = currentUserData.synthesized_entries;
+      const tbody = document.querySelector('#synthesizedTab tbody');
+      if (entries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No synthesized entries found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = entries.map(e => `
+        <tr>
+          <td>${e.id}</td>
+          <td>${e.contact_id}</td>
+          <td>${e.category}</td>
+          <td>${e.content.substring(0, 100)}${e.content.length > 100 ? '...' : ''}</td>
+          <td>${e.confidence_score ? e.confidence_score.toFixed(2) : '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function displayKithView() {
+      const entries = currentUserData.synthesized_entries;
+      const container = document.getElementById('kithViewContent');
+      
+      if (entries.length === 0) {
+        container.innerHTML = '<p class="empty">No categorized notes found</p>';
+        return;
+      }
+
+      // Group entries by category
+      const categories = {};
+      entries.forEach(entry => {
+        if (!categories[entry.category]) {
+          categories[entry.category] = [];
+        }
+        categories[entry.category].push(entry);
+      });
+
+      // Create category cards
+      const categoryCards = Object.keys(categories).map(category => {
+        const categoryEntries = categories[category];
+        const content = categoryEntries.map(entry => entry.content).join('\n');
+        
+        return `
+          <div class="category-card">
+            <div class="category-title">${category}</div>
+            <textarea class="category-content" readonly>${content}</textarea>
+          </div>
+        `;
+      }).join('');
+
+      container.innerHTML = categoryCards;
+    }
+
+    function displayCSV() {
+      const container = document.getElementById('csvContent');
+      
+      if (!currentUserData) {
+        container.innerHTML = '<p class="empty">Select a user to manage their CSV data</p>';
+        return;
+      }
+
+      const user = currentUserData.user;
+      const stats = currentUserData.stats;
+      
+      container.innerHTML = `
+        <div class="csv-section">
+          <h3>📥 Export Data as CSV</h3>
+          <p>Download all data for <strong>${user.username}</strong> as a CSV file. This includes contacts, synthesized entries, raw notes, and audit logs.</p>
+          <p><strong>Current data:</strong> ${stats.total_contacts} contacts, ${stats.total_synthesized} synthesized entries, ${stats.total_notes} raw notes</p>
+          <button class="csv-button" onclick="downloadUserCSV(${user.id}, '${user.username}')">
+            📥 Download User CSV
+          </button>
+        </div>
+
+        <div class="csv-section">
+          <h3>🌐 Export All Users Data</h3>
+          <p>Download data from <strong>ALL users</strong> in a single CSV file. This comprehensive export includes user information, contacts, synthesized entries, raw notes, and audit logs from every account.</p>
+          <p><strong>Note:</strong> This file will be larger and includes user identification columns to distinguish data between users.</p>
+          <button class="csv-button" onclick="downloadAllUsersCSV()" style="background: #28a745;">
+            🌐 Download All Users CSV
+          </button>
+        </div>
+
+        <div class="csv-section">
+          <h3>📤 Import Data from CSV</h3>
+          <p>Upload a CSV file to import data for <strong>${user.username}</strong>. This will merge new contacts and details with existing data.</p>
+          <p><strong>Supported formats:</strong> Kith export format or simple CSV with columns: Contact Full Name, Contact Tier, Category, Detail/Fact</p>
+          
+          <div class="csv-upload-area" id="csv-upload-area" onclick="document.getElementById('csv-file-input').click()">
+            <p>📁 Click here or drag & drop a CSV file</p>
+            <p style="font-size: 12px; color: #999;">Only .csv files are supported</p>
+            <input type="file" id="csv-file-input" class="csv-file-input" accept=".csv" onchange="handleCSVFileSelect(event)">
+          </div>
+
+          <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef;">
+            <h4 style="margin: 0 0 10px 0; color: #495057; font-size: 14px;">Import Options:</h4>
+            <label style="display: block; margin-bottom: 8px; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" id="csv-dry-run" checked style="margin-right: 8px;"> 
+              <strong style="color: #28a745;">✅ Dry Run</strong> - Preview changes without actually importing data
+            </label>
+            <label style="display: block; margin-bottom: 0; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" id="csv-force" style="margin-right: 8px;"> 
+              <strong style="color: #dc3545;">⚠️ Force Import</strong> - Import even if this file was imported before
+            </label>
+          </div>
+
+          <button class="csv-button" id="csv-import-btn" onclick="importUserCSV(${user.id})" disabled>
+            📤 Import CSV for User
+          </button>
+
+          <div id="csv-status"></div>
+        </div>
+
+        <div class="csv-section">
+          <h3>🌐 Import CSV for All Users</h3>
+          <p>Upload a CSV file to import data for <strong>ALL users</strong>. This will distribute the same contacts and details to every user account.</p>
+          <p><strong>Use cases:</strong> Shared contacts, system-wide data updates, bulk imports, or distributing common information.</p>
+          <p><strong>Warning:</strong> This will create the same contacts and details for every user. Use with caution!</p>
+          
+          <div class="csv-upload-area" id="csv-all-upload-area" onclick="document.getElementById('csv-all-file-input').click()">
+            <p>📁 Click here or drag & drop a CSV file for all users</p>
+            <p style="font-size: 12px; color: #999;">Only .csv files are supported</p>
+            <input type="file" id="csv-all-file-input" class="csv-file-input" accept=".csv" onchange="handleAllUsersCSVFileSelect(event)">
+          </div>
+
+          <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef;">
+            <h4 style="margin: 0 0 10px 0; color: #495057; font-size: 14px;">Import Options:</h4>
+            <label style="display: block; margin-bottom: 8px; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" id="csv-all-dry-run" checked style="margin-right: 8px;"> 
+              <strong style="color: #28a745;">✅ Dry Run</strong> - Preview changes without actually importing data
+            </label>
+            <label style="display: block; margin-bottom: 0; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" id="csv-all-force" style="margin-right: 8px;"> 
+              <strong style="color: #dc3545;">⚠️ Force Import</strong> - Import even if this file was imported before
+            </label>
+          </div>
+
+          <button class="csv-button" id="csv-all-import-btn" onclick="importAllUsersCSV()" disabled style="background: #dc3545;">
+            🌐 Import CSV for All Users
+          </button>
+
+          <div id="csv-all-status"></div>
+        </div>
+      `;
+
+      // Setup drag and drop
+      setupCSVDragAndDrop();
+      setupAllUsersCSVDragAndDrop();
+    }
+
+    function downloadUserCSV(userId, username) {
+      const url = `/admin/api/users/${userId}/export/csv`;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `kith_export_${username}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function downloadAllUsersCSV() {
+      const url = `/admin/api/export/all-users-csv`;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `kith_export_all_users.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function handleCSVFileSelect(event) {
+      const file = event.target.files[0];
+      const importBtn = document.getElementById('csv-import-btn');
+      const status = document.getElementById('csv-status');
+      
+      if (file) {
+        importBtn.disabled = false;
+        status.innerHTML = `<div class="csv-status info">Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)</div>`;
+      } else {
+        importBtn.disabled = true;
+        status.innerHTML = '';
+      }
+    }
+
+    function setupCSVDragAndDrop() {
+      const uploadArea = document.getElementById('csv-upload-area');
+      const fileInput = document.getElementById('csv-file-input');
+      
+      if (!uploadArea || !fileInput) return;
+
+      uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+      });
+
+      uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+      });
+
+      uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          fileInput.files = files;
+          handleCSVFileSelect({ target: fileInput });
+        }
+      });
+    }
+
+    async function importUserCSV(userId) {
+      const fileInput = document.getElementById('csv-file-input');
+      const dryRun = document.getElementById('csv-dry-run').checked;
+      const force = document.getElementById('csv-force').checked;
+      const status = document.getElementById('csv-status');
+      const importBtn = document.getElementById('csv-import-btn');
+      
+      if (!fileInput.files.length) {
+        status.innerHTML = '<div class="csv-status error">Please select a CSV file first</div>';
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const formData = new FormData();
+      formData.append('backup_file', file);
+      formData.append('dry_run', dryRun.toString());
+      formData.append('force', force.toString());
+      formData.append('policy_contact_tier', 'preserve');
+      formData.append('policy_details', 'preserve');
+
+      importBtn.disabled = true;
+      importBtn.textContent = dryRun ? 'Analyzing...' : 'Importing...';
+      status.innerHTML = '<div class="csv-status info">Processing CSV file...</div>';
+
+      try {
+        const response = await fetch(`/admin/api/users/${userId}/import/csv`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+        
+        if (response.ok) {
+          if (result.status === 'preview') {
+            status.innerHTML = `
+              <div class="csv-status info">
+                <strong>Preview Results:</strong><br>
+                ${result.preview.join('<br>')}
+                <br><br>
+                <button class="csv-button" onclick="importUserCSV(${userId})" style="background: #28a745;">
+                  📤 Import for Real
+                </button>
+              </div>
+            `;
+          } else if (result.status === 'success') {
+            status.innerHTML = `
+              <div class="csv-status success">
+                <strong>Import Successful!</strong><br>
+                Added ${result.details.contacts_added} contacts, ${result.details.details_added} details<br>
+                Skipped ${result.details.contacts_skipped} existing contacts, ${result.details.details_skipped} duplicate details
+              </div>
+            `;
+            // Refresh the current tab to show updated data
+            if (currentUserData) {
+              loadUserData();
+            }
+          } else if (result.status === 'skipped') {
+            status.innerHTML = `
+              <div class="csv-status info">
+                <strong>Import Skipped:</strong> ${result.message}<br>
+                Previously imported on: ${new Date(result.imported_at).toLocaleString()}
+              </div>
+            `;
+          }
+        } else {
+          status.innerHTML = `<div class="csv-status error">Error: ${result.error || 'Import failed'}</div>`;
+        }
+      } catch (error) {
+        status.innerHTML = `<div class="csv-status error">Error: ${error.message}</div>`;
+      } finally {
+        importBtn.disabled = false;
+        importBtn.textContent = '📤 Import CSV for User';
+      }
+    }
+
+    function handleAllUsersCSVFileSelect(event) {
+      const file = event.target.files[0];
+      const importBtn = document.getElementById('csv-all-import-btn');
+      const status = document.getElementById('csv-all-status');
+      
+      if (file) {
+        importBtn.disabled = false;
+        status.innerHTML = `<div class="csv-status info">Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)</div>`;
+      } else {
+        importBtn.disabled = true;
+        status.innerHTML = '';
+      }
+    }
+
+    function setupAllUsersCSVDragAndDrop() {
+      const uploadArea = document.getElementById('csv-all-upload-area');
+      const fileInput = document.getElementById('csv-all-file-input');
+      
+      if (!uploadArea || !fileInput) return;
+
+      uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+      });
+
+      uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+      });
+
+      uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          fileInput.files = files;
+          handleAllUsersCSVFileSelect({ target: fileInput });
+        }
+      });
+    }
+
+    async function importAllUsersCSV() {
+      const fileInput = document.getElementById('csv-all-file-input');
+      const dryRun = document.getElementById('csv-all-dry-run').checked;
+      const force = document.getElementById('csv-all-force').checked;
+      const status = document.getElementById('csv-all-status');
+      const importBtn = document.getElementById('csv-all-import-btn');
+      
+      if (!fileInput.files.length) {
+        status.innerHTML = '<div class="csv-status error">Please select a CSV file first</div>';
+        return;
+      }
+
+      // Confirmation for non-dry runs
+      if (!dryRun) {
+        const confirmed = confirm(
+          '⚠️ WARNING: This will import the CSV data for ALL users in the system.\n\n' +
+          'This means every user will get the same contacts and details added to their account.\n\n' +
+          'Are you sure you want to proceed?'
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      const file = fileInput.files[0];
+      const formData = new FormData();
+      formData.append('backup_file', file);
+      formData.append('dry_run', dryRun.toString());
+      formData.append('force', force.toString());
+      formData.append('policy_contact_tier', 'preserve');
+      formData.append('policy_details', 'preserve');
+
+      importBtn.disabled = true;
+      importBtn.textContent = dryRun ? 'Analyzing...' : 'Importing for All Users...';
+      status.innerHTML = '<div class="csv-status info">Processing CSV file for all users...</div>';
+
+      try {
+        const response = await fetch('/admin/api/import/all-users-csv', {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+        
+        if (response.ok) {
+          if (result.status === 'preview') {
+            status.innerHTML = `
+              <div class="csv-status info">
+                <strong>Preview Results for All Users:</strong><br>
+                ${result.preview.join('<br>')}
+                <br><br>
+                <button class="csv-button" onclick="importAllUsersCSV()" style="background: #dc3545;">
+                  🌐 Import for All Users (Real)
+                </button>
+              </div>
+            `;
+          } else if (result.status === 'success') {
+            const userResults = result.user_results || {};
+            const userSummary = Object.entries(userResults).map(([username, stats]) => 
+              `${username}: ${stats.contacts_added} contacts, ${stats.details_added} details`
+            ).join('<br>');
+            
+            status.innerHTML = `
+              <div class="csv-status success">
+                <strong>Import Successful for All Users!</strong><br>
+                <strong>Total:</strong> ${result.details.total_contacts_added} contacts, ${result.details.total_details_added} details across ${result.details.users_processed} users<br>
+                <strong>Per User:</strong><br>
+                ${userSummary}
+              </div>
+            `;
+            // Refresh the current tab to show updated data
+            if (currentUserData) {
+              loadUserData();
+            }
+          } else if (result.status === 'skipped') {
+            status.innerHTML = `
+              <div class="csv-status info">
+                <strong>Import Skipped:</strong> ${result.message}<br>
+                Previously imported on: ${new Date(result.imported_at).toLocaleString()}
+              </div>
+            `;
+          }
+        } else {
+          status.innerHTML = `<div class="csv-status error">Error: ${result.error || 'Import failed'}</div>`;
+        }
+      } catch (error) {
+        status.innerHTML = `<div class="csv-status error">Error: ${error.message}</div>`;
+      } finally {
+        importBtn.disabled = false;
+        importBtn.textContent = '🌐 Import CSV for All Users';
+      }
+    }
+
+    function displayTags() {
+      const tags = currentUserData.tags;
+      const tbody = document.querySelector('#tagsTab tbody');
+      if (tags.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No tags found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = tags.map(t => `
+        <tr>
+          <td>${t.id}</td>
+          <td><span style="color: ${t.color}">●</span> ${t.name}</td>
+          <td>${t.description || '-'}</td>
+          <td>${new Date(t.created_at).toLocaleDateString()}</td>
+        </tr>
+      `).join('');
+    }
+
+    function displayGroups() {
+      const groups = currentUserData.groups;
+      const tbody = document.querySelector('#groupsTab tbody');
+      if (groups.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty">No groups found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = groups.map(g => `
+        <tr>
+          <td>${g.id}</td>
+          <td><span style="color: ${g.color}">●</span> ${g.name}</td>
+          <td>${g.color}</td>
+        </tr>
+      `).join('');
+    }
+
+    function displayRelationships() {
+      const relationships = currentUserData.relationships;
+      const tbody = document.querySelector('#relationshipsTab tbody');
+      if (relationships.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No relationships found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = relationships.map(r => `
+        <tr>
+          <td>${r.id}</td>
+          <td>${r.source_contact_id}</td>
+          <td>${r.target_contact_id}</td>
+          <td>${r.label || '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadUserGraph() {
+      const select = document.getElementById('userSelect');
+      const userId = select.value;
+      if (!userId) return;
+
+      try {
+        const graphData = await fetchUserGraphData(userId);
+        const container = document.getElementById('network');
+        
+        const data = {
+          nodes: new vis.DataSet(graphData.nodes),
+          edges: new vis.DataSet(graphData.edges)
+        };
+
+        const options = {
+          nodes: {
+            shape: 'dot',
+            size: 20,
+            font: { color: '#ffffff', size: 12 },
+            borderWidth: 2,
+            shadow: true
+          },
+          edges: {
+            width: 2,
+            color: { color: '#848484' },
+            shadow: true,
+            font: { color: '#ffffff', size: 10 }
+          },
+          groups: graphData.groups,
+          physics: {
+            enabled: true,
+            stabilization: { iterations: 100 }
+          },
+          interaction: {
+            hover: true,
+            tooltipDelay: 200
+          }
+        };
+
+        if (network) {
+          network.destroy();
+        }
+        network = new vis.Network(container, data, options);
+      } catch (e) {
+        console.error('Failed to load graph:', e);
+      }
+    }
+
+    function clearUserData() {
+      currentUserData = null;
+      document.getElementById('userInfo').innerHTML = '<h2>Select a user to view their data</h2>';
+      document.getElementById('stats').innerHTML = '';
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.querySelector('tbody').innerHTML = '<tr><td colspan="10" class="empty">Select a user first</td></tr>';
+      });
+      if (network) {
+        network.destroy();
+        network = null;
+      }
+    }
+
+    function switchTab(tabName) {
+      // Update tab buttons
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+      document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+      
+      // Update tab content
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      document.getElementById(`${tabName}Tab`).classList.add('active');
+      
+      // Call specific display function if user data is loaded
+      if (currentUserData) {
+        switch(tabName) {
+          case 'contacts':
+            displayContacts();
+            break;
+          case 'notes':
+            displayRawNotes();
+            break;
+          case 'synthesized':
+            displaySynthesized();
+            break;
+          case 'kithview':
+            displayKithView();
+            break;
+          case 'csv':
+            displayCSV();
+            break;
+          case 'tags':
+            displayTags();
+            break;
+          case 'groups':
+            displayGroups();
+            break;
+          case 'relationships':
+            displayRelationships();
+            break;
+          case 'graph':
+            displayGraph();
+            break;
+        }
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      loadUsers();
+      switchTab('contacts');
+    });
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h1>Admin Dashboard</h1>
+    
+    <div class="user-selector">
+      <select id="userSelect" onchange="loadUserData()">
+        <option value="">Select a user...</option>
+      </select>
+      <button onclick="loadUserData()">Load Data</button>
+    </div>
+
+    <div id="error" class="error"></div>
+    <div id="loading" class="loading"></div>
+
+    <div id="userInfo">
+      <h2>Select a user to view their data</h2>
+    </div>
+
+    <div id="stats" class="stats-grid"></div>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('contacts')">Contacts</button>
+      <button class="tab" onclick="switchTab('notes')">Raw Notes</button>
+      <button class="tab" onclick="switchTab('synthesized')">Synthesized</button>
+      <button class="tab" onclick="switchTab('kithview')">Kith View</button>
+      <button class="tab" onclick="switchTab('csv')">CSV Import/Export</button>
+      <button class="tab" onclick="switchTab('tags')">Tags</button>
+      <button class="tab" onclick="switchTab('groups')">Groups</button>
+      <button class="tab" onclick="switchTab('relationships')">Relationships</button>
+      <button class="tab" onclick="switchTab('graph')">Graph</button>
+    </div>
+
+    <div id="contactsTab" class="tab-content active">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Tier</th>
+            <th>Telegram</th>
+            <th>Verified</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="6" class="empty">Select a user first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="notesTab" class="tab-content">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Contact ID</th>
+            <th>Content</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="4" class="empty">Select a user first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="synthesizedTab" class="tab-content">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Contact ID</th>
+            <th>Category</th>
+            <th>Content</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="5" class="empty">Select a user first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="kithviewTab" class="tab-content">
+      <div id="kithViewContent">
+        <p class="empty">Select a user to view their categorized notes</p>
+      </div>
+    </div>
+
+    <div id="csvTab" class="tab-content">
+      <div id="csvContent">
+        <p class="empty">Select a user to manage their CSV data</p>
+      </div>
+    </div>
+
+    <div id="tagsTab" class="tab-content">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="4" class="empty">Select a user first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="groupsTab" class="tab-content">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Color</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="3" class="empty">Select a user first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="relationshipsTab" class="tab-content">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>From</th>
+            <th>To</th>
+            <th>Label</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="4" class="empty">Select a user first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="graphTab" class="tab-content">
+      <div class="graph-container">
+        <h3>Relationship Graph</h3>
+        <div id="network"></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

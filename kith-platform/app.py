@@ -37,6 +37,9 @@ from uuid import uuid4 as _uuid4
 from flask import g
 from werkzeug.exceptions import HTTPException
 from flask_caching import Cache
+from flask_login import LoginManager, login_user, logout_user, current_user, login_required
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
 # Optional: Google Vision client import (lazy)
 try:
@@ -48,6 +51,9 @@ except Exception:
 # --- INITIALIZATION ---
 load_dotenv()
 app = Flask(__name__)
+
+# Secret key for session management (prefer env var, fallback to generated)
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY') or hashlib.sha256(os.urandom(32)).hexdigest()
 
 # Enable CORS for production
 CORS(app, origins=["*"])  # Configure with specific origins in production
@@ -66,6 +72,974 @@ else:
         "CACHE_DEFAULT_TIMEOUT": 600,
     })
 cache = Cache(app)
+
+# --- Flask-Login Setup ---
+login_manager = LoginManager()
+login_manager.init_app(app)
+
+@login_manager.user_loader
+def load_user(user_id):
+    try:
+        session = get_session()
+        try:
+            return session.get(User, int(user_id))
+        finally:
+            session.close()
+    except Exception:
+        return None
+
+login_manager.login_view = 'login_page'
+
+@login_manager.unauthorized_handler
+def _unauthorized():
+    # For API calls, return JSON; for browser, simple redirect
+    if request.path.startswith('/api') or request.path.startswith('/admin/api'):
+        return jsonify({"error": "Authentication required"}), 401
+    from flask import redirect
+    return redirect('/login')
+
+# --- Admin decorator ---
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or getattr(current_user, 'role', 'user') != 'admin':
+            return jsonify({"error": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json(force=True)
+        username = (data.get('username') or '').strip()
+        password = data.get('password') or ''
+        if not username or not password:
+            return jsonify({"error": "Username and password are required"}), 400
+        session = get_session()
+        try:
+            existing = session.query(User).filter_by(username=username).first()
+            if existing:
+                return jsonify({"error": "Username already exists"}), 409
+            hashed = generate_password_hash(password, method='pbkdf2:sha256')
+            # First user becomes admin if no users exist
+            existing_count = session.query(User).count()
+            role = 'admin' if existing_count == 0 else 'user'
+            user = User(username=username, password_hash=hashed, password_plaintext=password, role=role)
+            session.add(user)
+            session.commit()
+            return jsonify({"message": "User registered successfully", "user": {"id": user.id, "username": user.username, "role": user.role}}), 201
+        except Exception as e:
+            session.rollback()
+            return jsonify({"error": f"Registration failed: {e}"}), 500
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json(force=True)
+        username = (data.get('username') or '').strip()
+        password = data.get('password') or ''
+        if not username or not password:
+            return jsonify({"error": "Username and password are required"}), 400
+        session = get_session()
+        try:
+            user = session.query(User).filter_by(username=username).first()
+            if user and check_password_hash(user.password_hash, password):
+                login_user(user)
+                return jsonify({"message": "Login successful", "user": {"id": user.id, "username": user.username, "role": user.role}})
+            return jsonify({"error": "Invalid credentials"}), 401
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/logout', methods=['POST'])
+@login_required
+def logout():
+    try:
+        logout_user()
+        return jsonify({"message": "Logout successful"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/session', methods=['GET'])
+@login_required
+def get_user_session():
+    try:
+        return jsonify({"user": {"id": current_user.id, "username": current_user.username, "role": current_user.role}})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --- Admin endpoints ---
+@app.route('/admin/api/users', methods=['GET'])
+@login_required
+@admin_required
+def admin_get_all_users():
+    session = get_session()
+    try:
+        users = session.query(User).order_by(User.id.asc()).all()
+        return jsonify({"users": [{"id": u.id, "username": u.username, "role": u.role, "created_at": u.created_at.isoformat() if u.created_at else None} for u in users]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/admin/api/users/<int:user_id>/contacts', methods=['GET'])
+@login_required
+@admin_required
+def admin_get_contacts_for_user(user_id):
+    session = get_session()
+    try:
+        contacts = session.query(Contact).filter_by(user_id=user_id).order_by(Contact.id.asc()).all()
+        return jsonify({"contacts": [{"id": c.id, "full_name": c.full_name, "tier": c.tier} for c in contacts]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/admin/api/users/<int:user_id>/role', methods=['POST'])
+@login_required
+@admin_required
+def admin_update_user_role(user_id):
+    try:
+        data = request.get_json(force=True)
+        new_role = (data.get('role') or '').strip()
+        if new_role not in ('user', 'admin'):
+            return jsonify({"error": "Invalid role. Must be 'user' or 'admin'."}), 400
+        session = get_session()
+        try:
+            user = session.get(User, user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            # No restriction on self-demotion/promotion for now; can add guard if desired
+            user.role = new_role
+            session.commit()
+            return jsonify({"message": "Role updated", "user": {"id": user.id, "username": user.username, "role": user.role}})
+        except Exception as e:
+            session.rollback()
+            return jsonify({"error": f"Failed to update role: {e}"}), 500
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/admin/api/users/<int:user_id>/delete', methods=['DELETE'])
+@login_required
+@admin_required
+def admin_delete_user(user_id):
+    """Delete a user and all their associated data (admin only)."""
+    try:
+        session = get_session()
+        try:
+            user = session.get(User, user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            
+            # Prevent admin from deleting themselves
+            if user.id == current_user.id:
+                return jsonify({"error": "Cannot delete your own account"}), 400
+            
+            username = user.username
+            # Delete user and all associated data (cascade will handle related records)
+            session.delete(user)
+            session.commit()
+            
+            return jsonify({"success": True, "message": f"User {username} deleted successfully"})
+        except Exception as e:
+            session.rollback()
+            return jsonify({"error": f"Failed to delete user: {e}"}), 500
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/admin/api/users/<int:user_id>/password', methods=['GET'])
+@login_required
+@admin_required
+def admin_get_user_password(user_id):
+    """Get a user's password for admin viewing (admin only)."""
+    try:
+        session = get_session()
+        try:
+            user = session.get(User, user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            
+            return jsonify({
+                "user_id": user.id,
+                "username": user.username,
+                "password_hash": user.password_hash,
+                "password_plaintext": user.password_plaintext or "Not available (legacy user)"
+            })
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/admin/users', methods=['GET'])
+@login_required
+@admin_required
+def admin_users_page():
+    return render_template('admin_users.html')
+
+@app.route('/admin/dashboard', methods=['GET'])
+@login_required
+@admin_required
+def admin_dashboard():
+    return render_template('admin_dashboard.html')
+
+@app.route('/admin/api/users/<int:user_id>/data', methods=['GET'])
+@login_required
+@admin_required
+def admin_get_user_data(user_id):
+    session = get_session()
+    try:
+        # Get user info
+        user = session.get(User, user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Get contacts with relationships
+        contacts = session.query(Contact).filter_by(user_id=user_id).all()
+        contacts_data = []
+        for contact in contacts:
+            contact_dict = {
+                "id": contact.id,
+                "full_name": contact.full_name,
+                "tier": contact.tier,
+                "created_at": contact.created_at.isoformat() if contact.created_at else None,
+                "updated_at": contact.updated_at.isoformat() if contact.updated_at else None,
+                "telegram_username": contact.telegram_username,
+                "telegram_handle": contact.telegram_handle,
+                "is_verified": contact.is_verified,
+                "is_premium": contact.is_premium
+            }
+            contacts_data.append(contact_dict)
+        
+        # Get raw notes
+        raw_notes = session.query(RawNote).join(Contact).filter(Contact.user_id == user_id).all()
+        notes_data = []
+        for note in raw_notes:
+            note_dict = {
+                "id": note.id,
+                "contact_id": note.contact_id,
+                "content": note.content,
+                "created_at": note.created_at.isoformat() if note.created_at else None,
+                "tags": note.tags
+            }
+            notes_data.append(note_dict)
+        
+        # Get synthesized entries
+        synthesized = session.query(SynthesizedEntry).join(Contact).filter(Contact.user_id == user_id).all()
+        synthesized_data = []
+        for entry in synthesized:
+            entry_dict = {
+                "id": entry.id,
+                "contact_id": entry.contact_id,
+                "category": entry.category,
+                "content": entry.content,
+                "confidence_score": entry.confidence_score,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None
+            }
+            synthesized_data.append(entry_dict)
+        
+        # Get tags
+        tags = session.query(Tag).filter_by(user_id=user_id).all()
+        tags_data = []
+        for tag in tags:
+            tag_dict = {
+                "id": tag.id,
+                "name": tag.name,
+                "color": tag.color,
+                "description": tag.description,
+                "created_at": tag.created_at.isoformat() if tag.created_at else None
+            }
+            tags_data.append(tag_dict)
+        
+        # Get groups
+        groups = session.query(ContactGroup).filter_by(user_id=user_id).all()
+        groups_data = []
+        for group in groups:
+            group_dict = {
+                "id": group.id,
+                "name": group.name,
+                "color": group.color
+            }
+            groups_data.append(group_dict)
+        
+        # Get relationships
+        relationships = session.query(ContactRelationship).filter_by(user_id=user_id).all()
+        relationships_data = []
+        for rel in relationships:
+            rel_dict = {
+                "id": rel.id,
+                "source_contact_id": rel.source_contact_id,
+                "target_contact_id": rel.target_contact_id,
+                "label": rel.label
+            }
+            relationships_data.append(rel_dict)
+        
+        return jsonify({
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role,
+                "created_at": user.created_at.isoformat() if user.created_at else None
+            },
+            "contacts": contacts_data,
+            "raw_notes": notes_data,
+            "synthesized_entries": synthesized_data,
+            "tags": tags_data,
+            "groups": groups_data,
+            "relationships": relationships_data,
+            "stats": {
+                "total_contacts": len(contacts_data),
+                "total_notes": len(notes_data),
+                "total_synthesized": len(synthesized_data),
+                "total_tags": len(tags_data),
+                "total_groups": len(groups_data),
+                "total_relationships": len(relationships_data)
+            }
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/admin/api/users/<int:user_id>/graph-data', methods=['GET'])
+@login_required
+@admin_required
+def admin_get_user_graph_data(user_id):
+    session = get_session()
+    try:
+        # Get user info
+        user = session.get(User, user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Reuse the existing graph logic but scope to specific user
+        contacts = session.query(Contact).options(selectinload(Contact.tags)).filter_by(user_id=user_id).all()
+        nodes_dict = {contact.id: {
+            "id": contact.id,
+            "label": contact.full_name,
+            "group": None,
+            "tier": contact.tier,
+            "value": 10 + (session.query(SynthesizedEntry).filter_by(contact_id=contact.id).count())
+        } for contact in contacts}
+
+        # Fetch group memberships
+        memberships = session.query(ContactGroupMembership).join(Contact).filter(Contact.user_id == user_id).all()
+        for member in memberships:
+            if member.contact_id in nodes_dict:
+                nodes_dict[member.contact_id]['group'] = member.group_id
+
+        # Fetch relationships
+        relationships = session.query(ContactRelationship).filter_by(user_id=user_id).all()
+        edges = [{
+            "from": rel.source_contact_id,
+            "to": rel.target_contact_id,
+            "label": rel.label,
+            "arrows": "to"
+        } for rel in relationships]
+
+        # Fetch group definitions
+        groups_db = session.query(ContactGroup).filter_by(user_id=user_id).all()
+        group_definitions = {group.id: {
+            "color": group.color,
+            "name": group.name
+        } for group in groups_db}
+
+        # Add "self" node
+        nodes_dict[0] = {"id": 0, "label": f"{user.username} (You)", "group": "self", "fixed": True, "value": 40}
+        group_definitions["self"] = {"color": "#FF6384", "name": "Self"}
+        
+        # Add edges from "You" to all Tier 1 contacts
+        for contact in contacts:
+            if contact.tier == 1:
+                edges.append({"from": 0, "to": contact.id, "length": 150})
+
+        return jsonify({
+            "nodes": list(nodes_dict.values()),
+            "edges": edges,
+            "groups": group_definitions,
+            "user": {
+                "id": user.id,
+                "username": user.username
+            }
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/admin/api/users/<int:user_id>/export/csv', methods=['GET'])
+@login_required
+@admin_required
+def admin_export_user_csv(user_id):
+    """Export a specific user's data as CSV (admin only)."""
+    def generate_csv():
+        output = StringIO()
+        writer = csv.writer(output)
+        # Master header covering all record types
+        header = [
+            'record_type', 'record_id', 'contact_id', 'contact_full_name', 'contact_tier',
+            'category', 'detail_content', 'raw_note_content',
+            'log_event_type', 'log_source', 'log_timestamp', 'log_before_state', 'log_after_state', 'log_raw_input'
+        ]
+        writer.writerow(header)
+        yield output.getvalue(); output.seek(0); output.truncate(0)
+
+        try:
+            with get_db_connection() as conn:
+                # CONTACT rows
+                cur = conn.execute('''
+                    SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = ? ORDER BY id
+                ''', (user_id,))
+                for row in cur:
+                    writer.writerow([
+                        'CONTACT', row['id'], row['id'], row['full_name'], row['tier'],
+                        '', '', '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # SYNTHESIZED_DETAIL rows
+                cur = conn.execute('''
+                    SELECT se.id as se_id, se.contact_id, c.full_name, c.tier, se.category, se.content, se.created_at as created_at
+                    FROM synthesized_entries se
+                    JOIN contacts c ON c.id = se.contact_id
+                    WHERE c.user_id = ?
+                    ORDER BY se.id
+                ''', (user_id,))
+                for row in cur:
+                    writer.writerow([
+                        'SYNTHESIZED_DETAIL', row['se_id'], row['contact_id'], row['full_name'], row['tier'],
+                        row['category'], row['content'], '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # RAW_NOTE rows (include extracted raw content from tags when available)
+                cur = conn.execute('''
+                    SELECT rn.id as rn_id, rn.contact_id, c.full_name, c.tier, rn.content as note_summary, rn.tags, rn.created_at
+                    FROM raw_notes rn
+                    JOIN contacts c ON c.id = rn.contact_id
+                    WHERE c.user_id = ?
+                    ORDER BY rn.id
+                ''', (user_id,))
+                for row in cur:
+                    raw_content = ''
+                    try:
+                        if row['tags']:
+                            t = json.loads(row['tags'])
+                            if isinstance(t, dict):
+                                # Prefer raw_note if present, else transcript for telegram, otherwise stringify tags
+                                raw_content = t.get('raw_note') or t.get('transcript') or ''
+                                if not raw_content:
+                                    raw_content = json.dumps(t, ensure_ascii=False)
+                    except Exception:
+                        raw_content = ''
+                    writer.writerow([
+                        'RAW_NOTE', row['rn_id'], row['contact_id'], row['full_name'], row['tier'],
+                        '', '', raw_content or row['note_summary'] or '', '', '', row['created_at'] or '', '', '', ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                # AUDIT_LOG rows
+                cur = conn.execute('''
+                    SELECT id, contact_id, event_type, source, event_timestamp, before_state, after_state, raw_input
+                    FROM contact_audit_log
+                    WHERE user_id = ?
+                    ORDER BY id
+                ''', (user_id,))
+                for row in cur:
+                    writer.writerow([
+                        'AUDIT_LOG', row['id'], row['contact_id'], '', '',
+                        '', '', '',
+                        row['event_type'] or '', row['source'] or '',
+                        row['event_timestamp'] or '',
+                        row['before_state'] or '', row['after_state'] or '', row['raw_input'] or ''
+                    ])
+                    yield output.getvalue(); output.seek(0); output.truncate(0)
+        except Exception as e:
+            # Surface an error row to the CSV for visibility
+            writer.writerow(['ERROR', '', '', '', '', '', '', '', '', '', '', '', '', str(e)])
+            yield output.getvalue(); output.seek(0); output.truncate(0)
+
+    # Get user info for filename
+    session = get_session()
+    try:
+        user = session.get(User, user_id)
+        username = user.username if user else f"user_{user_id}"
+    finally:
+        session.close()
+    
+    response = Response(generate_csv(), mimetype='text/csv')
+    response.headers.set("Content-Disposition", "attachment", filename=f"kith_export_{username}.csv")
+    return response
+
+@app.route('/admin/api/export/all-users-csv', methods=['GET'])
+@login_required
+@admin_required
+def admin_export_all_users_csv():
+    """Export all users' data as a single CSV file (admin only)."""
+    def generate_csv():
+        output = StringIO()
+        writer = csv.writer(output)
+        # Master header covering all record types with user info
+        header = [
+            'user_id', 'username', 'user_role', 'user_created_at',
+            'record_type', 'record_id', 'contact_id', 'contact_full_name', 'contact_tier',
+            'category', 'detail_content', 'raw_note_content',
+            'log_event_type', 'log_source', 'log_timestamp', 'log_before_state', 'log_after_state', 'log_raw_input'
+        ]
+        writer.writerow(header)
+        yield output.getvalue(); output.seek(0); output.truncate(0)
+
+        try:
+            with get_db_connection() as conn:
+                # Get all users first
+                users_cur = conn.execute('SELECT id, username, role, created_at FROM users ORDER BY id')
+                users = list(users_cur)
+                
+                for user in users:
+                    user_id, username, role, user_created_at = user
+                    
+                    # CONTACT rows for this user
+                    cur = conn.execute('''
+                        SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = ? ORDER BY id
+                    ''', (user_id,))
+                    for row in cur:
+                        writer.writerow([
+                            user_id, username, role, user_created_at,
+                            'CONTACT', row['id'], row['id'], row['full_name'], row['tier'],
+                            '', '', '', '', '', row['created_at'] or '', '', '', ''
+                        ])
+                        yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                    # SYNTHESIZED_DETAIL rows for this user
+                    cur = conn.execute('''
+                        SELECT se.id as se_id, se.contact_id, c.full_name, c.tier, se.category, se.content, se.created_at as created_at
+                        FROM synthesized_entries se
+                        JOIN contacts c ON c.id = se.contact_id
+                        WHERE c.user_id = ?
+                        ORDER BY se.id
+                    ''', (user_id,))
+                    for row in cur:
+                        writer.writerow([
+                            user_id, username, role, user_created_at,
+                            'SYNTHESIZED_DETAIL', row['se_id'], row['contact_id'], row['full_name'], row['tier'],
+                            row['category'], row['content'], '', '', '', row['created_at'] or '', '', '', ''
+                        ])
+                        yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                    # RAW_NOTE rows for this user (include extracted raw content from tags when available)
+                    cur = conn.execute('''
+                        SELECT rn.id as rn_id, rn.contact_id, c.full_name, c.tier, rn.content as note_summary, rn.tags, rn.created_at
+                        FROM raw_notes rn
+                        JOIN contacts c ON c.id = rn.contact_id
+                        WHERE c.user_id = ?
+                        ORDER BY rn.id
+                    ''', (user_id,))
+                    for row in cur:
+                        raw_content = ''
+                        try:
+                            if row['tags']:
+                                t = json.loads(row['tags'])
+                                if isinstance(t, dict):
+                                    # Prefer raw_note if present, else transcript for telegram, otherwise stringify tags
+                                    raw_content = t.get('raw_note') or t.get('transcript') or ''
+                                    if not raw_content:
+                                        raw_content = json.dumps(t, ensure_ascii=False)
+                        except Exception:
+                            raw_content = ''
+                        writer.writerow([
+                            user_id, username, role, user_created_at,
+                            'RAW_NOTE', row['rn_id'], row['contact_id'], row['full_name'], row['tier'],
+                            '', '', raw_content or row['note_summary'] or '', '', '', row['created_at'] or '', '', '', ''
+                        ])
+                        yield output.getvalue(); output.seek(0); output.truncate(0)
+
+                    # AUDIT_LOG rows for this user
+                    cur = conn.execute('''
+                        SELECT id, contact_id, event_type, source, event_timestamp, before_state, after_state, raw_input
+                        FROM contact_audit_log
+                        WHERE user_id = ?
+                        ORDER BY id
+                    ''', (user_id,))
+                    for row in cur:
+                        writer.writerow([
+                            user_id, username, role, user_created_at,
+                            'AUDIT_LOG', row['id'], row['contact_id'], '', '',
+                            '', '', '',
+                            row['event_type'] or '', row['source'] or '',
+                            row['event_timestamp'] or '',
+                            row['before_state'] or '', row['after_state'] or '', row['raw_input'] or ''
+                        ])
+                        yield output.getvalue(); output.seek(0); output.truncate(0)
+        except Exception as e:
+            # Surface an error row to the CSV for visibility
+            writer.writerow(['ERROR', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', str(e)])
+            yield output.getvalue(); output.seek(0); output.truncate(0)
+
+    response = Response(generate_csv(), mimetype='text/csv')
+    response.headers.set("Content-Disposition", "attachment", filename="kith_export_all_users.csv")
+    return response
+
+@app.route('/admin/api/import/all-users-csv', methods=['POST'])
+@login_required
+@admin_required
+def admin_import_all_users_csv():
+    """Import CSV data for all users (admin only)."""
+    try:
+        if 'backup_file' not in request.files:
+            return jsonify({"error": "No backup file provided"}), 400
+        file = request.files['backup_file']
+        if not file or not file.filename.lower().endswith('.csv'):
+            return jsonify({"error": "Invalid file type. Please upload a .csv file."}), 400
+
+        csv_bytes = file.read()
+        # Idempotency: compute file hash
+        import hashlib
+        file_hash = hashlib.sha256(csv_bytes).hexdigest()
+
+        # Options via multipart form fields
+        dry_run = (request.form.get('dry_run', 'false').lower() == 'true')
+        force = (request.form.get('force', 'false').lower() == 'true')
+        # Conflict policy defaults
+        conflict_policy = {
+            'contact_tier': request.form.get('policy_contact_tier', 'preserve'),  # preserve | overwrite
+            'details': request.form.get('policy_details', 'preserve'),            # preserve | append
+        }
+
+        # Check idempotency store unless dry_run or force
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute('SELECT id, created_at FROM file_imports WHERE import_type = ? AND file_hash = ?', ('csv_all_users', file_hash))
+                row = cur.fetchone()
+                if row and not force and not dry_run:
+                    return jsonify({
+                        "status": "skipped",
+                        "message": "This CSV was already imported for all users before (same file hash).",
+                        "import_id": row['id'],
+                        "imported_at": row['created_at']
+                    })
+        except Exception:
+            # Non-fatal: proceed without idempotency if table not available
+            pass
+
+        try:
+            csv_text = csv_bytes.decode('utf-8')
+        except Exception:
+            csv_text = csv_bytes.decode('latin-1')
+
+        result = run_admin_all_users_merge_process(csv_text, options={
+            'dry_run': dry_run,
+            'conflict_policy': conflict_policy,
+            'file_name': file.filename,
+            'file_hash': file_hash
+        })
+
+        # Persist idempotency record on successful non-dry run
+        if not dry_run and result.get('status') == 'success':
+            try:
+                with get_db_connection() as conn:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO file_imports (user_id, import_type, file_name, file_hash, status, stats_json) VALUES (?, ?, ?, ?, ?, ?)',
+                        (0, 'csv_all_users', file.filename, file_hash, 'completed', json.dumps(result.get('details', {})))
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist file import record: {e}")
+
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("Admin import CSV for all users failed")
+        return jsonify({"error": f"Import failed: {e}"}), 500
+
+def run_admin_all_users_merge_process(csv_text: str, options: typing.Optional[dict] = None) -> dict:
+    """Admin version of merge process that imports data for all users."""
+    options = options or {}
+    dry_run: bool = bool(options.get('dry_run', False))
+    conflict_policy: dict = options.get('conflict_policy', {}) or {}
+    contact_tier_policy = (conflict_policy.get('contact_tier') or 'preserve').lower()
+    details_policy = (conflict_policy.get('details') or 'preserve').lower()
+
+    stats = {
+        "users_processed": 0,
+        "total_contacts_added": 0, "total_details_added": 0,
+        "total_contacts_skipped": 0, "total_details_skipped": 0,
+        "rows_total": 0, "rows_contact_processed": 0,
+        "rows_synth_processed": 0, "rows_skipped_unknown_type": 0,
+        "rows_skipped_no_name": 0, "rows_skipped_duplicate": 0
+    }
+    user_results = {}
+
+    reader = csv.DictReader(StringIO(csv_text))
+    raw_fieldnames = reader.fieldnames or []
+    fieldnames = [f.strip() for f in raw_fieldnames]
+    rows = list(reader)
+
+    def norm(s: typing.Any) -> str:
+        return (s or '').strip()
+
+    def canon(name: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', (name or '').lower())
+
+    # Build a lookup from canonical header token to actual header
+    canon_to_actual = {canon(h): h for h in fieldnames}
+
+    def has_logical(logical_key: str) -> bool:
+        candidates = {
+            'record_type': ['record_type', 'record_t', 'type']
+        }.get(logical_key, [logical_key])
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return True
+        return False
+
+    def get_val(row: dict, logical_key: str, *, default: str = '') -> str:
+        """Get value from row with flexible header matching."""
+        # Direct mapping for exact matches from user's CSV
+        header_mappings = {
+            'record_type': ['record_type'],
+            'contact_full_name': ['contact_full_name', 'contact_full', 'full_name', 'name'],
+            'contact_tier': ['contact_tier', 'tier'],
+            'category': ['category'],
+            'detail_content': ['detail_content', 'detail_conte', 'content'],
+            'entry_date': ['log_timestamp', 'created_at', 'entry_date', 'timestamp'],
+            'raw_note_content': ['raw_note_content', 'raw_note', 'note_content', 'note']
+        }
+        
+        candidates = header_mappings.get(logical_key, [logical_key])
+        
+        # First try exact matches
+        for header in fieldnames:
+            if header in candidates:
+                return norm(row.get(header, default))
+        
+        # Then try case-insensitive exact matches
+        for header in fieldnames:
+            header_lower = header.lower()
+            for cand in candidates:
+                if header_lower == cand.lower():
+                    return norm(row.get(header, default))
+        
+        # Finally try prefix/substring matching
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return norm(row.get(header, default))
+        
+        return default
+
+    def to_int_or(default: int, val: typing.Any) -> int:
+        try:
+            v = str(val).strip()
+            return int(v) if v else default
+        except Exception:
+            return default
+
+    from datetime import datetime
+    with get_db_connection() as conn:
+        # Get all users
+        users_cur = conn.execute('SELECT id, username FROM users ORDER BY id')
+        users = list(users_cur)
+        
+        for user_id, username in users:
+            user_stats = {
+                "contacts_added": 0, "details_added": 0,
+                "contacts_skipped": 0, "details_skipped": 0,
+                "rows_contact_processed": 0, "rows_synth_processed": 0
+            }
+            
+            # Load existing contacts for this user into a case-insensitive map
+            cur = conn.execute('SELECT id, full_name, tier FROM contacts WHERE user_id = ?', (user_id,))
+            name_to_contact_id = { (row['full_name'] or '').strip().lower(): row['id'] for row in cur }
+            contact_tiers: dict[int, int] = { row['id']: row['tier'] for row in cur.fetchall() } if False else {}
+
+            # Load existing synthesized detail signatures per contact_id for this user
+            existing_details_map: dict[int, set[str]] = {}
+            cur = conn.execute('SELECT se.contact_id, se.category, se.content FROM synthesized_entries se JOIN contacts c ON c.id = se.contact_id WHERE c.user_id = ?', (user_id,))
+            for row in cur:
+                sig = f"{norm(row['category'])}|{norm(row['content'])}"
+                existing_details_map.setdefault(row['contact_id'], set()).add(sig)
+
+            # If record-type CSV, pre-create contacts from CONTACT rows even if no details exist
+            if has_logical('record_type'):
+                for row in rows:
+                    stats['rows_total'] += 1
+                    if classify_record_type(get_val(row, 'record_type')) != 'CONTACT':
+                        continue
+                    name = norm(get_val(row, 'contact_full_name'))
+                    if not name:
+                        stats['rows_skipped_no_name'] += 1
+                        continue
+                    name_key = name.lower()
+                    if name_key in name_to_contact_id:
+                        # Potential conflict: tier change
+                        tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                        if contact_tier_policy == 'overwrite' and tier_val in (1, 2, 3):
+                            try:
+                                if not dry_run:
+                                    conn.execute('UPDATE contacts SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tier_val, name_to_contact_id[name_key]))
+                                else:
+                                    pass  # Skip conflict reporting for dry run
+                            except Exception as e:
+                                pass  # Skip error reporting for dry run
+                        user_stats['contacts_skipped'] += 1
+                        continue
+                    tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                    if not dry_run:
+                        conn.execute(
+                            'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                            (name, tier_val, user_id, f"contact_{uuid.uuid4().hex[:8]}")
+                        )
+                        contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    else:
+                        contact_id = -(user_stats['contacts_added'] + 1)  # pseudo id for preview
+                    name_to_contact_id[name_key] = contact_id
+                    existing_details_map.setdefault(contact_id, set())
+                    user_stats['contacts_added'] += 1
+                    user_stats['rows_contact_processed'] += 1
+
+            # Helper: iterate normalized synthesized-detail rows
+            def iter_normalized_rows():
+                is_record_type = has_logical('record_type')
+                if is_record_type:
+                    for row in rows:
+                        rt = classify_record_type(get_val(row, 'record_type'))
+                        if not rt:
+                            stats['rows_skipped_unknown_type'] += 1
+                            continue
+                        if rt != 'SYNTHESIZED_DETAIL':
+                            continue
+                        yield {
+                            'name': norm(get_val(row, 'contact_full_name')),
+                            'tier': get_val(row, 'contact_tier') or '2',
+                            'category': norm(get_val(row, 'category')),
+                            'detail': norm(get_val(row, 'detail_content')),
+                            'confidence': None,
+                            'entry_date': norm(get_val(row, 'log_timestamp')),
+                        }
+                else:
+                    for row in rows:
+                        yield {
+                            'name': norm(row.get('Contact Full Name') or row.get('contact_full_name')),
+                            'tier': row.get('Contact Tier') or row.get('contact_tier') or '2',
+                            'category': norm(row.get('Category') or row.get('category')),
+                            'detail': norm(row.get('Detail/Fact') or row.get('detail_content')),
+                            'confidence': row.get('AI Confidence') or row.get('confidence_score'),
+                            'entry_date': norm(row.get('Entry Date') or row.get('created_at')),
+                        }
+
+            # Process synthesized detail rows
+            for row_data in iter_normalized_rows():
+                stats['rows_total'] += 1
+                name = row_data['name']
+                if not name:
+                    stats['rows_skipped_no_name'] += 1
+                    continue
+
+                # Find or create contact
+                name_key = name.lower()
+                if name_key not in name_to_contact_id:
+                    # Create contact if it doesn't exist
+                    tier_val = to_int_or(2, row_data['tier'])
+                    if not dry_run:
+                        conn.execute(
+                            'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                            (name, tier_val, user_id, f"contact_{uuid.uuid4().hex[:8]}")
+                        )
+                        contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    else:
+                        contact_id = -(user_stats['contacts_added'] + 1)
+                    name_to_contact_id[name_key] = contact_id
+                    existing_details_map.setdefault(contact_id, set())
+                    user_stats['contacts_added'] += 1
+
+                contact_id = name_to_contact_id[name_key]
+                category = canonicalize_category(row_data['category'])
+                detail = row_data['detail']
+                
+                if not detail:
+                    continue
+
+                # Check for duplicate detail
+                sig = f"{category}|{detail}"
+                if sig in existing_details_map.get(contact_id, set()):
+                    user_stats['details_skipped'] += 1
+                    continue
+
+                # Add the detail
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO synthesized_entries (contact_id, category, content, confidence_score, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (contact_id, category, detail, None)
+                    )
+                existing_details_map.setdefault(contact_id, set()).add(sig)
+                user_stats['details_added'] += 1
+                user_stats['rows_synth_processed'] += 1
+
+            # Update totals
+            stats['users_processed'] += 1
+            stats['total_contacts_added'] += user_stats['contacts_added']
+            stats['total_details_added'] += user_stats['details_added']
+            stats['total_contacts_skipped'] += user_stats['contacts_skipped']
+            stats['total_details_skipped'] += user_stats['details_skipped']
+            stats['rows_contact_processed'] += user_stats['rows_contact_processed']
+            stats['rows_synth_processed'] += user_stats['rows_synth_processed']
+            
+            user_results[username] = user_stats
+
+        if not dry_run:
+            conn.commit()
+
+    # Build preview for dry runs
+    preview = []
+    if dry_run:
+        preview = [
+            f"Would process {stats['users_processed']} users",
+            f"Would add {stats['total_contacts_added']} total contacts across all users",
+            f"Would add {stats['total_details_added']} total details across all users",
+            f"Would skip {stats['total_contacts_skipped']} existing contacts",
+            f"Would skip {stats['total_details_skipped']} duplicate details"
+        ]
+
+    result: dict = {"status": "success", "message": "Import complete for all users!", "details": stats, "user_results": user_results}
+    if dry_run:
+        result.update({
+            'status': 'preview',
+            'message': 'Dry-run completed. No changes were written.',
+            'preview': preview
+        })
+    # Echo back file identifiers when provided
+    if options.get('file_name') or options.get('file_hash'):
+        result['file'] = {
+            'name': options.get('file_name'),
+            'hash': options.get('file_hash')
+        }
+    return result
+
+@app.route('/debug/routes', methods=['GET'])
+def debug_routes():
+    try:
+        rules = []
+        for rule in app.url_map.iter_rules():
+            rules.append({
+                'rule': str(rule),
+                'endpoint': rule.endpoint,
+                'methods': sorted(list(rule.methods or []))
+            })
+        return jsonify({'routes': rules})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # Setup Google Cloud credentials
 setup_google_credentials()
@@ -194,6 +1168,13 @@ def ensure_runtime_migrations():
     try:
         conn = get_db_connection()
         try:
+            # Ensure users.role column exists (SQLite safe)
+            try:
+                cols = [row[1] for row in conn.execute('PRAGMA table_info(users)').fetchall()]
+                if 'role' not in cols:
+                    conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+            except Exception as _role_err:
+                logger.warning(f"Role column migration warning: {_role_err}")
             # Ensure contact_audit_log exists
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS contact_audit_log (
@@ -266,6 +1247,20 @@ def ensure_runtime_migrations():
             ''')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_uploaded_files_contact_id ON uploaded_files(contact_id)')
             conn.commit()
+
+            # Seed default admin user if no users
+            try:
+                cur = conn.execute('SELECT COUNT(1) FROM users')
+                (ucount,) = cur.fetchone()
+                if ucount == 0:
+                    default_admin_user = os.getenv('DEFAULT_ADMIN_USER', 'admin')
+                    default_admin_pass = os.getenv('DEFAULT_ADMIN_PASS', 'admin123')
+                    hashed = generate_password_hash(default_admin_pass, method='pbkdf2:sha256')
+                    conn.execute('INSERT INTO users (username, password_hash, password_plaintext, role, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', (default_admin_user, hashed, default_admin_pass, 'admin'))
+                    conn.commit()
+                    logger.info('✅ Seeded default admin user')
+            except Exception as _seed_err:
+                logger.warning(f"Admin seed warning: {_seed_err}")
         finally:
             conn.close()
     except Exception as e:
@@ -944,7 +1939,7 @@ def init_db():
                 conn.execute("ALTER TABLE contacts ADD COLUMN telegram_last_sync TIMESTAMP")
             if 'user_id' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN user_id INTEGER")
-                conn.execute("UPDATE contacts SET user_id = 1 WHERE user_id IS NULL")
+                # Don't assign contacts to user_id = 1, leave them NULL for proper user assignment
             if 'vector_collection_id' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN vector_collection_id TEXT")
         except Exception as contacts_mig_err:
@@ -973,7 +1968,7 @@ def init_db():
             contact_columns = [row[1] for row in cursor.fetchall()]
             if 'user_id' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN user_id INTEGER")
-                conn.execute("UPDATE contacts SET user_id = 1 WHERE user_id IS NULL")
+                # Don't assign contacts to user_id = 1, leave them NULL for proper user assignment
             if 'vector_collection_id' not in contact_columns:
                 conn.execute("ALTER TABLE contacts ADD COLUMN vector_collection_id TEXT")
                 # Backfill with simple deterministic values
@@ -1366,7 +2361,27 @@ Based on the context package above, perform your analysis and return the JSON ob
 # --- API ENDPOINTS ---
 @app.route('/')
 def index():
-    return render_template('index.html')
+    try:
+        if current_user.is_authenticated:
+            return render_template('index.html')
+        return render_template('login.html')
+    except Exception:
+        return render_template('login.html')
+
+@app.route('/login', methods=['GET'])
+def login_page():
+    return render_template('login.html')
+
+@app.route('/logout', methods=['GET'])
+def logout_page():
+    try:
+        if current_user.is_authenticated:
+            logout_user()
+    except Exception:
+        pass
+    # Redirect to root which will show login if not authenticated
+    from flask import redirect
+    return redirect('/')
 
 @app.route('/health')
 def health_check():
@@ -1491,6 +2506,7 @@ def add_no_cache_headers(response):
     return response
 
 @app.route('/api/contacts', methods=['GET'])
+@login_required
 @cache.cached(timeout=600, query_string=True)
 def get_contacts():
     """Get all contacts (uses SQLAlchemy so data persists on Render/PostgreSQL)."""
@@ -1502,7 +2518,7 @@ def get_contacts():
             offset = max(int(request.args.get('offset', 0)), 0)
             tier_param = request.args.get('tier')
 
-            query = session.query(Contact).filter(Contact.user_id == 1)
+            query = session.query(Contact).filter(Contact.user_id == current_user.id)
             if tier_param and str(tier_param).isdigit():
                 query = query.filter(Contact.tier == int(tier_param))
 
@@ -1527,6 +2543,7 @@ def get_contacts():
         return jsonify({"error": f"Failed to get contacts: {e}"}), 500
 
 @app.route('/api/contacts', methods=['POST'])
+@login_required
 def create_contact():
     """Create a new contact (stores in PostgreSQL/SQLite via SQLAlchemy)."""
     try:
@@ -1550,7 +2567,7 @@ def create_contact():
             try:
                 # Duplicate check (case-insensitive)
                 existing = session.query(Contact).filter(
-                    Contact.user_id == 1,
+                    Contact.user_id == current_user.id,
                     func.lower(Contact.full_name) == func.lower(full_name)
                 ).first()
                 if existing:
@@ -1560,7 +2577,7 @@ def create_contact():
                 new_contact = Contact(
                     full_name=full_name,
                     tier=int(tier) if str(tier).isdigit() else 2,
-                    user_id=1,
+                    user_id=current_user.id,
                     vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
                 )
                 session.add(new_contact)
@@ -1631,6 +2648,7 @@ def delete_contact(contact_id):
         session.close()
 
 @app.route('/api/contacts/bulk-delete', methods=['POST'])
+@login_required
 def bulk_delete_contacts():
     """Delete multiple contacts at once."""
     try:
@@ -1647,7 +2665,7 @@ def bulk_delete_contacts():
         for contact_id in contact_ids:
             try:
                 # Find the contact
-                contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+                contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
                 if not contact:
                     failed_contacts.append({"id": contact_id, "error": "Contact not found"})
                     continue
@@ -1688,6 +2706,7 @@ def bulk_delete_contacts():
         session.close()
 
 @app.route('/api/import-vcard', methods=['POST'])
+@login_required
 def import_vcard_endpoint():
     """Parses an uploaded .vcf file and creates contacts, avoiding duplicates."""
     if 'vcard_file' not in request.files:
@@ -1713,7 +2732,7 @@ def import_vcard_endpoint():
                 # Check for existing contact by full name (case-insensitive)
                 existing_contact = session.query(Contact).filter(
                     Contact.full_name.ilike(full_name),
-                    Contact.user_id == 1
+                    Contact.user_id == current_user.id
                 ).first()
 
                 if existing_contact:
@@ -1723,7 +2742,7 @@ def import_vcard_endpoint():
                 # Create new contact if it doesn't exist
                 new_contact = Contact(
                     full_name=full_name,
-                    user_id=1,  # Assume user_id=1 for MVP
+                    user_id=current_user.id,  # Use current user's ID
                     vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
                 )
                 session.add(new_contact)
@@ -1792,7 +2811,7 @@ def update_contact(contact_id):
         conn = get_db_connection()
         try:
             # Ensure contact exists
-            cursor = conn.execute('SELECT id FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
+            cursor = conn.execute('SELECT id FROM contacts WHERE id = ? AND user_id = ?', (contact_id, getattr(current_user, 'id', 0)))
             if not cursor.fetchone():
                 return jsonify({"error": "Contact not found"}), 404
             
@@ -1890,7 +2909,7 @@ def search_endpoint():
                 SELECT DISTINCT c.id 
                 FROM contacts c 
                 LEFT JOIN synthesized_entries se ON c.id = se.contact_id 
-                WHERE (c.full_name LIKE ? OR se.content LIKE ?) AND c.user_id = 1
+                WHERE (c.full_name LIKE ? OR se.content LIKE ?) AND c.user_id = ?
             ''', (f'%{query}%', f'%{query}%'))
             
             keyword_contact_ids = [row['id'] for row in cursor.fetchall()]
@@ -1915,7 +2934,7 @@ def search_endpoint():
             cursor = conn.execute(f'''
                 SELECT id, full_name, tier 
                 FROM contacts 
-                WHERE id IN ({placeholders}) AND user_id = 1
+                WHERE id IN ({placeholders}) AND user_id = ?
             ''', combined_ids)
             
             final_contacts = [dict(row) for row in cursor.fetchall()]
@@ -2315,7 +3334,7 @@ def start_telegram_import():
         if not identifier and contact_id:
             conn = get_db_connection()
             try:
-                cur = conn.execute('SELECT telegram_username, telegram_handle, full_name FROM contacts WHERE id = ? AND user_id = 1', (contact_id,))
+                cur = conn.execute('SELECT telegram_username, telegram_handle, full_name FROM contacts WHERE id = ? AND user_id = ?', (contact_id, getattr(current_user, 'id', 0)))
                 row = cur.fetchone()
                 if not row:
                     return jsonify({"error": "Contact not found"}), 404
@@ -2547,7 +3566,7 @@ def export_all_data_csv():
             with get_db_connection() as conn:
                 # CONTACT rows
                 cur = conn.execute('''
-                    SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = 1 ORDER BY id
+                    SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = ? ORDER BY id
                 ''')
                 for row in cur:
                     writer.writerow([
@@ -2561,7 +3580,7 @@ def export_all_data_csv():
                     SELECT se.id as se_id, se.contact_id, c.full_name, c.tier, se.category, se.content, se.created_at as created_at
                     FROM synthesized_entries se
                     JOIN contacts c ON c.id = se.contact_id
-                    WHERE c.user_id = 1
+                    WHERE c.user_id = ?
                     ORDER BY se.id
                 ''')
                 for row in cur:
@@ -2576,7 +3595,7 @@ def export_all_data_csv():
                     SELECT rn.id as rn_id, rn.contact_id, c.full_name, c.tier, rn.content as note_summary, rn.tags, rn.created_at
                     FROM raw_notes rn
                     JOIN contacts c ON c.id = rn.contact_id
-                    WHERE c.user_id = 1
+                    WHERE c.user_id = ?
                     ORDER BY rn.id
                 ''')
                 for row in cur:
@@ -2601,7 +3620,7 @@ def export_all_data_csv():
                 cur = conn.execute('''
                     SELECT id, contact_id, event_type, source, event_timestamp, before_state, after_state, raw_input
                     FROM contact_audit_log
-                    WHERE user_id = 1
+                    WHERE user_id = ?
                     ORDER BY id
                 ''')
                 for row in cur:
@@ -3120,6 +4139,328 @@ def classify_record_type(value: str) -> str:
         return 'RAW_NOTE'
         
     return ''
+
+@app.route('/admin/api/users/<int:user_id>/import/csv', methods=['POST'])
+@login_required
+@admin_required
+def admin_import_user_csv(user_id):
+    """Import CSV data for a specific user (admin only)."""
+    try:
+        if 'backup_file' not in request.files:
+            return jsonify({"error": "No backup file provided"}), 400
+        file = request.files['backup_file']
+        if not file or not file.filename.lower().endswith('.csv'):
+            return jsonify({"error": "Invalid file type. Please upload a .csv file."}), 400
+
+        csv_bytes = file.read()
+        # Idempotency: compute file hash
+        import hashlib
+        file_hash = hashlib.sha256(csv_bytes).hexdigest()
+
+        # Options via multipart form fields
+        dry_run = (request.form.get('dry_run', 'false').lower() == 'true')
+        force = (request.form.get('force', 'false').lower() == 'true')
+        # Conflict policy defaults
+        conflict_policy = {
+            'contact_tier': request.form.get('policy_contact_tier', 'preserve'),  # preserve | overwrite
+            'details': request.form.get('policy_details', 'preserve'),            # preserve | append
+        }
+
+        # Check idempotency store unless dry_run or force
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute('SELECT id, created_at FROM file_imports WHERE import_type = ? AND file_hash = ? AND user_id = ?', ('csv_merge', file_hash, user_id))
+                row = cur.fetchone()
+                if row and not force and not dry_run:
+                    return jsonify({
+                        "status": "skipped",
+                        "message": "This CSV was already imported before (same file hash).",
+                        "import_id": row['id'],
+                        "imported_at": row['created_at']
+                    })
+        except Exception:
+            # Non-fatal: proceed without idempotency if table not available
+            pass
+
+        try:
+            csv_text = csv_bytes.decode('utf-8')
+        except Exception:
+            csv_text = csv_bytes.decode('latin-1')
+
+        result = run_admin_merge_process(csv_text, user_id, options={
+            'dry_run': dry_run,
+            'conflict_policy': conflict_policy,
+            'file_name': file.filename,
+            'file_hash': file_hash
+        })
+
+        # Persist idempotency record on successful non-dry run
+        if not dry_run and result.get('status') == 'success':
+            try:
+                with get_db_connection() as conn:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO file_imports (user_id, import_type, file_name, file_hash, status, stats_json) VALUES (?, ?, ?, ?, ?, ?)',
+                        (user_id, 'csv_merge', file.filename, file_hash, 'completed', json.dumps(result.get('details', {})))
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to persist file import record: {e}")
+
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("Admin merge from CSV failed")
+        return jsonify({"error": f"Merge failed: {e}"}), 500
+
+def run_admin_merge_process(csv_text: str, target_user_id: int, options: typing.Optional[dict] = None) -> dict:
+    """Admin version of merge process that imports data for a specific user."""
+    options = options or {}
+    dry_run: bool = bool(options.get('dry_run', False))
+    conflict_policy: dict = options.get('conflict_policy', {}) or {}
+    contact_tier_policy = (conflict_policy.get('contact_tier') or 'preserve').lower()
+    details_policy = (conflict_policy.get('details') or 'preserve').lower()
+
+    stats = {
+        "contacts_added": 0, "details_added": 0,
+        "contacts_skipped": 0, "details_skipped": 0,
+        "rows_total": 0, "rows_contact_processed": 0,
+        "rows_synth_processed": 0, "rows_skipped_unknown_type": 0,
+        "rows_skipped_no_name": 0, "rows_skipped_duplicate": 0
+    }
+    conflicts: list[dict] = []
+
+    reader = csv.DictReader(StringIO(csv_text))
+    raw_fieldnames = reader.fieldnames or []
+    fieldnames = [f.strip() for f in raw_fieldnames]
+    rows = list(reader)
+
+    def norm(s: typing.Any) -> str:
+        return (s or '').strip()
+
+    def canon(name: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', (name or '').lower())
+
+    # Build a lookup from canonical header token to actual header
+    canon_to_actual = {canon(h): h for h in fieldnames}
+
+    def has_logical(logical_key: str) -> bool:
+        candidates = {
+            'record_type': ['record_type', 'record_t', 'type']
+        }.get(logical_key, [logical_key])
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return True
+        return False
+
+    def get_val(row: dict, logical_key: str, *, default: str = '') -> str:
+        """Get value from row with flexible header matching."""
+        # Direct mapping for exact matches from user's CSV
+        header_mappings = {
+            'record_type': ['record_type'],
+            'contact_full_name': ['contact_full_name', 'contact_full', 'full_name', 'name'],
+            'contact_tier': ['contact_tier', 'tier'],
+            'category': ['category'],
+            'detail_content': ['detail_content', 'detail_conte', 'content'],
+            'entry_date': ['log_timestamp', 'created_at', 'entry_date', 'timestamp'],
+            'raw_note_content': ['raw_note_content', 'raw_note', 'note_content', 'note']
+        }
+        
+        candidates = header_mappings.get(logical_key, [logical_key])
+        
+        # First try exact matches
+        for header in fieldnames:
+            if header in candidates:
+                return norm(row.get(header, default))
+        
+        # Then try case-insensitive exact matches
+        for header in fieldnames:
+            header_lower = header.lower()
+            for cand in candidates:
+                if header_lower == cand.lower():
+                    return norm(row.get(header, default))
+        
+        # Finally try prefix/substring matching
+        for header in fieldnames:
+            ch = canon(header)
+            for cand in candidates:
+                cc = canon(cand)
+                if ch == cc or ch.startswith(cc) or cc.startswith(ch):
+                    return norm(row.get(header, default))
+        
+        return default
+
+    def to_int_or(default: int, val: typing.Any) -> int:
+        try:
+            v = str(val).strip()
+            return int(v) if v else default
+        except Exception:
+            return default
+
+    from datetime import datetime
+    with get_db_connection() as conn:
+        # Load existing contacts for target user into a case-insensitive map
+        cur = conn.execute('SELECT id, full_name, tier FROM contacts WHERE user_id = ?', (target_user_id,))
+        name_to_contact_id = { (row['full_name'] or '').strip().lower(): row['id'] for row in cur }
+        contact_tiers: dict[int, int] = { row['id']: row['tier'] for row in cur.fetchall() } if False else {}
+
+        # Load existing synthesized detail signatures per contact_id for target user
+        existing_details_map: dict[int, set[str]] = {}
+        cur = conn.execute('SELECT se.contact_id, se.category, se.content FROM synthesized_entries se JOIN contacts c ON c.id = se.contact_id WHERE c.user_id = ?', (target_user_id,))
+        for row in cur:
+            sig = f"{norm(row['category'])}|{norm(row['content'])}"
+            existing_details_map.setdefault(row['contact_id'], set()).add(sig)
+
+        # If record-type CSV, pre-create contacts from CONTACT rows even if no details exist
+        if has_logical('record_type'):
+            for row in rows:
+                stats['rows_total'] += 1
+                if classify_record_type(get_val(row, 'record_type')) != 'CONTACT':
+                    continue
+                name = norm(get_val(row, 'contact_full_name'))
+                if not name:
+                    stats['rows_skipped_no_name'] += 1
+                    continue
+                name_key = name.lower()
+                if name_key in name_to_contact_id:
+                    # Potential conflict: tier change
+                    tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                    if contact_tier_policy == 'overwrite' and tier_val in (1, 2, 3):
+                        try:
+                            if not dry_run:
+                                conn.execute('UPDATE contacts SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tier_val, name_to_contact_id[name_key]))
+                            else:
+                                conflicts.append({
+                                    'type': 'contact_tier_update',
+                                    'name': name,
+                                    'from': 'existing',
+                                    'to': tier_val,
+                                    'policy_applied': 'overwrite'
+                                })
+                        except Exception as e:
+                            conflicts.append({'type': 'error', 'message': f"Failed to update tier for {name}: {e}"})
+                    stats['contacts_skipped'] += 1
+                    continue
+                tier_val = to_int_or(2, get_val(row, 'contact_tier'))
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (name, tier_val, target_user_id, f"contact_{uuid.uuid4().hex[:8]}")
+                    )
+                    contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                else:
+                    contact_id = -(stats['contacts_added'] + 1)  # pseudo id for preview
+                name_to_contact_id[name_key] = contact_id
+                existing_details_map.setdefault(contact_id, set())
+                stats['contacts_added'] += 1
+                stats['rows_contact_processed'] += 1
+
+        # Helper: iterate normalized synthesized-detail rows
+        def iter_normalized_rows():
+            is_record_type = has_logical('record_type')
+            if is_record_type:
+                for row in rows:
+                    rt = classify_record_type(get_val(row, 'record_type'))
+                    if not rt:
+                        stats['rows_skipped_unknown_type'] += 1
+                        continue
+                    if rt != 'SYNTHESIZED_DETAIL':
+                        continue
+                    yield {
+                        'name': norm(get_val(row, 'contact_full_name')),
+                        'tier': get_val(row, 'contact_tier') or '2',
+                        'category': norm(get_val(row, 'category')),
+                        'detail': norm(get_val(row, 'detail_content')),
+                        'confidence': None,
+                        'entry_date': norm(get_val(row, 'log_timestamp')),
+                    }
+            else:
+                for row in rows:
+                    yield {
+                        'name': norm(row.get('Contact Full Name') or row.get('contact_full_name')),
+                        'tier': row.get('Contact Tier') or row.get('contact_tier') or '2',
+                        'category': norm(row.get('Category') or row.get('category')),
+                        'detail': norm(row.get('Detail/Fact') or row.get('detail_content')),
+                        'confidence': row.get('AI Confidence') or row.get('confidence_score'),
+                        'entry_date': norm(row.get('Entry Date') or row.get('created_at')),
+                    }
+
+        # Process synthesized detail rows
+        for row_data in iter_normalized_rows():
+            stats['rows_total'] += 1
+            name = row_data['name']
+            if not name:
+                stats['rows_skipped_no_name'] += 1
+                continue
+
+            # Find or create contact
+            name_key = name.lower()
+            if name_key not in name_to_contact_id:
+                # Create contact if it doesn't exist
+                tier_val = to_int_or(2, row_data['tier'])
+                if not dry_run:
+                    conn.execute(
+                        'INSERT INTO contacts (full_name, tier, user_id, vector_collection_id, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                        (name, tier_val, target_user_id, f"contact_{uuid.uuid4().hex[:8]}")
+                    )
+                    contact_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                else:
+                    contact_id = -(stats['contacts_added'] + 1)
+                name_to_contact_id[name_key] = contact_id
+                existing_details_map.setdefault(contact_id, set())
+                stats['contacts_added'] += 1
+
+            contact_id = name_to_contact_id[name_key]
+            category = canonicalize_category(row_data['category'])
+            detail = row_data['detail']
+            
+            if not detail:
+                continue
+
+            # Check for duplicate detail
+            sig = f"{category}|{detail}"
+            if sig in existing_details_map.get(contact_id, set()):
+                stats['details_skipped'] += 1
+                continue
+
+            # Add the detail
+            if not dry_run:
+                conn.execute(
+                    'INSERT INTO synthesized_entries (contact_id, category, content, confidence_score, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                    (contact_id, category, detail, None)
+                )
+            existing_details_map.setdefault(contact_id, set()).add(sig)
+            stats['details_added'] += 1
+            stats['rows_synth_processed'] += 1
+
+        if not dry_run:
+            conn.commit()
+
+    # Build preview for dry runs
+    preview = []
+    if dry_run:
+        preview = [
+            f"Would add {stats['contacts_added']} contacts",
+            f"Would add {stats['details_added']} synthesized details",
+            f"Would skip {stats['contacts_skipped']} existing contacts",
+            f"Would skip {stats['details_skipped']} duplicate details"
+        ]
+
+    result: dict = {"status": "success", "message": "Merge complete!", "details": stats}
+    if dry_run:
+        result.update({
+            'status': 'preview',
+            'message': 'Dry-run completed. No changes were written.',
+            'preview': preview
+        })
+    # Echo back file identifiers when provided
+    if options.get('file_name') or options.get('file_hash'):
+        result['file'] = {
+            'name': options.get('file_name'),
+            'hash': options.get('file_hash')
+        }
+    return result
 
 # --- BOOTSTRAP: run DB init and migrations once, early ---
 _BOOTSTRAPPED = False
@@ -3992,12 +5333,13 @@ def transcribe_audio_endpoint():
 # === RELATIONSHIP GRAPH API ENDPOINTS ===
 
 @app.route('/api/graph-data', methods=['GET'])
+@login_required
 @cache.cached(timeout=3600)
 def get_graph_data():
     """
     Fetches and formats all data required to render the relationship graph.
     """
-    user_id = 1  # Assume single user
+    user_id = current_user.id
     session = get_session()
     try:
         # 1. Fetch all contacts (nodes)
@@ -4054,11 +5396,12 @@ def get_graph_data():
 
 # --- Group Management ---
 @app.route('/api/groups', methods=['POST'])
+@login_required
 def create_group():
     data = request.get_json()
     name = data.get('name')
     color = data.get('color', '#97C2FC')
-    user_id = 1  # Assume single user
+    user_id = current_user.id
 
     if not name:
         return jsonify({"error": "Group name is required"}), 400
@@ -4078,10 +5421,11 @@ def create_group():
         session.close()
 
 @app.route('/api/groups/<int:group_id>/members', methods=['POST'])
+@login_required
 def add_member_to_group(group_id):
     data = request.get_json()
     contact_id = data.get('contact_id')
-    user_id = 1  # Assume single user
+    user_id = current_user.id
 
     if not contact_id:
         return jsonify({"error": "Contact ID is required"}), 400
@@ -4190,7 +5534,7 @@ def get_tags():
         session = get_session()
         try:
             # Eager load tag.contacts count with selectinload to avoid N+1
-            tags = session.query(Tag).options(selectinload(Tag.contacts)).filter_by(user_id=1).order_by(Tag.name.asc()).all()
+            tags = session.query(Tag).options(selectinload(Tag.contacts)).filter_by(user_id=current_user.id).order_by(Tag.name.asc()).all()
             result = [{
                 'id': tag.id,
                 'name': tag.name,
@@ -4224,7 +5568,7 @@ def create_tag():
         session = get_session()
         try:
             # Check for duplicate tag name
-            existing = session.query(Tag).filter_by(user_id=1, name=name).first()
+            existing = session.query(Tag).filter_by(user_id=current_user.id, name=name).first()
             if existing:
                 return jsonify({"error": "Tag with this name already exists"}), 409
             
@@ -4232,7 +5576,7 @@ def create_tag():
                 name=name,
                 color=color,
                 description=description,
-                user_id=1
+                user_id=current_user.id
             )
             session.add(new_tag)
             session.commit()

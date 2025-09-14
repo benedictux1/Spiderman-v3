@@ -5895,28 +5895,45 @@ def fix_database_schema():
         from sqlalchemy import text
         
         with get_session() as session:
-            # Check if password_plaintext column exists
+            # Check what columns are missing
             result = session.execute(text("""
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name = 'users' 
-                AND column_name = 'password_plaintext'
+                WHERE table_name = 'users'
             """))
+            existing_columns = [row[0] for row in result.fetchall()]
             
-            if result.fetchone():
+            messages = []
+            
+            # Add password_plaintext column if missing
+            if 'password_plaintext' not in existing_columns:
+                session.execute(text("""
+                    ALTER TABLE users 
+                    ADD COLUMN password_plaintext VARCHAR(255)
+                """))
+                messages.append("Added password_plaintext column")
+            
+            # Add role column if missing
+            if 'role' not in existing_columns:
+                session.execute(text("""
+                    ALTER TABLE users 
+                    ADD COLUMN role VARCHAR(50) DEFAULT 'user'
+                """))
+                messages.append("Added role column")
+            
+            if messages:
+                session.commit()
                 return jsonify({
                     "status": "success",
-                    "message": "password_plaintext column already exists"
+                    "message": "; ".join(messages)
+                })
+            else:
+                return jsonify({
+                    "status": "success",
+                    "message": "All required columns already exist"
                 })
             
-            # Add the missing column
-            session.execute(text("""
-                ALTER TABLE users 
-                ADD COLUMN password_plaintext VARCHAR(255)
-            """))
-            session.commit()
-            
-            # Check if we need to create a default admin user
+            # Check if we need to create a default admin user or update existing users
             result = session.execute(text("SELECT COUNT(*) FROM users"))
             user_count = result.fetchone()[0]
             
@@ -5938,16 +5955,26 @@ def fix_database_schema():
                 })
                 session.commit()
                 
+                messages.append(f"Created default admin user: {default_admin_user}")
                 return jsonify({
                     "status": "success",
-                    "message": f"Added password_plaintext column and created default admin user: {default_admin_user}",
+                    "message": "; ".join(messages),
                     "admin_username": default_admin_user,
                     "admin_password": default_admin_pass
                 })
             else:
+                # Update existing users to have 'user' role if they don't have one
+                session.execute(text("""
+                    UPDATE users 
+                    SET role = 'user' 
+                    WHERE role IS NULL OR role = ''
+                """))
+                session.commit()
+                
+                messages.append(f"Found {user_count} existing users, updated roles")
                 return jsonify({
                     "status": "success",
-                    "message": f"Added password_plaintext column. Found {user_count} existing users."
+                    "message": "; ".join(messages)
                 })
                 
     except Exception as e:

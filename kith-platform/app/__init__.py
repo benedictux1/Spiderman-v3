@@ -105,6 +105,17 @@ def create_app(config_class=Config):
     
     return app
 
+# Create a default app instance for compatibility with gunicorn
+# This allows both app:app and main:app to work
+try:
+    app = create_app()
+except Exception as e:
+    import logging
+    logging.warning(f"Failed to create default app instance: {e}")
+    # Create a minimal app as fallback
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = 'fallback-key'
+
 def configure_logging(app):
     import os
     from logging.handlers import RotatingFileHandler

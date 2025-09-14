@@ -5988,13 +5988,5 @@ if __name__ == '__main__':
     bootstrap_database_once()
     app.run(debug=False, host=DEFAULT_HOST, port=DEFAULT_PORT, use_reloader=False, threaded=True)
 
-# Fallback for Render deployment - ensure app is available for gunicorn
-# This allows both app:app and main:app to work
-try:
-    # Try to import the new modular app structure
-    from main import app as new_app
-    # If successful, use the new app
-    app = new_app
-except ImportError:
-    # Fallback to the existing app if new structure is not available
-    pass
+# Ensure app is available for gunicorn deployment
+# The app variable is already defined at line 53: app = Flask(__name__)

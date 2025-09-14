@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.dialects.postgresql import JSON
 from flask_login import UserMixin
 from datetime import datetime
 import os
@@ -38,6 +39,8 @@ class Contact(Base):
     is_verified = Column(Boolean, default=False)    # Verified Telegram account
     is_premium = Column(Boolean, default=False)     # Premium Telegram account
     telegram_last_sync = Column(DateTime)           # Last successful sync
+    telegram_metadata = Column(JSON)                # For storing complex Telegram data
+    custom_fields = Column(JSON)                    # For extensible contact fields
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -55,7 +58,7 @@ class RawNote(Base):
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    tags = Column(String)  # Store as JSON string for SQLite compatibility
+    metadata_tags = Column(JSON)  # Proper JSON column for PostgreSQL
     
     # Relationships
     contact = relationship("Contact", back_populates="raw_notes")
@@ -164,94 +167,5 @@ class ContactTag(Base):
     contact = relationship("Contact")
     tag = relationship("Tag")
 
-# Database setup
-def get_database_url():
-    """Get database URL from environment or use SQLite for development."""
-    database_url = os.getenv('DATABASE_URL')
-    if database_url and database_url.startswith('postgresql://'):
-        return database_url
-    else:
-        # Use SQLite for development
-        return 'sqlite:///kith_platform.db'
-
-def init_db():
-    """Initialize the database and create tables."""
-    database_url = get_database_url()
-    
-    # In production (when DATABASE_URL is PostgreSQL), don't fall back to SQLite
-    is_production = database_url and database_url.startswith('postgresql://')
-    
-    try:
-        engine = create_engine(database_url)
-        Base.metadata.create_all(engine)
-        
-        # For PostgreSQL, ensure sequences are properly set up
-        if is_production:
-            try:
-                from sqlalchemy import text
-                with engine.connect() as conn:
-                    # Fix sequences for all tables with auto-incrementing IDs
-                    tables_with_sequences = ['users', 'contacts', 'raw_notes', 'synthesized_entries', 'tags']
-                    
-                    for table_name in tables_with_sequences:
-                        try:
-                            # Get max ID from table
-                            result = conn.execute(text(f"SELECT COALESCE(MAX(id), 0) FROM {table_name}"))
-                            max_id = result.scalar()
-                            
-                            # Set sequence to max_id + 1
-                            sequence_name = f"{table_name}_id_seq"
-                            conn.execute(text(f"SELECT setval('{sequence_name}', {max_id + 1}, false)"))
-                            print(f"✅ Ensured {sequence_name} is set to {max_id + 1}")
-                            
-                        except Exception as seq_error:
-                            print(f"⚠️  Could not fix sequence for {table_name}: {seq_error}")
-                            continue
-                    
-                    conn.commit()
-            except Exception as seq_fix_error:
-                print(f"⚠️  Sequence fix warning: {seq_fix_error}")
-        
-        print(f"✅ Database initialized successfully: {'PostgreSQL' if is_production else 'SQLite'}")
-        return engine
-    except Exception as e:
-        print(f"❌ Error initializing database: {e}")
-        
-        if is_production:
-            # In production, don't fall back to SQLite - this causes data loss!
-            print("🚨 CRITICAL: PostgreSQL connection failed in production. Not falling back to SQLite to prevent data loss.")
-            print("🔧 Check your DATABASE_URL and PostgreSQL service status.")
-            raise e  # Re-raise the exception to prevent silent fallback
-        else:
-            # Only fall back to SQLite in development
-            print("💡 Development mode: Falling back to SQLite")
-            engine = create_engine('sqlite:///kith_platform.db')
-            Base.metadata.create_all(engine)
-            return engine
-
-def get_session():
-    """Get a database session with connection retry logic."""
-    database_url = get_database_url()
-    
-    # Add connection pooling and retry logic for production
-    if database_url and database_url.startswith('postgresql://'):
-        # PostgreSQL connection with connection pooling
-        engine = create_engine(
-            database_url,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,  # Validate connections before use
-            pool_recycle=3600,   # Recycle connections after 1 hour
-            echo=False
-        )
-    else:
-        # SQLite connection for development
-        engine = create_engine(database_url)
-    
-    Session = sessionmaker(bind=engine)
-    return Session()
-
-# Create tables if they don't exist
-if __name__ == "__main__":
-    init_db()
-    print("Database initialized successfully!") 
+# Database initialization is now handled by Alembic migrations
+# This file only contains the model definitions 

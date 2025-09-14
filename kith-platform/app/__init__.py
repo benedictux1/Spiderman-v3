@@ -17,8 +17,19 @@ def create_app(config_class=Config):
     CORS(app)
     
     # Configure logging
-    if not app.debug:
-        configure_logging(app)
+    from app.utils.logging_config import setup_logging
+    setup_logging(
+        app_name="kith_platform",
+        log_level=app.config.get('LOG_LEVEL', 'INFO'),
+        enable_console=app.debug,
+        enable_file=True
+    )
+    
+    # Initialize monitoring
+    from app.utils.monitoring import initialize_monitoring
+    from app.utils.database import DatabaseManager
+    db_manager = DatabaseManager()
+    initialize_monitoring(db_manager)
     
     # Register blueprints
     from app.api.auth import auth_bp
@@ -39,6 +50,37 @@ def create_app(config_class=Config):
     def load_user(user_id):
         from app.services.auth_service import AuthService
         return AuthService.get_user_by_id(user_id)
+    
+    # Add health and monitoring routes
+    @app.route('/')
+    def index():
+        """Main application route"""
+        from flask import render_template
+        return render_template('index.html')
+    
+    @app.route('/health')
+    def health_check():
+        """Health check endpoint"""
+        from app.utils.monitoring import health_checker
+        if health_checker:
+            return health_checker.get_overall_health()
+        return {'status': 'healthy', 'version': '3.0.0'}
+    
+    @app.route('/metrics')
+    def get_metrics():
+        """Get application metrics"""
+        from app.utils.monitoring import metrics_collector
+        if metrics_collector:
+            return metrics_collector.get_metrics_summary()
+        return {'metrics': 'not_available'}
+    
+    @app.route('/health/detailed')
+    def detailed_health_check():
+        """Detailed health check with individual component status"""
+        from app.utils.monitoring import health_checker
+        if health_checker:
+            return health_checker.get_overall_health()
+        return {'status': 'healthy', 'version': '3.0.0'}
     
     return app
 

@@ -18,12 +18,21 @@ def create_app(config_class=Config):
     
     # Configure logging
     from app.utils.logging_config import setup_logging
+    from app.utils.structured_logging import StructuredLogger, LoggingMiddleware
+    
+    # Set up basic logging first
     setup_logging(
         app_name="kith_platform",
         log_level=app.config.get('LOG_LEVEL', 'INFO'),
         enable_console=app.debug,
         enable_file=True
     )
+    
+    # Set up structured logging
+    StructuredLogger.setup_logging(app)
+    
+    # Add logging middleware
+    app.wsgi_app = LoggingMiddleware(app.wsgi_app)
     
     # Initialize monitoring
     from app.utils.monitoring import initialize_monitoring

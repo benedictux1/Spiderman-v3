@@ -12,8 +12,12 @@ def login():
     """Handle user login"""
     if request.method == 'GET':
         if current_user.is_authenticated:
-            return redirect(url_for('main.index'))
-        return render_template('login.html')
+            return redirect(url_for('index'))
+        try:
+            return render_template('login.html')
+        except Exception as e:
+            logger.error(f"Template error: {e}")
+            return jsonify({'error': 'Login page not available'}), 500
     
     try:
         data = request.get_json() if request.is_json else request.form
@@ -30,7 +34,7 @@ def login():
             login_user(user)
             if request.is_json:
                 return jsonify({'success': True, 'user': {'id': user.id, 'username': user.username}})
-            return redirect(url_for('main.index'))
+            return redirect(url_for('index'))
         else:
             if request.is_json:
                 return jsonify({'error': 'Invalid credentials'}), 401

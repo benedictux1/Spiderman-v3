@@ -4,6 +4,7 @@ from app.models.note import RawNote, SynthesizedEntry
 from app.models.contact import Contact
 from app.services.ai_service import AIService
 from app.utils.database import DatabaseManager
+from app.utils.structured_logging import log_performance, log_function_call, StructuredLogger
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ class NoteService:
         self.db_manager = db_manager
         self.ai_service = ai_service
     
+    @log_performance("note_processing")
     def process_note(self, contact_id: int, content: str, user_id: int) -> Dict[str, Any]:
         """Process a raw note with AI analysis"""
         with self.db_manager.get_session() as session:

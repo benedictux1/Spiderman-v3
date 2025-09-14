@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: kith_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kith_dev_network
+
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kith_dev_network
+
+  # Main Application (Development)
+  web:
+    build:
+      context: .
+      target: development
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/kith_dev
+      REDIS_URL: redis://redis:6379/0
+      FLASK_ENV: development
+      FLASK_DEBUG: 1
+      FLASK_SECRET_KEY: development-secret-key
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - kith_dev_network
+    restart: unless-stopped
+
+  # Celery Worker (Development)
+  celery-worker:
+    build:
+      context: .
+      target: development
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/kith_dev
+      REDIS_URL: redis://redis:6379/0
+      FLASK_ENV: development
+      FLASK_SECRET_KEY: development-secret-key
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    command: ["python", "celery_worker.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - kith_dev_network
+    restart: unless-stopped
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  kith_dev_network:
+    driver: bridge

@@ -3,6 +3,7 @@ import openai
 import google.generativeai as genai
 from typing import Dict, Any, List
 import logging
+from app.utils.structured_logging import log_performance, StructuredLogger
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class AIService:
         if self.gemini_api_key:
             genai.configure(api_key=self.gemini_api_key)
     
+    @log_performance("ai_analysis")
     def analyze_note(self, content: str, contact_name: str) -> Dict[str, Any]:
         """Analyze a note and extract structured information"""
         try:

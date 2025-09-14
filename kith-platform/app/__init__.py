@@ -34,14 +34,14 @@ def create_app(config_class=Config):
     # Add logging middleware
     app.wsgi_app = LoggingMiddleware(app.wsgi_app)
     
-    # Initialize monitoring (with error handling) - disabled for faster startup
-    # try:
-    #     from app.utils.monitoring import initialize_monitoring
-    #     from app.utils.database import DatabaseManager
-    #     db_manager = DatabaseManager()
-    #     initialize_monitoring(db_manager)
-    # except Exception as e:
-    #     logging.warning(f"Monitoring initialization failed: {e}. Continuing without monitoring.")
+    # Initialize monitoring (with error handling)
+    try:
+        from app.utils.monitoring import initialize_monitoring
+        from app.utils.database import DatabaseManager
+        db_manager = DatabaseManager()
+        initialize_monitoring(db_manager)
+    except Exception as e:
+        logging.warning(f"Monitoring initialization failed: {e}. Continuing without monitoring.")
     
     # Register blueprints (with error handling)
     try:
@@ -89,7 +89,12 @@ def create_app(config_class=Config):
     @app.route('/')
     def index():
         """Main application route"""
-        return {'message': 'Kith Platform API', 'status': 'running', 'version': '3.0.0'}, 200
+        try:
+            from flask import render_template
+            return render_template('index.html')
+        except Exception as e:
+            logging.warning(f"Template rendering failed: {e}")
+            return {'message': 'Kith Platform API', 'status': 'running', 'version': '3.0.0'}, 200
     
     @app.route('/health')
     def health_check():

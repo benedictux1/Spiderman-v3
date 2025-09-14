@@ -34,11 +34,14 @@ def create_app(config_class=Config):
     # Add logging middleware
     app.wsgi_app = LoggingMiddleware(app.wsgi_app)
     
-    # Initialize monitoring
-    from app.utils.monitoring import initialize_monitoring
-    from app.utils.database import DatabaseManager
-    db_manager = DatabaseManager()
-    initialize_monitoring(db_manager)
+    # Initialize monitoring (with error handling)
+    try:
+        from app.utils.monitoring import initialize_monitoring
+        from app.utils.database import DatabaseManager
+        db_manager = DatabaseManager()
+        initialize_monitoring(db_manager)
+    except Exception as e:
+        logging.warning(f"Monitoring initialization failed: {e}. Continuing without monitoring.")
     
     # Register blueprints
     from app.api.auth import auth_bp
@@ -70,25 +73,34 @@ def create_app(config_class=Config):
     @app.route('/health')
     def health_check():
         """Health check endpoint"""
-        from app.utils.monitoring import health_checker
-        if health_checker:
-            return health_checker.get_overall_health()
+        try:
+            from app.utils.monitoring import health_checker
+            if health_checker:
+                return health_checker.get_overall_health()
+        except Exception as e:
+            logging.warning(f"Health check failed: {e}")
         return {'status': 'healthy', 'version': '3.0.0'}
     
     @app.route('/metrics')
     def get_metrics():
         """Get application metrics"""
-        from app.utils.monitoring import metrics_collector
-        if metrics_collector:
-            return metrics_collector.get_metrics_summary()
+        try:
+            from app.utils.monitoring import metrics_collector
+            if metrics_collector:
+                return metrics_collector.get_metrics_summary()
+        except Exception as e:
+            logging.warning(f"Metrics collection failed: {e}")
         return {'metrics': 'not_available'}
     
     @app.route('/health/detailed')
     def detailed_health_check():
         """Detailed health check with individual component status"""
-        from app.utils.monitoring import health_checker
-        if health_checker:
-            return health_checker.get_overall_health()
+        try:
+            from app.utils.monitoring import health_checker
+            if health_checker:
+                return health_checker.get_overall_health()
+        except Exception as e:
+            logging.warning(f"Detailed health check failed: {e}")
         return {'status': 'healthy', 'version': '3.0.0'}
     
     return app

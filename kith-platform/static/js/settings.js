@@ -132,6 +132,9 @@ async function createContact(name, tier) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ full_name: name, tier: tier })
         });
+        if (response.status === 401) {
+            throw new Error('You must log in to create contacts.');
+        }
         const result = await response.json();
         if (response.ok) {
             return result;

@@ -72,6 +72,17 @@ function setupTagEventListeners() {
 async function loadAllTags() {
     try {
         const response = await fetch('/api/tags');
+        if (response.status === 401) {
+            // Avoid toast spam; show a single actionable message
+            if (!document.getElementById('login-required-banner')) {
+                const banner = document.createElement('div');
+                banner.id = 'login-required-banner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ffe9e9;color:#a00;padding:10px 16px;z-index:9999;text-align:center;';
+                banner.innerHTML = 'You are not logged in. <a href="/login" style="color:#a00;text-decoration:underline;">Log in</a> to manage tags.';
+                document.body.appendChild(banner);
+            }
+            return;
+        }
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -80,7 +91,10 @@ async function loadAllTags() {
         renderTagsManagement();
     } catch (error) {
         console.error('Error loading tags:', error);
-        showToast('Failed to load tags', 'error');
+        // Suppress duplicate toasts if banner is present
+        if (!document.getElementById('login-required-banner')) {
+            showToast('Failed to load tags', 'error');
+        }
     }
 }
 

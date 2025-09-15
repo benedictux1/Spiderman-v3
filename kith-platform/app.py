@@ -5527,6 +5527,7 @@ def create_relationship():
 # ==================== TAG MANAGEMENT API ENDPOINTS ====================
 
 @app.route('/api/tags', methods=['GET'])
+@login_required
 @cache.cached(timeout=600)
 def get_tags():
     """Get all tags for the current user."""
@@ -5551,6 +5552,7 @@ def get_tags():
         return jsonify({"error": f"Failed to get tags: {e}"}), 500
 
 @app.route('/api/tags', methods=['POST'])
+@login_required
 def create_tag():
     """Create a new tag."""
     try:
@@ -5607,12 +5609,13 @@ def create_tag():
         return jsonify({"error": f"Failed to create tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>', methods=['GET'])
+@login_required
 def get_tag(tag_id):
     """Get a specific tag by ID."""
     try:
         session = get_session()
         try:
-            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
             if not tag:
                 return jsonify({"error": "Tag not found"}), 404
             
@@ -5633,12 +5636,13 @@ def get_tag(tag_id):
         return jsonify({"error": f"Failed to get tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>/contacts', methods=['GET'])
+@login_required
 def get_contacts_for_tag(tag_id):
     """Get all contacts associated with a specific tag."""
     try:
         session = get_session()
         try:
-            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
             if not tag:
                 return jsonify({"error": "Tag not found"}), 404
             
@@ -5651,6 +5655,7 @@ def get_contacts_for_tag(tag_id):
         return jsonify({"error": f"Failed to get contacts for tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>', methods=['PATCH'])
+@login_required
 def update_tag(tag_id):
     """Update a tag's properties."""
     try:
@@ -5660,7 +5665,7 @@ def update_tag(tag_id):
         
         session = get_session()
         try:
-            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
             if not tag:
                 return jsonify({"error": "Tag not found"}), 404
             

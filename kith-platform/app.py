@@ -2583,25 +2583,31 @@ def create_contact():
                 session.add(new_contact)
                 session.commit()
 
-                logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
-                # Invalidate caches affected by contact changes
-                try:
-                    cache.delete_memoized(get_contacts)
-                    cache.delete_memoized(get_graph_data)
-                except Exception:
-                    pass
-                return jsonify({
-                    "message": f"Contact '{full_name}' created successfully",
-                    "contact_id": new_contact.id
-                }), 201
-            except Exception as e:
-                session.rollback()
-                raise
-            finally:
-                session.close()
-
+        logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
+        # Invalidate caches affected by contact changes
+        try:
+            cache.delete_memoized(get_contacts)
+            cache.delete_memoized(get_graph_data)
+        except Exception:
+            pass
+        return jsonify({
+            "message": f"Contact '{full_name}' created successfully",
+            "contact_id": new_contact.id
+        }), 201
     except Exception as e:
-        return jsonify({"error": f"Failed to create contact: {e}"}), 500
+        session.rollback()
+        logger.error(f"Database error creating contact: {e}")
+        # Check if it's a database constraint error
+        error_msg = str(e).lower()
+        if 'check' in error_msg or 'constraint' in error_msg:
+            return jsonify({"error": f"Database validation failed: {e}"}), 400
+        raise
+    finally:
+        session.close()
+
+except Exception as e:
+    logger.error(f"Contact creation failed: {e}")
+    return jsonify({"error": f"Failed to create contact: {e}"}), 500
 
 @app.route('/api/contacts/<int:contact_id>', methods=['DELETE'])
 def delete_contact(contact_id):
@@ -5527,11 +5533,14 @@ def create_relationship():
 # ==================== TAG MANAGEMENT API ENDPOINTS ====================
 
 @app.route('/api/tags', methods=['GET'])
-@login_required
 @cache.cached(timeout=600)
 def get_tags():
     """Get all tags for the current user."""
     try:
+        # Check if user is authenticated
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+        
         session = get_session()
         try:
             # Eager load tag.contacts count with selectinload to avoid N+1
@@ -5552,10 +5561,13 @@ def get_tags():
         return jsonify({"error": f"Failed to get tags: {e}"}), 500
 
 @app.route('/api/tags', methods=['POST'])
-@login_required
 def create_tag():
     """Create a new tag."""
     try:
+        # Check if user is authenticated
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+            
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
@@ -5609,10 +5621,13 @@ def create_tag():
         return jsonify({"error": f"Failed to create tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>', methods=['GET'])
-@login_required
 def get_tag(tag_id):
     """Get a specific tag by ID."""
     try:
+        # Check if user is authenticated
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+            
         session = get_session()
         try:
             tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
@@ -5636,10 +5651,13 @@ def get_tag(tag_id):
         return jsonify({"error": f"Failed to get tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>/contacts', methods=['GET'])
-@login_required
 def get_contacts_for_tag(tag_id):
     """Get all contacts associated with a specific tag."""
     try:
+        # Check if user is authenticated
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+            
         session = get_session()
         try:
             tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
@@ -5655,10 +5673,13 @@ def get_contacts_for_tag(tag_id):
         return jsonify({"error": f"Failed to get contacts for tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>', methods=['PATCH'])
-@login_required
 def update_tag(tag_id):
     """Update a tag's properties."""
     try:
+        # Check if user is authenticated
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+            
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400

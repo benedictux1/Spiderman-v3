@@ -2362,10 +2362,15 @@ Based on the context package above, perform your analysis and return the JSON ob
 @app.route('/')
 def index():
     try:
-        if current_user.is_authenticated:
+        # More robust authentication check
+        if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated and hasattr(current_user, 'id'):
+            logger.info(f"Authenticated user {current_user.id} accessing main page")
             return render_template('index.html')
-        return render_template('login.html')
-    except Exception:
+        else:
+            logger.info("Unauthenticated user redirected to login")
+            return render_template('login.html')
+    except Exception as e:
+        logger.warning(f"Authentication check failed: {e}, showing login")
         return render_template('login.html')
 
 @app.route('/login', methods=['GET'])
@@ -2638,6 +2643,24 @@ def debug_contact_validation():
     except Exception as e:
         logger.error(f"Debug validation failed: {e}")
         return jsonify({"error": f"Debug validation failed: {e}", "step": "exception"}), 500
+
+@app.route('/api/debug/auth-status', methods=['GET'])
+def debug_auth_status():
+    """Debug endpoint to check authentication status."""
+    try:
+        auth_info = {
+            "has_current_user": hasattr(current_user, 'is_authenticated'),
+            "is_authenticated": getattr(current_user, 'is_authenticated', False) if hasattr(current_user, 'is_authenticated') else False,
+            "has_id": hasattr(current_user, 'id'),
+            "user_id": getattr(current_user, 'id', None) if hasattr(current_user, 'id') else None,
+            "user_type": str(type(current_user)),
+            "session_keys": list(request.cookies.keys()) if request.cookies else []
+        }
+        logger.info(f"Auth debug info: {auth_info}")
+        return jsonify(auth_info)
+    except Exception as e:
+        logger.error(f"Auth debug failed: {e}")
+        return jsonify({"error": f"Auth debug failed: {e}"}), 500
 
 @app.route('/api/contacts/<int:contact_id>', methods=['DELETE'])
 def delete_contact(contact_id):

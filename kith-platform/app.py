@@ -2551,69 +2551,72 @@ def get_contacts():
 @login_required
 def create_contact():
     """Create a new contact (stores in PostgreSQL/SQLite via SQLAlchemy)."""
-    try:
-        data = request.get_json()
-        logger.info(f"Contact creation request received: {data}")
-        
-        if not data:
-            logger.warning("Create contact: No data provided")
-            return jsonify({"error": "No data provided"}), 400
+    data = request.get_json()
+    logger.info(f"Contact creation request received: {data}")
 
-        original_name = data.get('full_name')
-        full_name = validate_input('contact_name', original_name)
-        tier = validate_input('tier', data.get('tier', 2))
-        
-        logger.info(f"Validation results - Original: '{original_name}', Validated: '{full_name}', Tier: {tier}")
+    if not data:
+        logger.warning("Create contact: No data provided")
+        return jsonify({"error": "No data provided"}), 400
 
-        if not full_name:
-            logger.warning(f"Create contact: Invalid full name provided: {original_name}")
-            return jsonify({"error": "Valid full name is required (1-255 characters)"}), 400
+    original_name = data.get('full_name')
+    full_name = validate_input('contact_name', original_name)
+    tier = validate_input('tier', data.get('tier', 2))
 
-        from models import get_session, Contact
-        from sqlalchemy import func
+    logger.info(
+        f"Validation results - Original: '{original_name}', Validated: '{full_name}', Tier: {tier}"
+    )
 
-        with CONTACT_CREATION_LOCK:  # Thread-safe contact creation
-            session = get_session()
+    if not full_name:
+        logger.warning(
+            f"Create contact: Invalid full name provided: {original_name}"
+        )
+        return jsonify({"error": "Valid full name is required (1-255 characters)"}), 400
+
+    from models import get_session, Contact
+    from sqlalchemy import func
+
+    with CONTACT_CREATION_LOCK:  # Thread-safe contact creation
+        session = get_session()
+        try:
+            # Duplicate check (case-insensitive)
+            existing = session.query(Contact).filter(
+                Contact.user_id == current_user.id,
+                func.lower(Contact.full_name) == func.lower(full_name)
+            ).first()
+            if existing:
+                return jsonify({"error": "Contact already exists"}), 409
+
+            new_contact = Contact(
+                full_name=full_name,
+                tier=int(tier) if str(tier).isdigit() else 2,
+                user_id=current_user.id,
+                vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
+            )
+            session.add(new_contact)
+            session.commit()
+
+            logger.info(
+                f"Created new contact: '{full_name}' (ID: {new_contact.id})"
+            )
+            # Invalidate caches affected by contact changes
             try:
-                # Duplicate check (case-insensitive)
-                existing = session.query(Contact).filter(
-                    Contact.user_id == current_user.id,
-                    func.lower(Contact.full_name) == func.lower(full_name)
-                ).first()
-                if existing:
-                    # If a duplicate exists, return the error immediately and do not proceed.
-                    return jsonify({"error": "Contact already exists"}), 409
-
-                new_contact = Contact(
-                    full_name=full_name,
-                    tier=int(tier) if str(tier).isdigit() else 2,
-                    user_id=current_user.id,
-                    vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
-                )
-                session.add(new_contact)
-                session.commit()
-
-                logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
-                # Invalidate caches affected by contact changes
-                try:
-                    cache.delete_memoized(get_contacts)
-                    cache.delete_memoized(get_graph_data)
-                except Exception:
-                    pass
-                return jsonify({
-                    "message": f"Contact '{full_name}' created successfully",
-                    "contact_id": new_contact.id
-                }), 201
-            except Exception as e:
-                session.rollback()
-                logger.error(f"Database error creating contact: {e}")
-                # Check if it's a database constraint error
-                error_msg = str(e).lower()
-                if 'check' in error_msg or 'constraint' in error_msg:
-                    return jsonify({"error": f"Database validation failed: {e}"}), 400
-                raise
-            finally:
-                session.close()
+                cache.delete_memoized(get_contacts)
+                cache.delete_memoized(get_graph_data)
+            except Exception:
+                pass
+            return jsonify({
+                "message": f"Contact '{full_name}' created successfully",
+                "contact_id": new_contact.id
+            }), 201
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Database error creating contact: {e}")
+            error_msg = str(e).lower()
+            if 'check' in error_msg or 'constraint' in error_msg:
+                return jsonify({"error": f"Database validation failed: {e}"}), 400
+            raise
+        finally:
+            session.close()
 
 @app.route('/api/debug/contact-validation', methods=['POST'])
 def debug_contact_validation():

@@ -2593,31 +2593,27 @@ def create_contact():
                 session.add(new_contact)
                 session.commit()
 
-        logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
-        # Invalidate caches affected by contact changes
-        try:
-            cache.delete_memoized(get_contacts)
-            cache.delete_memoized(get_graph_data)
-        except Exception:
-            pass
-        return jsonify({
-            "message": f"Contact '{full_name}' created successfully",
-            "contact_id": new_contact.id
-        }), 201
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Database error creating contact: {e}")
-        # Check if it's a database constraint error
-        error_msg = str(e).lower()
-        if 'check' in error_msg or 'constraint' in error_msg:
-            return jsonify({"error": f"Database validation failed: {e}"}), 400
-        raise
-    finally:
-        session.close()
-
-except Exception as e:
-    logger.error(f"Contact creation failed: {e}")
-    return jsonify({"error": f"Failed to create contact: {e}"}), 500
+                logger.info(f"Created new contact: '{full_name}' (ID: {new_contact.id})")
+                # Invalidate caches affected by contact changes
+                try:
+                    cache.delete_memoized(get_contacts)
+                    cache.delete_memoized(get_graph_data)
+                except Exception:
+                    pass
+                return jsonify({
+                    "message": f"Contact '{full_name}' created successfully",
+                    "contact_id": new_contact.id
+                }), 201
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Database error creating contact: {e}")
+                # Check if it's a database constraint error
+                error_msg = str(e).lower()
+                if 'check' in error_msg or 'constraint' in error_msg:
+                    return jsonify({"error": f"Database validation failed: {e}"}), 400
+                raise
+            finally:
+                session.close()
 
 @app.route('/api/debug/contact-validation', methods=['POST'])
 def debug_contact_validation():

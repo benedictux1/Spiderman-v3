@@ -109,14 +109,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 try {
-                    await createContact(name, tier);
+                    const result = await createContact(name, tier);
                     createContactModal.style.display = 'none';
                     createContactForm.reset();
                     // Refresh both settings table and main view lists
-                    if (typeof loadContacts === 'function') loadContacts();
+                    if (typeof loadContacts === 'function') loadContacts(true);
                     if (typeof loadTier1Contacts === 'function') loadTier1Contacts();
                     if (typeof loadTier2Contacts === 'function') loadTier2Contacts();
-                    alert('Contact created successfully!');
+                    const msg = result?.already_exists ? 'Contact already exists. Using existing entry.' : 'Contact created successfully!';
+                    alert(msg);
                 } catch (e) {
                     alert('Error creating contact: ' + (e.message || e));
                 }
@@ -135,12 +136,17 @@ async function createContact(name, tier) {
         if (response.status === 401) {
             throw new Error('You must log in to create contacts.');
         }
-        const result = await response.json();
+        // Treat 200/201 as success. If 409, try to parse and treat as success if body indicates existing
+        const text = await response.text();
+        let result = {};
+        try { result = text ? JSON.parse(text) : {}; } catch (_) { result = {}; }
         if (response.ok) {
             return result;
-        } else {
-            throw new Error(result.error || 'Failed to create contact');
         }
+        if (response.status === 409 && result && (result.already_exists || /already exists/i.test(result.error||''))) {
+            return { already_exists: true, contact_id: result.contact_id };
+        }
+        throw new Error(result.error || `Failed to create contact (HTTP ${response.status})`);
     } catch (error) {
         console.error('Error creating contact:', error);
         throw error;

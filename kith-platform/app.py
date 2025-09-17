@@ -20,6 +20,7 @@ from s3_storage import s3_storage
 from google_credentials import setup_google_credentials
 from models import Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship, Tag, ContactTag
 from app.utils.database import DatabaseManager
+from config.database import DatabaseConfig
 from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime
 from analytics import RelationshipAnalytics
@@ -2443,7 +2444,7 @@ def get_config():
             "raw_length": len(raw_key),
             "cleaned_length": len(api_key) if api_key else 0
         },
-        "database_type": "postgresql" if "postgresql" in get_database_url() else "sqlite",
+        "database_type": "postgresql" if "postgresql" in DatabaseConfig.get_database_url() else "sqlite",
         "features": {
             "ai_analysis": bool(api_key),
             "mock_analysis": True,
@@ -2562,7 +2563,14 @@ def create_contact():
                 func.lower(Contact.full_name) == func.lower(full_name)
             ).first()
             if existing:
-                return jsonify({"error": "Contact already exists"}), 409
+                # Make contact creation idempotent: if a contact with the same
+                # normalized name already exists for this user, return success
+                # with the existing contact_id so the client can proceed.
+                return jsonify({
+                    "message": f"Contact '{full_name}' already exists",
+                    "contact_id": existing.id,
+                    "already_exists": True
+                }), 200
 
             new_contact = Contact(
                 full_name=full_name,
@@ -2580,6 +2588,12 @@ def create_contact():
             try:
                 cache.delete_memoized(get_contacts)
                 cache.delete_memoized(get_graph_data)
+            except Exception:
+                pass
+            # Proactively warm the contacts cache for current user
+            try:
+                with app.test_request_context('/api/contacts'):
+                    get_contacts()
             except Exception:
                 pass
             return jsonify({

@@ -1,9 +1,10 @@
 // Contact management functions
 // Handles loading, displaying, and managing contacts
 
-async function loadContacts() {
+async function loadContacts(bustCache = false) {
     try {
-        const response = await fetch('/api/contacts');
+        const url = bustCache ? `/api/contacts?_=${Date.now()}` : '/api/contacts';
+        const response = await fetch(url);
         const contacts = await response.json();
         
         const tbody = document.querySelector('#contacts-table tbody');
@@ -80,7 +81,7 @@ async function loadContacts() {
 
 async function loadTier1Contacts() {
     try {
-        const response = await fetch('/api/contacts?tier=1');
+        const response = await fetch(`/api/contacts?tier=1&_=${Date.now()}`);
         const contacts = await response.json();
         const tier1 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 1) : [];
         displayTier1Contacts(tier1);
@@ -91,7 +92,7 @@ async function loadTier1Contacts() {
 
 async function loadTier2Contacts() {
     try {
-        const response = await fetch('/api/contacts?tier=2');
+        const response = await fetch(`/api/contacts?tier=2&_=${Date.now()}`);
         const contacts = await response.json();
         const tier2 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 2) : [];
         displayTier2Contacts(tier2);

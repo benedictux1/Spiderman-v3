@@ -18,7 +18,8 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from s3_storage import s3_storage
 from google_credentials import setup_google_credentials
-from models import init_db, get_session, Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship, Tag, ContactTag
+from models import Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship, Tag, ContactTag
+from app.utils.database import DatabaseManager
 from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime
 from analytics import RelationshipAnalytics
@@ -57,6 +58,13 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY') or hashlib.sha256(os.ur
 
 # Enable CORS for production
 CORS(app, origins=["*"])  # Configure with specific origins in production
+
+# --- Database Session Management ---
+_db_manager = DatabaseManager()
+
+def get_session():
+    """Get a new SQLAlchemy session (synchronous)."""
+    return _db_manager.get_session_sync()
 
 # --- Caching (Redis preferred, fallback to SimpleCache) ---
 _REDIS_URL = os.getenv('REDIS_URL') or os.getenv('REDIS_INTERNAL_URL')

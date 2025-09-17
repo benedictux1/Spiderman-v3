@@ -4,8 +4,12 @@ from config.database import DatabaseConfig
 
 class DatabaseManager:
     def __init__(self):
-        self.engine = DatabaseConfig.create_engine()
-        self.SessionLocal = sessionmaker(bind=self.engine)
+        try:
+            self.engine = DatabaseConfig.create_engine()
+            self.SessionLocal = sessionmaker(bind=self.engine)
+        except Exception as e:
+            print(f"Database initialization error: {e}")
+            raise
     
     @contextmanager
     def get_session(self):

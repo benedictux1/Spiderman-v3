@@ -2401,8 +2401,8 @@ def health_check():
     """Health check endpoint for production monitoring."""
     try:
         # Test database connectivity
-        from models import get_database_url, get_session
-        db_url = get_database_url()
+        from config.database import DatabaseConfig
+        db_url = DatabaseConfig.get_database_url()
         session = get_session()
         
         # Try to query the database
@@ -2524,7 +2524,6 @@ def add_no_cache_headers(response):
 def get_contacts():
     """Get all contacts (uses SQLAlchemy so data persists on Render/PostgreSQL)."""
     try:
-        from models import get_session, Contact
         session = get_session()
         try:
             limit = min(int(request.args.get('limit', 1000)), 1000)
@@ -2580,7 +2579,6 @@ def create_contact():
         )
         return jsonify({"error": "Valid full name is required (1-255 characters)"}), 400
 
-    from models import get_session, Contact
     from sqlalchemy import func
 
     with CONTACT_CREATION_LOCK:  # Thread-safe contact creation
@@ -2828,7 +2826,6 @@ def import_vcard_endpoint():
 @app.route('/api/contact/<int:contact_id>', methods=['GET'])
 def get_contact_details(contact_id):
     """Fetches all synthesized data for a single contact, ordered correctly."""
-    from models import get_session, Contact, SynthesizedEntry
     from constants import CATEGORY_ORDER
 
     session = get_session()
@@ -4560,7 +4557,8 @@ def bootstrap_database_once():
         return
     try:
         logger.info("🚀 Starting database bootstrap...")
-        init_db()
+        # Database initialization is now handled by Alembic migrations
+        # No need to call init_db() as we're using PostgreSQL with proper migrations
         logger.info("✅ Database initialized successfully")
         ensure_runtime_migrations()
         logger.info("✅ Database migrations ensured")

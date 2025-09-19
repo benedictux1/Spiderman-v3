@@ -1,6 +1,7 @@
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.pool import QueuePool
+from database.connection_manager import get_connection_manager, get_engine, get_session
 
 class DatabaseConfig:
     @staticmethod
@@ -22,16 +23,23 @@ class DatabaseConfig:
     
     @staticmethod
     def create_engine():
-        """Create SQLAlchemy engine with PostgreSQL optimized settings."""
-        database_url = DatabaseConfig.get_database_url()
-
-        # PostgreSQL settings with connection pooling
-        return create_engine(
-            database_url,
-            poolclass=QueuePool,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,
-            pool_recycle=3600,
-            echo=os.getenv('SQLALCHEMY_ECHO', '').lower() == 'true'
-        )
+        """Create SQLAlchemy engine with optimized connection pooling."""
+        # Use the smart connection manager for better performance
+        return get_engine()
+    
+    @staticmethod
+    def get_session():
+        """Get a database session with automatic retry logic."""
+        return get_session()
+    
+    @staticmethod
+    def get_connection_stats():
+        """Get connection pool statistics."""
+        from database.connection_manager import get_stats
+        return get_stats()
+    
+    @staticmethod
+    def test_connection():
+        """Test database connection."""
+        from database.connection_manager import test_connection
+        return test_connection()

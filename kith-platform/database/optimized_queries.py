@@ -5,7 +5,8 @@
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy import select, and_, or_, func, text
 from models import Contact, ContactTag, Tag, SynthesizedEntry, RawNote, User
-from config.database import DatabaseManager
+from config.database import DatabaseConfig
+from database.connection_manager import get_session
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,8 +14,8 @@ logger = logging.getLogger(__name__)
 class OptimizedContactQueries:
     """Optimized database queries that eliminate N+1 problems"""
     
-    def __init__(self, db_manager: DatabaseManager):
-        self.db_manager = db_manager
+    def __init__(self, db_config: DatabaseConfig):
+        self.db_config = db_config
     
     def get_contacts_with_details(self, user_id: int, tier: int = None, search: str = None, limit: int = None):
         """
@@ -30,7 +31,7 @@ class OptimizedContactQueries:
         Returns:
             List of contact dictionaries with all related data
         """
-        with self.db_manager.get_session() as session:
+        with get_session() as session:
             # Build the base query with eager loading of related data
             query = session.query(Contact).options(
                 # Load tags in a single additional query instead of N queries
@@ -94,7 +95,7 @@ class OptimizedContactQueries:
         Get complete contact profile with all details in optimized queries.
         Uses at most 2 database queries instead of potentially dozens.
         """
-        with self.db_manager.get_session() as session:
+        with get_session() as session:
             # Query 1: Get contact with basic related data
             contact = session.query(Contact).options(
                 selectinload(Contact.contact_tags).selectinload(ContactTag.tag)
@@ -159,7 +160,7 @@ class OptimizedContactQueries:
         Get tier summary statistics in a single optimized query.
         Replaces multiple COUNT queries with one efficient query.
         """
-        with self.db_manager.get_session() as session:
+        with get_session() as session:
             # Single query to get all tier counts
             result = session.query(
                 Contact.tier,
@@ -181,7 +182,7 @@ class OptimizedContactQueries:
         Optimized search using full-text search with proper indexing.
         Much faster than LIKE queries on large datasets.
         """
-        with self.db_manager.get_session() as session:
+        with get_session() as session:
             # Use full-text search if available, fallback to LIKE
             if search_term.strip():
                 # Try full-text search first (requires the GIN index)

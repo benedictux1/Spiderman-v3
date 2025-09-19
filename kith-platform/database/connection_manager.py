@@ -307,6 +307,10 @@ def get_stats() -> ConnectionStats:
     """Get connection statistics"""
     return get_connection_manager().get_connection_stats()
 
+def get_connection_stats() -> ConnectionStats:
+    """Get connection statistics (alias for get_stats)"""
+    return get_connection_manager().get_connection_stats()
+
 def test_connection() -> bool:
     """Test database connection"""
     return get_connection_manager().test_connection()

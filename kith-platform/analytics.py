@@ -4,39 +4,30 @@ Kith Platform - Advanced Analytics Module
 Provides relationship health metrics, insights, and analytics.
 """
 
-import sqlite3
 import json
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 from typing import Dict, List
 from constants import (
-    Categories, Analytics, DEFAULT_DB_NAME
+    Categories, Analytics
 )
+from app.utils.database import DatabaseManager
+from models import Contact, RawNote, SynthesizedEntry
+from sqlalchemy import func
 
 class RelationshipAnalytics:
     """Advanced analytics for relationship health and insights."""
-    
-    def __init__(self, db_path: str = DEFAULT_DB_NAME):
-        self.db_path = db_path
-    
-    def get_connection(self):
-        """Get database connection."""
-        return sqlite3.connect(self.db_path)
+
+    def __init__(self, db_manager: DatabaseManager = None):
+        self.db_manager = db_manager or DatabaseManager()
     
     def calculate_relationship_health_score(self, contact_id: int) -> Dict:
         """Calculate comprehensive relationship health score for a contact."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
+        with self.db_manager.get_session() as session:
             # Get all entries for this contact
-            cursor.execute("""
-                SELECT category, ai_confidence, created_at, is_approved
-                FROM synthesized_entries 
-                WHERE contact_id = ? AND is_approved = TRUE
-                ORDER BY created_at DESC
-            """, (contact_id,))
-            
-            entries = cursor.fetchall()
+            entries = session.query(SynthesizedEntry).filter(
+                SynthesizedEntry.contact_id == contact_id
+            ).order_by(SynthesizedEntry.created_at.desc()).all()
             
             if not entries:
                 return {
@@ -47,26 +38,26 @@ class RelationshipAnalytics:
                     "confidence_avg": 0,
                     "insights": ["No data available for this contact"]
                 }
-            
+
             # Calculate metrics
             total_interactions = len(entries)
-            confidence_scores = [entry[1] for entry in entries if entry[1] is not None]
+            confidence_scores = [entry.confidence_score for entry in entries if entry.confidence_score is not None]
             avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
-            
+
             # Category distribution
-            categories = [entry[0] for entry in entries]
+            categories = [entry.category for entry in entries]
             category_dist = Counter(categories)
-            
+
             # Recency score (more recent = better)
-            latest_date = max(entry[2] for entry in entries)
-            days_since_last = (datetime.now() - datetime.fromisoformat(latest_date)).days
+            latest_date = max(entry.created_at for entry in entries)
+            days_since_last = (datetime.now() - latest_date).days
             recency_score = max(0, 100 - (days_since_last * 2))  # Lose 2 points per day
-            
+
             # Engagement score based on interaction frequency
             if total_interactions > 0:
                 # Calculate interaction frequency over time
-                first_date = min(entry[2] for entry in entries)
-                total_days = (datetime.fromisoformat(latest_date) - datetime.fromisoformat(first_date)).days + 1
+                first_date = min(entry.created_at for entry in entries)
+                total_days = (latest_date - first_date).days + 1
                 interactions_per_week = (total_interactions / total_days) * 7
                 engagement_score = min(100, interactions_per_week * 10)  # 10 interactions/week = 100 score
             else:

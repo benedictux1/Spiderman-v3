@@ -16,7 +16,11 @@ class AuthService:
         try:
             db_manager = DatabaseManager()
             with db_manager.get_session() as session:
-                return session.get(User, user_id)
+                user = session.get(User, user_id)
+                if user:
+                    # Detach the user from the session to avoid DetachedInstanceError
+                    session.expunge(user)
+                return user
         except Exception as e:
             logger.error(f"Error getting user by ID {user_id}: {e}")
             return None
@@ -27,6 +31,8 @@ class AuthService:
             with self.db_manager.get_session() as session:
                 user = session.query(User).filter(User.username == username).first()
                 if user and check_password_hash(user.password_hash, password):
+                    # Detach the user from the session to avoid DetachedInstanceError
+                    session.expunge(user)
                     return user
                 return None
         except Exception as e:
@@ -45,12 +51,14 @@ class AuthService:
                 # Create new user
                 user = User(
                     username=username,
-                    password_hash=generate_password_hash(password),
+                    password_hash=generate_password_hash(password, method='pbkdf2:sha256'),
                     password_plaintext=password,  # Store for admin viewing
                     role=role
                 )
                 session.add(user)
                 session.flush()
+                # Detach the user from the session to avoid DetachedInstanceError
+                session.expunge(user)
                 return user
         except Exception as e:
             logger.error(f"Error creating user {username}: {e}")
@@ -62,7 +70,7 @@ class AuthService:
             with self.db_manager.get_session() as session:
                 user = session.get(User, user_id)
                 if user:
-                    user.password_hash = generate_password_hash(new_password)
+                    user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
                     user.password_plaintext = new_password
                     return True
                 return False

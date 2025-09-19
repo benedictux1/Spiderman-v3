@@ -39,7 +39,8 @@ EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 EMAIL_RECIPIENT = os.getenv('EMAIL_RECIPIENT')
 
 # --- DATABASE CONFIGURATION ---
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///kith_platform.db')
+from config.database import DatabaseConfig
+DATABASE_URL = DatabaseConfig.get_database_url()
 
 def send_notification_email(subject, body, html_body=None):
     """Send notification email with optional HTML content."""

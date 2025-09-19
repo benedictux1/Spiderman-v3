@@ -39,8 +39,8 @@ class Contact(Base):
     is_verified = Column(Boolean, default=False)    # Verified Telegram account
     is_premium = Column(Boolean, default=False)     # Premium Telegram account
     telegram_last_sync = Column(DateTime)           # Last successful sync
-    telegram_metadata = Column(JSON)                # For storing complex Telegram data
-    custom_fields = Column(JSON)                    # For extensible contact fields
+    telegram_metadata = Column(JSON)          # For storing complex Telegram data
+    custom_fields = Column(JSON)              # For extensible contact fields
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -58,7 +58,7 @@ class RawNote(Base):
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata_tags = Column(JSON)  # Proper JSON column for PostgreSQL
+    metadata_tags = Column(JSON)  # JSON column for PostgreSQL
     
     # Relationships
     contact = relationship("Contact", back_populates="raw_notes")

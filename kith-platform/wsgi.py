@@ -2,25 +2,19 @@
 """
 WSGI entry point for Kith Platform.
 
-Important: We explicitly load the monolithic `app.py` (Flask app instance named `app`)
-to avoid name collision with the `app/` package directory. Importing `app` by name
-would resolve to the package, not the file. Using SourceFileLoader guarantees we load
-the intended module.
+Uses the new modular application structure with proper PostgreSQL support.
 """
 
 import os
-from importlib.machinery import SourceFileLoader
+from app import create_app
+from config.settings import ProductionConfig, DevelopmentConfig
 
 # Ensure we're in production mode
 os.environ.setdefault('FLASK_ENV', 'production')
 
-# Resolve path to the monolithic Flask app file
-BASE_DIR = os.path.dirname(__file__)
-APP_FILE_PATH = os.path.join(BASE_DIR, 'app.py')
-
-# Dynamically load the `app.py` module and retrieve the Flask app object
-mono_module = SourceFileLoader('kith_mono_app', APP_FILE_PATH).load_module()
-app = getattr(mono_module, 'app')
+# Create the app using the appropriate configuration
+config_class = ProductionConfig if os.getenv('FLASK_ENV') == 'production' else DevelopmentConfig
+app = create_app(config_class)
 
 # Gunicorn expects `application` by default
 application = app

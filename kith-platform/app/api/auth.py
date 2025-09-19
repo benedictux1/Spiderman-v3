@@ -46,6 +46,36 @@ def login():
             return jsonify({'error': 'Internal server error'}), 500
         return render_template('login.html', error='Login failed')
 
+@auth_bp.route('/register', methods=['POST'])
+def register():
+    """Handle user registration"""
+    try:
+        data = request.get_json() if request.is_json else request.form
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'error': 'Username and password required'}), 400
+        
+        auth_service = AuthService(container.database_manager)
+        user = auth_service.create_user(username, password)
+        
+        if user:
+            login_user(user)
+            if request.is_json:
+                return jsonify({'success': True, 'user': {'id': user.id, 'username': user.username}})
+            return redirect(url_for('index'))
+        else:
+            if request.is_json:
+                return jsonify({'error': 'Username already exists'}), 400
+            return render_template('login.html', error='Username already exists')
+            
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        if request.is_json:
+            return jsonify({'error': 'Internal server error'}), 500
+        return render_template('login.html', error='Registration failed')
+
 @auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():

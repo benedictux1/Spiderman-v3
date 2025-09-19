@@ -121,25 +121,73 @@ def get_tier_summary():
 @contacts_bp.route('/', methods=['POST'])
 @login_required
 def create_contact():
-    """Create a new contact"""
+    """Create a new contact (stores in PostgreSQL/SQLite via SQLAlchemy)."""
     try:
         data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['full_name', 'tier']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
-        
-        # Create contact (placeholder implementation)
-        # TODO: Implement actual contact creation
-        contact_id = 1
-        
-        return jsonify({
-            'success': True,
-            'data': {'contact_id': contact_id}
-        })
-        
+        logger.info(f"Contact creation request received: {data}")
+
+        if not data:
+            logger.warning("Create contact: No data provided")
+            return jsonify({"error": "No data provided"}), 400
+
+        original_name = data.get('full_name')
+        full_name = original_name.strip() if original_name else ""
+        tier = data.get('tier', 2)
+
+        logger.info(
+            f"Validation results - Original: '{original_name}', Validated: '{full_name}', Tier: {tier}"
+        )
+
+        if not full_name:
+            logger.warning(
+                f"Create contact: Invalid full name provided: {original_name}"
+            )
+            return jsonify({"error": "Full name is required"}), 400
+
+        from sqlalchemy import func
+        from models import Contact
+        import uuid
+        from database.connection_manager import get_session
+
+        with get_session() as session:
+            try:
+                # Duplicate check (case-insensitive)
+                existing = session.query(Contact).filter(
+                    Contact.user_id == current_user.id,
+                    func.lower(Contact.full_name) == func.lower(full_name)
+                ).first()
+                if existing:
+                    # Make contact creation idempotent: if a contact with the same
+                    # normalized name already exists for this user, return success
+                    # with the existing contact_id so the client can proceed.
+                    return jsonify({
+                        "message": f"Contact '{full_name}' already exists",
+                        "contact_id": existing.id,
+                        "already_exists": True
+                    }), 200
+
+                new_contact = Contact(
+                    full_name=full_name,
+                    tier=int(tier) if str(tier).isdigit() else 2,
+                    user_id=current_user.id,
+                    vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
+                )
+                session.add(new_contact)
+                session.commit()
+
+                logger.info(
+                    f"Created new contact: '{full_name}' (ID: {new_contact.id})"
+                )
+                
+                return jsonify({
+                    "message": f"Contact '{full_name}' created successfully",
+                    "contact_id": new_contact.id
+                }), 201
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Database error creating contact: {e}")
+                return jsonify({"error": f"Failed to create contact: {e}"}), 500
+
     except Exception as e:
         logger.error(f"Error creating contact: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500

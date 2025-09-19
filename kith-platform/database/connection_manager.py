@@ -244,10 +244,20 @@ class SmartConnectionManager:
         with self.lock:
             # Get pool statistics from engine
             pool = self.engine.pool
-            self.stats.total_connections = pool.size()
-            self.stats.active_connections = pool.checkedout()
-            self.stats.idle_connections = pool.checkedin()
-            self.stats.overflow_connections = pool.overflow()
+            
+            # Handle different pool types
+            if hasattr(pool, 'size'):
+                # QueuePool (PostgreSQL/MySQL)
+                self.stats.total_connections = pool.size()
+                self.stats.active_connections = pool.checkedout()
+                self.stats.idle_connections = pool.checkedin()
+                self.stats.overflow_connections = pool.overflow()
+            else:
+                # StaticPool (SQLite) - no meaningful pool stats
+                self.stats.total_connections = 1
+                self.stats.active_connections = 0
+                self.stats.idle_connections = 1
+                self.stats.overflow_connections = 0
             
             return ConnectionStats(
                 total_connections=self.stats.total_connections,

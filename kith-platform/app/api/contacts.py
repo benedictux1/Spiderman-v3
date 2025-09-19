@@ -35,16 +35,8 @@ def get_contacts():
         # Get tier summary
         tier_summary = optimized_queries.get_contacts_by_tier_summary(current_user.id)
         
-        return jsonify({
-            'success': True,
-            'data': {
-                'contacts': contacts,
-                'tier_summary': tier_summary,
-                'total': len(contacts),
-                'page': page,
-                'limit': limit
-            }
-        })
+        # Return contacts in the format expected by the frontend
+        return jsonify(contacts)
         
     except Exception as e:
         logger.error(f"Error getting contacts: {e}")

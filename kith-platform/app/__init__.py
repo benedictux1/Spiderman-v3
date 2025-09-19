@@ -93,13 +93,21 @@ def create_app(config_class=Config):
     # Add health and monitoring routes
     @app.route('/')
     def index():
-        """Main application route"""
+        """Main application route with authentication check"""
         try:
             from flask import render_template
-            return render_template('index.html')
+            from flask_login import current_user
+            
+            # Check if user is authenticated
+            if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated and hasattr(current_user, 'id'):
+                logging.info(f"Authenticated user {current_user.id} accessing main page")
+                return render_template('index.html')
+            else:
+                logging.info("Unauthenticated user redirected to login")
+                return render_template('login.html')
         except Exception as e:
-            logging.warning(f"Template rendering failed: {e}")
-            return {'message': 'Kith Platform API', 'status': 'running', 'version': '3.0.0'}, 200
+            logging.warning(f"Authentication check failed: {e}, showing login")
+            return render_template('login.html')
     
     @app.route('/health')
     def health_check():

@@ -35,7 +35,7 @@ class OptimizedContactQueries:
             # Build the base query with eager loading of related data
             query = session.query(Contact).options(
                 # Load tags in a single additional query instead of N queries
-                selectinload(Contact.contact_tags).selectinload(ContactTag.tag),
+                selectinload(Contact.tags),
                 # Load synthesized entries if needed (commented out for performance)
                 # selectinload(Contact.synthesized_entries)
             ).filter(Contact.user_id == user_id)
@@ -79,10 +79,10 @@ class OptimizedContactQueries:
                     # Include tags without additional queries
                     'tags': [
                         {
-                            'id': ct.tag.id,
-                            'name': ct.tag.name,
-                            'color': ct.tag.color
-                        } for ct in contact.contact_tags
+                            'id': tag.id,
+                            'name': tag.name,
+                            'color': getattr(tag, 'color', '#3b82f6')  # Default color if not set
+                        } for tag in contact.tags
                     ]
                 }
                 result.append(contact_dict)
@@ -98,7 +98,7 @@ class OptimizedContactQueries:
         with get_session() as session:
             # Query 1: Get contact with basic related data
             contact = session.query(Contact).options(
-                selectinload(Contact.contact_tags).selectinload(ContactTag.tag)
+                selectinload(Contact.tags)
             ).filter(
                 and_(Contact.id == contact_id, Contact.user_id == user_id)
             ).first()
@@ -142,10 +142,10 @@ class OptimizedContactQueries:
                     'updated_at': contact.updated_at.isoformat() if contact.updated_at else None,
                     'tags': [
                         {
-                            'id': ct.tag.id,
-                            'name': ct.tag.name,
-                            'color': ct.tag.color
-                        } for ct in contact.contact_tags
+                            'id': tag.id,
+                            'name': tag.name,
+                            'color': getattr(tag, 'color', '#3b82f6')  # Default color if not set
+                        } for tag in contact.tags
                     ]
                 },
                 'categorized_data': categorized_data,
@@ -188,7 +188,7 @@ class OptimizedContactQueries:
                 # Try full-text search first (requires the GIN index)
                 try:
                     query = session.query(Contact).options(
-                        selectinload(Contact.contact_tags).selectinload(ContactTag.tag)
+                        selectinload(Contact.tags)
                     ).filter(
                         and_(
                             Contact.user_id == user_id,
@@ -229,7 +229,7 @@ class OptimizedContactQueries:
                     logger.warning(f"Full-text search failed, using LIKE: {e}")
                     search_pattern = f"%{search_term.strip().lower()}%"
                     query = session.query(Contact).options(
-                        selectinload(Contact.contact_tags).selectinload(ContactTag.tag)
+                        selectinload(Contact.tags)
                     ).filter(
                         and_(
                             Contact.user_id == user_id,
@@ -271,10 +271,10 @@ class OptimizedContactQueries:
                     'updated_at': contact.updated_at.isoformat() if contact.updated_at else None,
                     'tags': [
                         {
-                            'id': ct.tag.id,
-                            'name': ct.tag.name,
-                            'color': ct.tag.color
-                        } for ct in contact.contact_tags
+                            'id': tag.id,
+                            'name': tag.name,
+                            'color': getattr(tag, 'color', '#3b82f6')  # Default color if not set
+                        } for tag in contact.tags
                     ]
                 }
                 result.append(contact_dict)

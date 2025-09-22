@@ -460,6 +460,43 @@ function renderContactProfile(profileData, noticeMessage) {
 
   container.appendChild(categoriesWrapper);
 
+  // If no data at all, show a helper CTA to seed demo data
+  const totalItems = (function() {
+    let n = 0; const cats = getCategoryOrder();
+    cats.forEach(cat => { n += (resolveCategoryItems(categories, cat) || []).length; });
+    return n;
+  })();
+  if (!totalItems) {
+    const cta = document.createElement('div');
+    cta.className = 'card';
+    cta.style.marginTop = '8px';
+    cta.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <div>Looks empty. Seed this contact with demo data?</div>
+        <button id="seed-demo-btn" class="btn">Seed Demo Data</button>
+      </div>`;
+    container.appendChild(cta);
+
+    const btn = cta.querySelector('#seed-demo-btn');
+    if (btn) {
+      btn.onclick = async () => {
+        const id = parseInt(document.getElementById('selected-contact-id').value, 10);
+        btn.disabled = true; btn.textContent = 'Seeding...';
+        try {
+          const res = await fetch(`/api/contact/${id}/seed-demo`, { method: 'POST' });
+          const out = await res.json();
+          if (!res.ok || out.error) throw new Error(out.error || 'Failed to seed');
+          await loadContactProfile(id);
+        } catch (e) {
+          console.error(e);
+          alert('Failed to seed demo data.');
+        } finally {
+          btn.disabled = false; btn.textContent = 'Seed Demo Data';
+        }
+      };
+    }
+  }
+
   // Control Edit/Save button visibility
   const editAllBtn = document.getElementById('edit-all-categories-btn');
   const saveAllBtn = document.getElementById('save-all-categories-btn');

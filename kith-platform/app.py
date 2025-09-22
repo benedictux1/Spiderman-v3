@@ -2875,6 +2875,53 @@ def get_contact_details(contact_id):
     finally:
         session.close()
 
+@app.route('/api/contact/<int:contact_id>/seed-demo', methods=['POST'])
+@login_required
+def seed_contact_demo_data(contact_id):
+    """Seed 5 categories with sample items for the given contact if needed."""
+    try:
+        session = get_session()
+        try:
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+
+            # If the contact already has entries, add a few more; otherwise create fresh
+            existing = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).count()
+
+            from constants import CATEGORY_ORDER
+            import random
+            from datetime import datetime, timedelta
+
+            categories = random.sample(CATEGORY_ORDER, 5)
+            samples = {
+                'Actionable': ["Follow up next week", "Send intro email"],
+                'Goals': ["Aiming for promotion", "Wants to learn ML"],
+                'Relationship strategy': ["Prefers WhatsApp", "Monthly check-in"],
+                'Avocation': ["Enjoys photography", "Likes hiking"],
+                'Professional background': ["Software engineer", "Led a team of 8"]
+            }
+
+            created = 0
+            for cat in categories:
+                for text in samples.get(cat, ["Sample info"]):
+                    session.add(SynthesizedEntry(
+                        contact_id=contact_id,
+                        category=cat,
+                        content=text,
+                        confidence_score=0.9,
+                        created_at=datetime.utcnow() - timedelta(days=random.randint(1, 60))
+                    ))
+                    created += 1
+
+            session.commit()
+            return jsonify({"success": True, "created": created, "existing": existing})
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Failed to seed demo data: {e}")
+        return jsonify({"error": f"Failed to seed demo data: {e}"}), 500
+
 @app.route('/api/contact/<int:contact_id>', methods=['PATCH'])
 def update_contact(contact_id):
     """Update contact information: full_name, telegram_username, and/or telegram_handle."""

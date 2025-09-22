@@ -2205,20 +2205,43 @@ SYNONYM_TO_CATEGORY = {
 }
 
 def canonicalize_category(category_name: str) -> str:
+    """Return a canonical category from potentially variant input.
+
+    Handles variations like underscores vs spaces and case differences
+    (e.g. "Communication_Style" → "Communication style").
+    """
     if not isinstance(category_name, str):
         return Categories.OTHERS
-    normalized = category_name.strip().replace(' ', '_')
-    # Exact match
-    if normalized in VALID_CATEGORY_SET:
-        return normalized
-    # Case-insensitive match
-    for cat in VALID_CATEGORY_SET:
-        if normalized.lower() == cat.lower():
-            return cat
-    # Synonym map
-    mapped = SYNONYM_TO_CATEGORY.get(normalized.lower())
+
+    raw = category_name.strip()
+
+    # Build a lookup map once: lowercased with underscores converted to spaces
+    # Example: "Communication style" -> key "communication style"
+    lower_lookup = {cat.lower().replace('_', ' '): cat for cat in VALID_CATEGORY_SET}
+
+    # Generate keys to try
+    candidates = [
+        raw,
+        raw.replace('_', ' '),
+        raw.replace(' ', '_'),
+    ]
+
+    # 1) Direct match against VALID_CATEGORY_SET
+    for cand in candidates:
+        if cand in VALID_CATEGORY_SET:
+            return cand
+
+    # 2) Case-insensitive + underscore/space-insensitive match
+    for cand in candidates:
+        key = cand.lower().replace('_', ' ')
+        if key in lower_lookup:
+            return lower_lookup[key]
+
+    # 3) Synonym map (expects lowercase keys)
+    mapped = SYNONYM_TO_CATEGORY.get(raw.lower()) or SYNONYM_TO_CATEGORY.get(raw.lower().replace('_', ' '))
     if mapped:
         return mapped
+
     return Categories.OTHERS
 
 import itertools

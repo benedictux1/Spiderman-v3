@@ -49,8 +49,7 @@ class OptimizedContactQueries:
                 query = query.filter(
                     or_(
                         func.lower(Contact.full_name).like(search_term),
-                        func.lower(Contact.company).like(search_term),
-                        func.lower(Contact.email).like(search_term)
+                        func.lower(Contact.telegram_username).like(search_term)
                     )
                 )
             
@@ -68,12 +67,11 @@ class OptimizedContactQueries:
                     'id': contact.id,
                     'full_name': contact.full_name,
                     'tier': contact.tier,
-                    'email': contact.email,
-                    'phone': contact.phone,
-                    'company': contact.company,
-                    'location': contact.location,
                     'telegram_username': contact.telegram_username,
                     'telegram_id': contact.telegram_id,
+                    'telegram_phone': contact.telegram_phone,
+                    'is_verified': contact.is_verified,
+                    'is_premium': contact.is_premium,
                     'created_at': contact.created_at.isoformat() if contact.created_at else None,
                     'updated_at': contact.updated_at.isoformat() if contact.updated_at else None,
                     # Include tags without additional queries

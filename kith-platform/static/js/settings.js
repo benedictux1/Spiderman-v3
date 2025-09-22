@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function createContact(name, tier) {
     try {
-        const response = await fetch('/api/contacts', {
+        const response = await fetch('/api/contacts/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ full_name: name, tier: tier })

@@ -14,15 +14,40 @@
 
 ### System Architecture Overview
 ```
-Frontend (Vanilla JS + CSS Grid)
-         ↓
-Flask Backend (Python)
-         ↓
-PostgreSQL Database
-         ↓
-AI Services (OpenAI/Gemini/Vision)
-         ↓
-External Integrations (Telegram/Files)
+┌─────────────────────────────────────────────────────────────┐
+│                    Frontend Layer                           │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ │
+│  │  UI Components  │ │ Cache Manager   │ │  Lazy Loader    │ │
+│  │  (Vanilla JS)   │ │ (5min TTL)      │ │ (20 items/batch)│ │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘ │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ REST API
+┌─────────────────────────▼───────────────────────────────────┐
+│                   Flask Backend                             │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────┐ │
+│  │  API Routes │ │  Services   │ │ Celery Tasks│ │ Utils   │ │
+│  │ (Blueprints)│ │   Layer     │ │ (Async BG)  │ │& Utils  │ │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────┘ │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ SQLAlchemy ORM
+┌─────────────────────────▼───────────────────────────────────┐
+│                 PostgreSQL Database                         │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐        │
+│  │   Contacts   │ │    Notes     │ │     Tags     │        │
+│  │ (Multi-user) │ │ (Raw + Synth)│ │ (Hierarchical)        │
+│  └──────────────┘ └──────────────┘ └──────────────┘        │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ External Integrations
+  ┌─────────────────┐     │     ┌─────────────────┐ ┌─────────┐
+  │  AI Services    │─────┼─────│  Telegram API   │ │ Redis   │
+  │ OpenAI/Gemini   │     │     │   (Telethon)    │ │ Cache   │
+  │ Vision API      │     │     │                 │ │ & Queue │
+  └─────────────────┘     │     └─────────────────┘ └─────────┘
+                          │
+            ┌─────────────▼─────────────┐
+            │    Monitoring & Health    │
+            │   Performance Analytics   │
+            └───────────────────────────┘
 ```
 
 ### Technology Stack
@@ -32,7 +57,1797 @@ External Integrations (Telegram/Files)
 - **AI Processing**: OpenAI API 0.28.1, Google Generative AI 0.8.5, Google Cloud Vision 3.10.2
 - **Integrations**: Telethon 1.34.0 (Telegram), vobject 0.9.6.1 (vCard), boto3 (AWS S3)
 - **Authentication**: Flask-Login 0.6.3 with PBKDF2-SHA256 hashing
+- **Performance**: Redis caching, lazy loading, background task processing
 - **Deployment**: Render.com, Docker support, environment-based configuration
+
+### Latest System Enhancements (2024)
+- **Performance Optimization**: Advanced lazy loading, search result caching, and real-time performance monitoring
+- **Enhanced UI/UX**: Modern design system with loading spinners, error states, and responsive layouts
+- **Background Processing**: Async task management with real-time progress tracking and status updates
+- **Advanced Search**: Full-text search with result highlighting, intelligent filtering, and autocomplete suggestions
+- **Cache Management**: Multi-level caching with cache hit/miss indicators and performance analytics
+
+## Core Features & Advanced Functionality
+
+### 1. Intelligent Contact Management System
+
+#### Three-Tier Classification Architecture
+```
+Tier 1: Close Contacts (Family, Best Friends, Romantic Partners)
+├── Priority scoring: 9-10 (highest engagement)
+├── Automatic reminder suggestions for important dates
+├── Enhanced profile details with relationship history
+├── Real-time interaction frequency tracking
+└── Advanced relationship strength analytics
+
+Tier 2: Regular Contacts (Colleagues, Acquaintances, Friends)
+├── Priority scoring: 5-8 (moderate engagement)
+├── Periodic interaction tracking and analysis
+├── Professional context analysis and insights
+├── Group-based organization and management
+└── Automated follow-up suggestions
+
+Tier 3: Distant Contacts (Professional Network, Occasional Interactions)
+├── Priority scoring: 1-4 (low engagement)
+├── Minimal interaction tracking with archive options
+├── Bulk management tools and batch operations
+├── Reactivation suggestions based on context
+└── Network analysis for relationship discovery
+```
+
+#### Advanced Contact Features with Code Examples
+```python
+# Contact search with full-text search and caching
+class ContactService:
+    def search_contacts(self, user_id, query, filters=None):
+        cache_key = f"search_{user_id}_{hash(query)}_{hash(str(filters))}"
+
+        # Check cache first
+        cached_result = self.cache.get(cache_key)
+        if cached_result:
+            return cached_result
+
+        with self.db_manager.get_session() as session:
+            # Use PostgreSQL full-text search
+            search_vector = func.to_tsvector('english',
+                func.concat(
+                    func.coalesce(Contact.full_name, ''), ' ',
+                    func.coalesce(Contact.email, ''), ' ',
+                    func.coalesce(Contact.company, ''), ' ',
+                    func.coalesce(Contact.location, '')
+                )
+            )
+
+            query_obj = session.query(Contact).filter(
+                Contact.user_id == user_id,
+                search_vector.match(self._prepare_search_query(query))
+            )
+
+            # Apply dynamic filters
+            if filters:
+                if 'tier' in filters:
+                    query_obj = query_obj.filter(Contact.tier == filters['tier'])
+                if 'has_telegram' in filters:
+                    query_obj = query_obj.filter(Contact.telegram_username.isnot(None))
+
+            results = query_obj.order_by(Contact.full_name).limit(50).all()
+
+            # Cache results for 5 minutes
+            self.cache.set(cache_key, results, ttl=300)
+            return results
+```
+
+### 2. AI-Powered Note Analysis Engine
+
+#### Multi-Engine Architecture with Fallbacks
+```python
+class AIService:
+    def __init__(self):
+        self.engines = {
+            'gemini': GeminiProcessor(),
+            'openai': OpenAIProcessor(),
+            'vision': VisionProcessor(),
+            'local': LocalProcessor()
+        }
+        self.performance_tracker = PerformanceTracker()
+
+    @log_performance("ai_analysis")
+    def analyze_note(self, content: str, contact_name: str, engine_preference=None):
+        """Analyze note with intelligent engine selection and fallbacks"""
+
+        # Engine priority: Gemini (cost-effective) -> OpenAI (high quality) -> Local (offline)
+        engines_to_try = [engine_preference] if engine_preference else ['gemini', 'openai', 'local']
+
+        for engine_name in engines_to_try:
+            try:
+                engine = self.engines[engine_name]
+                if not engine.is_available():
+                    continue
+
+                start_time = time.time()
+                result = engine.process(content, contact_name)
+                processing_time = (time.time() - start_time) * 1000
+
+                # Track performance metrics
+                self.performance_tracker.record(engine_name, processing_time, result)
+
+                # Add metadata
+                result.update({
+                    'engine': engine_name,
+                    'processing_time_ms': processing_time,
+                    'confidence_score': self.calculate_confidence(result),
+                    'timestamp': datetime.utcnow().isoformat()
+                })
+
+                return result
+
+            except Exception as e:
+                logger.warning(f"{engine_name} failed: {e}")
+                continue
+
+        raise AIServiceUnavailableError("All AI engines failed")
+```
+
+#### Advanced Categorization with Confidence Scoring
+```python
+# Sophisticated prompt engineering for better categorization
+def build_analysis_prompt(self, content: str, contact_name: str) -> str:
+    return f"""
+Analyze this note about {contact_name} and extract structured information with high precision.
+
+Note content:
+{content}
+
+Extract information into these categories (only include if relevant):
+
+PERSONAL CATEGORIES:
+- personal_info: Personal details, family, background, personality traits, quirks
+- lifestyle: Living situation, daily routines, habits, preferences, lifestyle choices
+- health_wellness: Health status, fitness, dietary restrictions, wellness practices
+- goals_aspirations: Future plans, dreams, ambitions, bucket list items
+
+PROFESSIONAL CATEGORIES:
+- professional_info: Job, company, career goals, work projects, professional skills
+- education_background: Schools, degrees, certifications, learning interests, academic achievements
+
+SOCIAL & INTERESTS:
+- interests_hobbies: Activities, passions, collections, creative pursuits, entertainment preferences
+- social_connections: Friend groups, social activities, community involvement, social media
+- relationship_context: How you know each other, mutual connections, relationship history
+
+COMMUNICATION & EVENTS:
+- communication_preferences: Preferred contact methods, communication style, frequency preferences
+- important_events: Birthdays, anniversaries, milestones, special dates, celebrations
+
+LOCATION & CONTEXT:
+- location_travel: Current location, travel plans, places lived, cultural experiences
+- technology_preferences: Tech skills, digital habits, online presence, preferred platforms
+- financial_context: Income level, spending habits, financial goals (only if explicitly mentioned)
+
+RESPONSE FORMAT:
+{{
+    "categories": {{
+        "category_name": {{
+            "content": "specific factual information extracted",
+            "confidence": 0.85,
+            "supporting_text": "exact quote from note that supports this"
+        }}
+    }},
+    "overall_confidence": 0.8,
+    "key_insights": ["insight 1", "insight 2"],
+    "suggested_tags": ["tag1", "tag2"],
+    "relationship_strength_indicators": ["indicator1", "indicator2"]
+}}
+
+STRICT RULES:
+1. Only extract factual information explicitly stated in the note
+2. Confidence scores: 0.9+ (explicitly stated), 0.7-0.8 (clearly implied), 0.5-0.6 (weakly implied)
+3. Include supporting_text with exact quotes
+4. Be specific and avoid generalizations
+5. Suggest relevant tags for categorization and search
+"""
+
+def calculate_confidence_score(self, result: Dict) -> float:
+    """Calculate overall confidence based on multiple factors"""
+    if not result.get('categories'):
+        return 0.0
+
+    category_confidences = []
+    for category_data in result['categories'].values():
+        confidence = category_data.get('confidence', 0.5)
+        has_supporting_text = bool(category_data.get('supporting_text', '').strip())
+        specificity_bonus = 0.1 if len(category_data.get('content', '')) > 20 else 0
+
+        # Adjust confidence based on supporting evidence
+        adjusted_confidence = confidence + (0.1 if has_supporting_text else -0.1) + specificity_bonus
+        category_confidences.append(max(0.0, min(1.0, adjusted_confidence)))
+
+    return sum(category_confidences) / len(category_confidences) if category_confidences else 0.0
+```
+
+### 3. Voice Transcription & Real-Time Processing
+
+#### Advanced Browser-Based Audio Capture
+```javascript
+class VoiceRecorder {
+    constructor() {
+        this.mediaRecorder = null;
+        this.audioChunks = [];
+        this.isRecording = false;
+        this.transcriptionService = new TranscriptionService();
+        this.audioContext = null;
+        this.analyser = null;
+        this.dataArray = null;
+
+        this.setupAudioVisualization();
+    }
+
+    async startRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: 44100,
+                    channelCount: 1
+                }
+            });
+
+            // Setup audio context for visualization
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = this.audioContext.createMediaStreamSource(stream);
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = 256;
+            source.connect(this.analyser);
+
+            this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+
+            // Setup MediaRecorder
+            const options = {
+                mimeType: this.getSupportedMimeType(),
+                audioBitsPerSecond: 128000
+            };
+
+            this.mediaRecorder = new MediaRecorder(stream, options);
+            this.audioChunks = [];
+
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    this.audioChunks.push(event.data);
+                }
+            };
+
+            this.mediaRecorder.onstop = () => {
+                this.processRecording();
+                this.cleanupAudioResources();
+            };
+
+            this.mediaRecorder.onerror = (event) => {
+                console.error('MediaRecorder error:', event.error);
+                this.handleRecordingError(event.error);
+            };
+
+            this.mediaRecorder.start(1000); // Collect data every second
+            this.isRecording = true;
+
+            this.updateUIState('recording');
+            this.startVisualization();
+
+        } catch (error) {
+            this.handleRecordingError(error);
+        }
+    }
+
+    getSupportedMimeType() {
+        const types = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/mp4',
+            'audio/wav'
+        ];
+
+        for (const type of types) {
+            if (MediaRecorder.isTypeSupported(type)) {
+                return type;
+            }
+        }
+        return '';
+    }
+
+    async processRecording() {
+        if (this.audioChunks.length === 0) {
+            this.showError('No audio recorded');
+            return;
+        }
+
+        const audioBlob = new Blob(this.audioChunks, {
+            type: this.getSupportedMimeType()
+        });
+
+        this.updateUIState('processing');
+
+        try {
+            // Send to backend for transcription
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+            formData.append('contact_id', this.currentContactId || '');
+
+            const response = await fetch('/api/transcribe-audio', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Transcription failed: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+
+            if (result.success) {
+                const noteInput = document.getElementById('note-input');
+                const existingText = noteInput.value;
+                const newText = existingText ?
+                    `${existingText}\n\n${result.transcription}` :
+                    result.transcription;
+
+                noteInput.value = newText;
+                noteInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+                this.showSuccess(`Transcribed: "${result.transcription.substring(0, 50)}..."`);
+
+                // Auto-trigger AI analysis if enabled
+                if (this.autoAnalyze && this.currentContactId) {
+                    await this.triggerAIAnalysis(newText);
+                }
+            } else {
+                throw new Error(result.error || 'Transcription failed');
+            }
+
+        } catch (error) {
+            this.handleTranscriptionError(error);
+        } finally {
+            this.updateUIState('idle');
+        }
+    }
+
+    startVisualization() {
+        const visualize = () => {
+            if (!this.isRecording || !this.analyser) return;
+
+            this.analyser.getByteFrequencyData(this.dataArray);
+
+            // Simple amplitude visualization
+            const average = this.dataArray.reduce((a, b) => a + b) / this.dataArray.length;
+            const normalized = average / 255;
+
+            // Update visual indicator
+            const micIcon = document.querySelector('.mic-btn');
+            if (micIcon) {
+                micIcon.style.transform = `scale(${1 + normalized * 0.3})`;
+                micIcon.style.opacity = 0.7 + normalized * 0.3;
+            }
+
+            requestAnimationFrame(visualize);
+        };
+
+        visualize();
+    }
+
+    updateUIState(state) {
+        const micBtn = document.querySelector('.mic-btn');
+        const recordingIndicator = document.querySelector('.recording-indicator');
+        const processingIndicator = document.querySelector('.processing-indicator');
+
+        // Reset all states
+        micBtn?.classList.remove('recording', 'processing');
+        recordingIndicator?.classList.remove('show');
+        processingIndicator?.classList.remove('show');
+
+        switch (state) {
+            case 'recording':
+                micBtn?.classList.add('recording');
+                recordingIndicator?.classList.add('show');
+                break;
+            case 'processing':
+                micBtn?.classList.add('processing');
+                processingIndicator?.classList.add('show');
+                break;
+            case 'idle':
+                // All indicators hidden
+                break;
+        }
+    }
+}
+```
+
+### 4. Performance Optimization System
+
+#### Multi-Level Caching Architecture
+```python
+class CacheManager:
+    def __init__(self):
+        self.redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+        self.memory_cache = TTLCache(maxsize=1000, ttl=300)  # 5 min TTL
+        self.disk_cache = DiskCache('/tmp/kith_cache')
+        self.stats = CacheStats()
+
+    def get(self, key: str, cache_level: str = 'auto') -> Any:
+        """Get from appropriate cache level with fallback"""
+
+        # L1: Memory cache (fastest)
+        if cache_level in ['auto', 'memory']:
+            if key in self.memory_cache:
+                self.stats.record_hit('memory')
+                return self.memory_cache[key]
+
+        # L2: Redis cache (network)
+        if cache_level in ['auto', 'redis']:
+            try:
+                redis_value = self.redis_client.get(key)
+                if redis_value:
+                    self.stats.record_hit('redis')
+                    value = pickle.loads(redis_value)
+                    # Promote to memory cache
+                    self.memory_cache[key] = value
+                    return value
+            except Exception as e:
+                logger.warning(f"Redis cache error: {e}")
+
+        # L3: Disk cache (slowest but persistent)
+        if cache_level in ['auto', 'disk']:
+            try:
+                disk_value = self.disk_cache[key]
+                self.stats.record_hit('disk')
+                # Promote to higher cache levels
+                self.memory_cache[key] = disk_value
+                self.redis_client.setex(key, 3600, pickle.dumps(disk_value))
+                return disk_value
+            except KeyError:
+                pass
+
+        self.stats.record_miss()
+        return None
+
+    def set(self, key: str, value: Any, ttl: int = 3600):
+        """Set value in all cache levels"""
+        try:
+            # Set in all available cache levels
+            self.memory_cache[key] = value
+
+            # Redis with TTL
+            self.redis_client.setex(key, ttl, pickle.dumps(value))
+
+            # Disk cache (persistent)
+            self.disk_cache[key] = value
+
+        except Exception as e:
+            logger.warning(f"Cache set error: {e}")
+
+    def invalidate_pattern(self, pattern: str):
+        """Invalidate cache entries matching pattern"""
+        # Memory cache
+        keys_to_delete = [k for k in self.memory_cache.keys() if fnmatch.fnmatch(k, pattern)]
+        for key in keys_to_delete:
+            del self.memory_cache[key]
+
+        # Redis cache
+        try:
+            redis_keys = self.redis_client.keys(pattern)
+            if redis_keys:
+                self.redis_client.delete(*redis_keys)
+        except Exception as e:
+            logger.warning(f"Redis invalidation error: {e}")
+
+class CacheStats:
+    def __init__(self):
+        self.hits = defaultdict(int)
+        self.misses = 0
+        self.start_time = time.time()
+
+    def record_hit(self, cache_level: str):
+        self.hits[cache_level] += 1
+
+    def record_miss(self):
+        self.misses += 1
+
+    def get_stats(self):
+        total_requests = sum(self.hits.values()) + self.misses
+        if total_requests == 0:
+            return {}
+
+        return {
+            'hit_rate': sum(self.hits.values()) / total_requests,
+            'miss_rate': self.misses / total_requests,
+            'hits_by_level': dict(self.hits),
+            'total_requests': total_requests,
+            'uptime_seconds': time.time() - self.start_time
+        }
+```
+
+#### Frontend Performance Optimizations
+```javascript
+// Advanced lazy loading with intersection observer
+class LazyLoader {
+    constructor() {
+        this.observer = null;
+        this.loadedItems = new Set();
+        this.pendingItems = new Map();
+
+        this.setupObserver();
+    }
+
+    setupObserver() {
+        if (!('IntersectionObserver' in window)) {
+            // Fallback for older browsers
+            this.loadAllItems();
+            return;
+        }
+
+        this.observer = new IntersectionObserver(
+            (entries) => this.handleIntersection(entries),
+            {
+                threshold: 0.1,
+                rootMargin: '50px'  // Load items 50px before they come into view
+            }
+        );
+    }
+
+    observe(element, loadCallback) {
+        if (this.loadedItems.has(element)) return;
+
+        this.pendingItems.set(element, loadCallback);
+        this.observer?.observe(element);
+    }
+
+    handleIntersection(entries) {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const element = entry.target;
+                const loadCallback = this.pendingItems.get(element);
+
+                if (loadCallback && !this.loadedItems.has(element)) {
+                    this.loadItem(element, loadCallback);
+                }
+            }
+        });
+    }
+
+    async loadItem(element, loadCallback) {
+        if (this.loadedItems.has(element)) return;
+
+        try {
+            element.classList.add('loading');
+            await loadCallback(element);
+            this.loadedItems.add(element);
+            this.pendingItems.delete(element);
+            this.observer?.unobserve(element);
+        } catch (error) {
+            console.error('Lazy loading failed:', error);
+            element.classList.add('load-error');
+        } finally {
+            element.classList.remove('loading');
+        }
+    }
+}
+
+// Performance monitoring with Core Web Vitals
+class PerformanceMonitor {
+    constructor() {
+        this.metrics = new Map();
+        this.observers = new Map();
+
+        this.setupObservers();
+        this.trackCoreWebVitals();
+    }
+
+    setupObservers() {
+        // Long Task Observer
+        if ('PerformanceObserver' in window) {
+            const longTaskObserver = new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) {
+                    this.recordMetric('long_task', {
+                        duration: entry.duration,
+                        startTime: entry.startTime
+                    });
+
+                    if (entry.duration > 50) {
+                        console.warn('Long task detected:', entry);
+                    }
+                }
+            });
+
+            try {
+                longTaskObserver.observe({ entryTypes: ['longtask'] });
+                this.observers.set('longtask', longTaskObserver);
+            } catch (e) {
+                console.warn('Long task observer not supported');
+            }
+
+            // Navigation Observer
+            const navObserver = new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) {
+                    this.recordNavigationMetrics(entry);
+                }
+            });
+
+            try {
+                navObserver.observe({ entryTypes: ['navigation'] });
+                this.observers.set('navigation', navObserver);
+            } catch (e) {
+                console.warn('Navigation observer not supported');
+            }
+        }
+    }
+
+    trackCoreWebVitals() {
+        // Largest Contentful Paint (LCP)
+        new PerformanceObserver((entryList) => {
+            const entries = entryList.getEntries();
+            const lastEntry = entries[entries.length - 1];
+            this.recordMetric('lcp', lastEntry.startTime);
+        }).observe({ entryTypes: ['largest-contentful-paint'] });
+
+        // First Input Delay (FID)
+        new PerformanceObserver((entryList) => {
+            for (const entry of entryList.getEntries()) {
+                this.recordMetric('fid', entry.processingStart - entry.startTime);
+            }
+        }).observe({ entryTypes: ['first-input'] });
+
+        // Cumulative Layout Shift (CLS)
+        let clsValue = 0;
+        new PerformanceObserver((entryList) => {
+            for (const entry of entryList.getEntries()) {
+                if (!entry.hadRecentInput) {
+                    clsValue += entry.value;
+                }
+            }
+            this.recordMetric('cls', clsValue);
+        }).observe({ entryTypes: ['layout-shift'] });
+    }
+
+    recordNavigationMetrics(entry) {
+        const metrics = {
+            dns_lookup: entry.domainLookupEnd - entry.domainLookupStart,
+            tcp_connect: entry.connectEnd - entry.connectStart,
+            request_response: entry.responseEnd - entry.requestStart,
+            dom_parse: entry.domContentLoadedEventEnd - entry.responseEnd,
+            resource_load: entry.loadEventEnd - entry.domContentLoadedEventEnd,
+            total_load: entry.loadEventEnd - entry.navigationStart
+        };
+
+        for (const [metric, value] of Object.entries(metrics)) {
+            this.recordMetric(`nav_${metric}`, value);
+        }
+    }
+
+    recordMetric(name, value) {
+        if (!this.metrics.has(name)) {
+            this.metrics.set(name, []);
+        }
+
+        const values = this.metrics.get(name);
+        values.push({
+            value: typeof value === 'object' ? value : value,
+            timestamp: Date.now()
+        });
+
+        // Keep only last 100 measurements
+        if (values.length > 100) {
+            values.shift();
+        }
+
+        // Update performance display if enabled
+        this.updatePerformanceDisplay();
+    }
+
+    updatePerformanceDisplay() {
+        const statsElement = document.getElementById('performance-stats');
+        if (!statsElement || statsElement.classList.contains('hidden')) return;
+
+        const stats = this.getStats();
+        const html = Object.entries(stats)
+            .map(([metric, data]) => `
+                <div class="metric">
+                    <span class="metric-name">${metric}:</span>
+                    <span class="metric-value">${this.formatMetricValue(metric, data.latest)}</span>
+                </div>
+            `).join('');
+
+        statsElement.innerHTML = html;
+    }
+
+    formatMetricValue(metric, value) {
+        if (typeof value === 'number') {
+            if (metric.includes('time') || metric.includes('duration')) {
+                return `${Math.round(value)}ms`;
+            }
+            return Math.round(value * 100) / 100;
+        }
+        return String(value);
+    }
+
+    getStats() {
+        const summary = {};
+
+        for (const [name, values] of this.metrics) {
+            if (values.length > 0) {
+                const numericValues = values
+                    .map(v => typeof v.value === 'number' ? v.value : 0)
+                    .filter(v => !isNaN(v));
+
+                if (numericValues.length > 0) {
+                    summary[name] = {
+                        count: values.length,
+                        avg: numericValues.reduce((a, b) => a + b, 0) / numericValues.length,
+                        min: Math.min(...numericValues),
+                        max: Math.max(...numericValues),
+                        latest: values[values.length - 1].value
+                    };
+                }
+            }
+        }
+
+        return summary;
+    }
+}
+```
+
+### 5. Advanced Search & Filtering System
+
+#### Full-Text Search Implementation
+```python
+class SearchService:
+    def __init__(self, db_manager, cache_manager):
+        self.db_manager = db_manager
+        self.cache = cache_manager
+
+    def search_contacts(self, user_id: int, query: str, filters: Dict = None,
+                       limit: int = 50, offset: int = 0) -> Dict:
+        """Advanced contact search with caching and analytics"""
+
+        # Generate cache key
+        cache_key = f"search_{user_id}_{hash(query)}_{hash(str(filters))}_{limit}_{offset}"
+
+        # Check cache first
+        cached_result = self.cache.get(cache_key)
+        if cached_result:
+            return cached_result
+
+        with self.db_manager.get_session() as session:
+            # Base query
+            query_obj = session.query(Contact).filter(Contact.user_id == user_id)
+
+            # Full-text search if query provided
+            if query and len(query.strip()) >= 2:
+                search_terms = self._prepare_search_terms(query)
+
+                # Use PostgreSQL full-text search with ranking
+                search_vector = func.to_tsvector('english',
+                    func.concat_ws(' ',
+                        Contact.full_name,
+                        Contact.email,
+                        Contact.company,
+                        Contact.location
+                    )
+                )
+
+                search_query = func.to_tsquery('english', search_terms)
+
+                query_obj = query_obj.filter(search_vector.match(search_query))
+
+                # Add ranking for relevance sorting
+                rank = func.ts_rank(search_vector, search_query)
+                query_obj = query_obj.add_columns(rank.label('search_rank'))
+                query_obj = query_obj.order_by(rank.desc(), Contact.full_name)
+            else:
+                query_obj = query_obj.order_by(Contact.full_name)
+
+            # Apply filters
+            query_obj = self._apply_filters(query_obj, filters)
+
+            # Get total count for pagination
+            total_count = query_obj.count()
+
+            # Apply pagination
+            results = query_obj.offset(offset).limit(limit).all()
+
+            # Serialize results
+            contacts = []
+            for result in results:
+                if hasattr(result, 'search_rank'):
+                    contact, rank = result[0], result[1]
+                    contact_data = self._serialize_contact(contact)
+                    contact_data['search_rank'] = float(rank) if rank else 0.0
+                else:
+                    contact_data = self._serialize_contact(result)
+                    contact_data['search_rank'] = 0.0
+
+                contacts.append(contact_data)
+
+            result = {
+                'contacts': contacts,
+                'total_count': total_count,
+                'has_more': (offset + limit) < total_count,
+                'query': query,
+                'filters': filters or {}
+            }
+
+            # Cache results for 5 minutes
+            self.cache.set(cache_key, result, ttl=300)
+
+            return result
+
+    def _prepare_search_terms(self, query: str) -> str:
+        """Prepare search terms for PostgreSQL full-text search"""
+        # Remove special characters and normalize
+        import re
+        terms = re.findall(r'\w+', query.lower())
+
+        # Create search expression with prefix matching
+        search_terms = []
+        for term in terms:
+            if len(term) >= 2:
+                # Add both exact and prefix matching
+                search_terms.append(f"{term}:*")
+
+        return " & ".join(search_terms) if search_terms else query
+
+    def _apply_filters(self, query_obj, filters: Dict):
+        """Apply dynamic filters to search query"""
+        if not filters:
+            return query_obj
+
+        for filter_name, filter_value in filters.items():
+            if filter_name == 'tier' and filter_value:
+                query_obj = query_obj.filter(Contact.tier == filter_value)
+
+            elif filter_name == 'has_telegram' and filter_value:
+                query_obj = query_obj.filter(Contact.telegram_username.isnot(None))
+
+            elif filter_name == 'company' and filter_value:
+                query_obj = query_obj.filter(
+                    Contact.company.ilike(f"%{filter_value}%")
+                )
+
+            elif filter_name == 'location' and filter_value:
+                query_obj = query_obj.filter(
+                    Contact.location.ilike(f"%{filter_value}%")
+                )
+
+            elif filter_name == 'has_email' and filter_value:
+                query_obj = query_obj.filter(Contact.email.isnot(None))
+
+            elif filter_name == 'created_after' and filter_value:
+                query_obj = query_obj.filter(Contact.created_at >= filter_value)
+
+            elif filter_name == 'tags' and filter_value:
+                # Filter by tag names
+                tag_names = filter_value if isinstance(filter_value, list) else [filter_value]
+                query_obj = query_obj.join(ContactTag).join(Tag).filter(
+                    Tag.name.in_(tag_names)
+                )
+
+        return query_obj
+
+    def get_search_suggestions(self, user_id: int, partial_query: str, limit: int = 8) -> List[str]:
+        """Get smart search suggestions"""
+        if len(partial_query) < 2:
+            return []
+
+        cache_key = f"suggestions_{user_id}_{hash(partial_query)}_{limit}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
+        with self.db_manager.get_session() as session:
+            suggestions = []
+
+            # Name suggestions (highest priority)
+            name_matches = session.query(Contact.full_name).filter(
+                Contact.user_id == user_id,
+                Contact.full_name.ilike(f"{partial_query}%")
+            ).limit(4).all()
+            suggestions.extend([name[0] for name in name_matches])
+
+            # Company suggestions
+            company_matches = session.query(Contact.company).filter(
+                Contact.user_id == user_id,
+                Contact.company.ilike(f"{partial_query}%"),
+                Contact.company.isnot(None)
+            ).distinct().limit(2).all()
+            suggestions.extend([comp[0] for comp in company_matches if comp[0]])
+
+            # Email domain suggestions
+            if '@' in partial_query:
+                email_matches = session.query(Contact.email).filter(
+                    Contact.user_id == user_id,
+                    Contact.email.ilike(f"{partial_query}%"),
+                    Contact.email.isnot(None)
+                ).limit(2).all()
+                suggestions.extend([email[0] for email in email_matches if email[0]])
+
+            # Remove duplicates and limit
+            unique_suggestions = list(dict.fromkeys(suggestions))[:limit]
+
+            # Cache for 10 minutes
+            self.cache.set(cache_key, unique_suggestions, ttl=600)
+
+            return unique_suggestions
+```
+
+### 6. Complete Database Architecture
+
+#### Optimized Schema with Advanced Indexing
+```sql
+-- Enhanced database schema with performance optimizations
+-- Core Users table with preferences
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(80) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    password_plaintext VARCHAR(255), -- Encrypted in production
+    role VARCHAR(20) DEFAULT 'user' CHECK (role IN ('admin', 'user', 'viewer')),
+    preferences JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP,
+    is_active BOOLEAN DEFAULT true,
+    timezone VARCHAR(50) DEFAULT 'UTC',
+
+    -- Search optimization
+    CONSTRAINT users_username_length CHECK (length(username) >= 3),
+    CONSTRAINT users_password_length CHECK (length(password_hash) >= 10)
+);
+
+-- Comprehensive indexing for users
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_active ON users(is_active) WHERE is_active = true;
+CREATE INDEX idx_users_last_login ON users(last_login DESC);
+
+-- Enhanced contacts table with full-text search
+CREATE TABLE contacts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    full_name VARCHAR(255) NOT NULL,
+    tier INTEGER DEFAULT 2 CHECK (tier IN (1, 2, 3)),
+
+    -- Basic contact information
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    company VARCHAR(255),
+    location VARCHAR(255),
+    birthday DATE,
+    job_title VARCHAR(255),
+
+    -- Social media and communication
+    linkedin_url VARCHAR(500),
+    twitter_handle VARCHAR(100),
+    website VARCHAR(500),
+
+    -- Telegram integration
+    telegram_id VARCHAR(50),
+    telegram_username VARCHAR(100),
+    telegram_phone VARCHAR(50),
+    telegram_handle VARCHAR(100),
+    is_verified BOOLEAN DEFAULT false,
+    is_premium BOOLEAN DEFAULT false,
+    telegram_last_sync TIMESTAMP,
+    telegram_metadata JSONB DEFAULT '{}',
+
+    -- System fields
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_interaction TIMESTAMP,
+    interaction_count INTEGER DEFAULT 0,
+    custom_fields JSONB DEFAULT '{}',
+
+    -- Full-text search vector
+    search_vector tsvector,
+
+    -- Constraints
+    CONSTRAINT contacts_name_not_empty CHECK (length(trim(full_name)) > 0),
+    CONSTRAINT contacts_email_format CHECK (email IS NULL OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
+    CONSTRAINT contacts_tier_valid CHECK (tier IN (1, 2, 3))
+);
+
+-- Comprehensive indexing strategy for contacts
+CREATE INDEX idx_contacts_user ON contacts(user_id);
+CREATE INDEX idx_contacts_name ON contacts(full_name);
+CREATE INDEX idx_contacts_tier ON contacts(tier);
+CREATE INDEX idx_contacts_company ON contacts(company) WHERE company IS NOT NULL;
+CREATE INDEX idx_contacts_email ON contacts(email) WHERE email IS NOT NULL;
+CREATE INDEX idx_contacts_telegram ON contacts(telegram_username) WHERE telegram_username IS NOT NULL;
+CREATE INDEX idx_contacts_updated ON contacts(updated_at DESC);
+CREATE INDEX idx_contacts_interaction ON contacts(last_interaction DESC NULLS LAST);
+
+-- Full-text search index
+CREATE INDEX idx_contacts_search ON contacts USING gin(search_vector);
+
+-- Composite indexes for common queries
+CREATE INDEX idx_contacts_user_tier ON contacts(user_id, tier);
+CREATE INDEX idx_contacts_user_name ON contacts(user_id, full_name);
+CREATE INDEX idx_contacts_user_company ON contacts(user_id, company) WHERE company IS NOT NULL;
+
+-- Trigger to maintain search vector
+CREATE OR REPLACE FUNCTION update_contact_search_vector() RETURNS trigger AS $$
+BEGIN
+    NEW.search_vector := to_tsvector('english',
+        COALESCE(NEW.full_name, '') || ' ' ||
+        COALESCE(NEW.email, '') || ' ' ||
+        COALESCE(NEW.company, '') || ' ' ||
+        COALESCE(NEW.location, '') || ' ' ||
+        COALESCE(NEW.job_title, '') || ' ' ||
+        COALESCE(NEW.telegram_username, '')
+    );
+
+    -- Update the updated_at timestamp
+    NEW.updated_at := CURRENT_TIMESTAMP;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_contact_search_trigger
+    BEFORE INSERT OR UPDATE ON contacts
+    FOR EACH ROW EXECUTE FUNCTION update_contact_search_vector();
+
+-- Contact details with AI analysis and confidence scoring
+CREATE TABLE contact_details (
+    id SERIAL PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    category VARCHAR(100) NOT NULL,
+    content TEXT NOT NULL,
+    confidence_score FLOAT DEFAULT 1.0 CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0),
+    source_type VARCHAR(50) DEFAULT 'manual' CHECK (source_type IN ('manual', 'note', 'telegram', 'file', 'ai')),
+    source_id INTEGER,
+    ai_engine VARCHAR(50) CHECK (ai_engine IN ('openai', 'gemini', 'vision', 'local')),
+    supporting_text TEXT, -- Exact quote that supports this detail
+    is_verified BOOLEAN DEFAULT false,
+    verification_date TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT details_content_not_empty CHECK (length(trim(content)) > 0)
+);
+
+-- Indexes for contact details
+CREATE INDEX idx_contact_details_contact ON contact_details(contact_id);
+CREATE INDEX idx_contact_details_category ON contact_details(category);
+CREATE INDEX idx_contact_details_confidence ON contact_details(confidence_score DESC);
+CREATE INDEX idx_contact_details_source ON contact_details(source_type);
+CREATE INDEX idx_contact_details_verified ON contact_details(is_verified) WHERE is_verified = true;
+
+-- Hierarchical tags system with usage tracking
+CREATE TABLE tags (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    color VARCHAR(7) DEFAULT '#3b82f6' CHECK (color ~* '^#[0-9A-Fa-f]{6}$'),
+    description TEXT,
+    parent_tag_id INTEGER REFERENCES tags(id) ON DELETE SET NULL,
+    usage_count INTEGER DEFAULT 0 CHECK (usage_count >= 0),
+    is_system_tag BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES users(id),
+
+    CONSTRAINT tags_name_format CHECK (length(trim(name)) > 0 AND name !~ '[<>"\\/]'),
+    CONSTRAINT tags_no_self_parent CHECK (id != parent_tag_id)
+);
+
+-- Tag indexes
+CREATE INDEX idx_tags_name ON tags(name);
+CREATE INDEX idx_tags_parent ON tags(parent_tag_id);
+CREATE INDEX idx_tags_usage ON tags(usage_count DESC);
+CREATE INDEX idx_tags_system ON tags(is_system_tag) WHERE is_system_tag = true;
+
+-- Contact-tag relationships with metadata
+CREATE TABLE contact_tags (
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_by VARCHAR(50) DEFAULT 'user' CHECK (assigned_by IN ('user', 'ai', 'import', 'system')),
+    confidence FLOAT DEFAULT 1.0 CHECK (confidence >= 0.0 AND confidence <= 1.0),
+
+    PRIMARY KEY (contact_id, tag_id)
+);
+
+-- Tag relationship indexes
+CREATE INDEX idx_contact_tags_contact ON contact_tags(contact_id);
+CREATE INDEX idx_contact_tags_tag ON contact_tags(tag_id);
+CREATE INDEX idx_contact_tags_assigned ON contact_tags(assigned_at DESC);
+
+-- Relationship graph with advanced analytics
+CREATE TABLE contact_groups (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    color VARCHAR(7) DEFAULT '#97C2FC' CHECK (color ~* '^#[0-9A-Fa-f]{6}$'),
+    description TEXT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_default BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT groups_name_not_empty CHECK (length(trim(name)) > 0)
+);
+
+CREATE INDEX idx_contact_groups_user ON contact_groups(user_id);
+CREATE INDEX idx_contact_groups_default ON contact_groups(is_default) WHERE is_default = true;
+
+CREATE TABLE contact_relationships (
+    id SERIAL PRIMARY KEY,
+    source_contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    target_contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    relationship_label VARCHAR(255),
+    strength_score FLOAT DEFAULT 1.0 CHECK (strength_score >= 0.0 AND strength_score <= 10.0),
+    group_id INTEGER REFERENCES contact_groups(id) ON DELETE SET NULL,
+    is_bidirectional BOOLEAN DEFAULT true,
+    interaction_frequency INTEGER DEFAULT 0,
+    last_interaction TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES users(id),
+
+    UNIQUE(source_contact_id, target_contact_id, relationship_label),
+    CONSTRAINT no_self_relationship CHECK (source_contact_id != target_contact_id)
+);
+
+-- Relationship indexes
+CREATE INDEX idx_relationships_source ON contact_relationships(source_contact_id);
+CREATE INDEX idx_relationships_target ON contact_relationships(target_contact_id);
+CREATE INDEX idx_relationships_group ON contact_relationships(group_id);
+CREATE INDEX idx_relationships_strength ON contact_relationships(strength_score DESC);
+
+-- Comprehensive audit trail
+CREATE TABLE raw_logs (
+    id SERIAL PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    action_type VARCHAR(50) NOT NULL CHECK (action_type IN ('create', 'update', 'delete', 'analyze', 'import')),
+    details JSONB DEFAULT '{}',
+
+    -- AI processing metadata
+    engine VARCHAR(50),
+    processing_time_ms INTEGER CHECK (processing_time_ms >= 0),
+    tokens_used INTEGER CHECK (tokens_used >= 0),
+    cost_cents INTEGER CHECK (cost_cents >= 0),
+
+    -- Request metadata
+    ip_address INET,
+    user_agent TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT logs_content_not_empty CHECK (length(trim(content)) > 0)
+);
+
+-- Log indexes
+CREATE INDEX idx_logs_contact_date ON raw_logs(contact_id, created_at DESC);
+CREATE INDEX idx_logs_user_date ON raw_logs(user_id, created_at DESC);
+CREATE INDEX idx_logs_action ON raw_logs(action_type);
+CREATE INDEX idx_logs_engine ON raw_logs(engine) WHERE engine IS NOT NULL;
+CREATE INDEX idx_logs_date ON raw_logs(created_at DESC);
+
+-- Background task management with detailed tracking
+CREATE TABLE task_status (
+    id VARCHAR(50) PRIMARY KEY,
+    task_type VARCHAR(50) NOT NULL CHECK (task_type IN ('telegram_import', 'file_analysis', 'ai_processing', 'data_export', 'cleanup')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+    status_message TEXT,
+    progress FLOAT DEFAULT 0.0 CHECK (progress >= 0.0 AND progress <= 100.0),
+
+    -- Task data
+    input_data JSONB DEFAULT '{}',
+    result_data JSONB DEFAULT '{}',
+    error_details TEXT,
+
+    -- Metadata
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    priority INTEGER DEFAULT 5 CHECK (priority >= 1 AND priority <= 10),
+    max_retries INTEGER DEFAULT 3,
+    retry_count INTEGER DEFAULT 0,
+
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    expires_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP + INTERVAL '24 hours',
+
+    CONSTRAINT task_retry_limit CHECK (retry_count <= max_retries),
+    CONSTRAINT task_completed_time CHECK (completed_at IS NULL OR completed_at >= started_at)
+);
+
+-- Task indexes
+CREATE INDEX idx_task_status ON task_status(status);
+CREATE INDEX idx_task_type ON task_status(task_type);
+CREATE INDEX idx_task_user ON task_status(user_id);
+CREATE INDEX idx_task_priority ON task_status(priority DESC, created_at ASC);
+CREATE INDEX idx_task_expires ON task_status(expires_at) WHERE status != 'completed';
+
+-- Performance monitoring table
+CREATE TABLE performance_metrics (
+    id SERIAL PRIMARY KEY,
+    metric_name VARCHAR(100) NOT NULL,
+    metric_value FLOAT NOT NULL,
+    metric_unit VARCHAR(20),
+    tags JSONB DEFAULT '{}',
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT metrics_name_not_empty CHECK (length(trim(metric_name)) > 0)
+);
+
+CREATE INDEX idx_metrics_name_time ON performance_metrics(metric_name, recorded_at DESC);
+CREATE INDEX idx_metrics_recorded ON performance_metrics(recorded_at DESC);
+
+-- Database maintenance functions
+CREATE OR REPLACE FUNCTION cleanup_expired_tasks() RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM task_status
+    WHERE expires_at < CURRENT_TIMESTAMP
+    AND status IN ('completed', 'failed', 'cancelled');
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to update tag usage counts
+CREATE OR REPLACE FUNCTION update_tag_usage() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE tags SET usage_count = usage_count + 1 WHERE id = NEW.tag_id;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE tags SET usage_count = GREATEST(0, usage_count - 1) WHERE id = OLD.tag_id;
+        RETURN OLD;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_tag_usage
+    AFTER INSERT OR DELETE ON contact_tags
+    FOR EACH ROW EXECUTE FUNCTION update_tag_usage();
+```
+
+## Production Deployment & Monitoring
+
+### Complete Docker Configuration
+```dockerfile
+# Multi-stage Dockerfile for production optimization
+FROM python:3.11-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Production stage
+FROM python:3.11-slim as production
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create app directory and user
+RUN groupadd -r app && useradd -r -g app app
+WORKDIR /app
+
+# Copy application code
+COPY --chown=app:app . .
+
+# Switch to non-root user
+USER app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+
+# Expose port
+EXPOSE ${PORT:-8000}
+
+# Start application
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-8000} --workers ${WORKERS:-2} --worker-class gevent --timeout 120 --preload wsgi:app"]
+```
+
+### Production Environment Configuration
+```yaml
+# render.yaml - Complete production deployment
+services:
+  - type: web
+    name: kith-platform
+    env: python
+    plan: starter
+    region: oregon
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+      # Initialize database
+      python -c "
+      from app.utils.database import DatabaseManager
+      from models import Base
+      import os
+
+      if os.getenv('FLASK_ENV') == 'production':
+          db = DatabaseManager()
+          print('Creating database tables...')
+          Base.metadata.create_all(db.engine)
+          print('Database initialization complete')
+      "
+
+      # Create admin user if not exists
+      python -c "
+      from app.services.auth_service import AuthService
+      from app.utils.database import DatabaseManager
+      import os
+
+      if os.getenv('FLASK_ENV') == 'production':
+          auth = AuthService(DatabaseManager())
+          try:
+              user = auth.create_user('admin', os.getenv('ADMIN_PASSWORD', 'admin123'), 'admin')
+              print(f'Admin user created: {user.username}')
+          except:
+              print('Admin user already exists')
+      "
+
+    startCommand: |
+      gunicorn --bind 0.0.0.0:$PORT \
+               --workers $WORKERS \
+               --worker-class gevent \
+               --timeout 120 \
+               --preload \
+               --access-logfile - \
+               --error-logfile - \
+               wsgi:app
+
+    envVars:
+      # Application configuration
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: WORKERS
+        value: 2
+
+      # Database
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-db
+          property: connectionString
+
+      # Admin credentials
+      - key: ADMIN_PASSWORD
+        generateValue: true
+
+      # AI Services (set manually in dashboard)
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+
+      # Telegram Integration
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+
+      # Optional: Caching
+      - key: REDIS_URL
+        sync: false
+
+      # Optional: File Storage
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_S3_BUCKET
+        sync: false
+
+      # Optional: Monitoring
+      - key: SENTRY_DSN
+        sync: false
+
+databases:
+  - name: kith-db
+    databaseName: kith_production
+    user: kith_user
+    plan: starter
+    region: oregon
+```
+
+### Comprehensive Testing Suite
+```python
+# tests/conftest.py - Test configuration
+import pytest
+import os
+import tempfile
+from app import create_app
+from app.utils.database import DatabaseManager
+from models import Base, User, Contact
+from config.settings import TestConfig
+
+@pytest.fixture(scope='session')
+def app():
+    """Create test application"""
+    app = create_app(TestConfig)
+
+    with app.app_context():
+        # Create test database
+        db_manager = DatabaseManager()
+        Base.metadata.create_all(db_manager.engine)
+
+        yield app
+
+        # Cleanup
+        Base.metadata.drop_all(db_manager.engine)
+
+@pytest.fixture(scope='function')
+def client(app):
+    """Create test client"""
+    return app.test_client()
+
+@pytest.fixture(scope='function')
+def db_session(app):
+    """Create database session for tests"""
+    db_manager = DatabaseManager()
+    session = db_manager.get_session()
+
+    yield session
+
+    session.rollback()
+    session.close()
+
+@pytest.fixture
+def test_user(db_session):
+    """Create test user"""
+    user = User(
+        username='testuser',
+        password_hash='hashed_password',
+        role='user'
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+@pytest.fixture
+def test_contact(db_session, test_user):
+    """Create test contact"""
+    contact = Contact(
+        user_id=test_user.id,
+        full_name='John Doe',
+        email='john@example.com',
+        tier=1
+    )
+    db_session.add(contact)
+    db_session.commit()
+    return contact
+
+# tests/test_services/test_ai_service.py
+import pytest
+from unittest.mock import Mock, patch
+from app.services.ai_service import AIService
+
+class TestAIService:
+    def setup_method(self):
+        self.ai_service = AIService()
+
+    @patch('app.services.ai_service.genai')
+    def test_analyze_note_with_gemini_success(self, mock_genai):
+        # Mock successful Gemini response
+        mock_model = Mock()
+        mock_model.generate_content.return_value.text = '''
+        {
+            "categories": {
+                "personal_info": {
+                    "content": "Lives in San Francisco",
+                    "confidence": 0.9,
+                    "supporting_text": "John lives in San Francisco"
+                }
+            },
+            "overall_confidence": 0.85,
+            "key_insights": ["Location established"],
+            "suggested_tags": ["San Francisco", "California"]
+        }
+        '''
+        mock_genai.GenerativeModel.return_value = mock_model
+
+        result = self.ai_service.analyze_note("John lives in San Francisco", "John Doe")
+
+        assert result['categories']['personal_info']['content'] == "Lives in San Francisco"
+        assert result['categories']['personal_info']['confidence'] == 0.9
+        assert result['engine'] == 'gemini'
+        assert 'key_insights' in result
+        assert 'suggested_tags' in result
+
+    def test_local_analysis_fallback(self):
+        # Disable all AI services to test local fallback
+        self.ai_service.gemini_api_key = None
+        self.ai_service.openai_api_key = None
+
+        result = self.ai_service.analyze_note("John works at Google", "John Doe")
+
+        assert result['engine'] == 'local'
+        assert 'categories' in result
+        assert len(result['categories']) > 0
+
+    @patch('app.services.ai_service.openai')
+    def test_openai_fallback_when_gemini_fails(self, mock_openai):
+        # Mock Gemini failure
+        self.ai_service.gemini_api_key = None
+
+        # Mock OpenAI success
+        mock_response = Mock()
+        mock_response.choices[0].message.content = '''
+        {
+            "categories": {
+                "professional_info": {
+                    "content": "Software engineer at Google",
+                    "confidence": 0.8
+                }
+            }
+        }
+        '''
+        mock_openai.ChatCompletion.create.return_value = mock_response
+
+        result = self.ai_service.analyze_note("John is a software engineer at Google", "John Doe")
+
+        assert result['engine'] == 'openai'
+        assert 'professional_info' in result['categories']
+
+# tests/test_api/test_contacts.py
+import pytest
+import json
+from unittest.mock import patch
+
+class TestContactsAPI:
+    def test_get_contacts_success(self, client, test_user, test_contact):
+        with patch('flask_login.current_user', test_user):
+            response = client.get('/api/contacts/')
+
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert 'contacts' in data
+            assert len(data['contacts']) > 0
+            assert data['contacts'][0]['full_name'] == 'John Doe'
+
+    def test_create_contact_success(self, client, test_user):
+        contact_data = {
+            'full_name': 'Jane Smith',
+            'email': 'jane@example.com',
+            'tier': 2,
+            'company': 'Acme Corp'
+        }
+
+        with patch('flask_login.current_user', test_user):
+            response = client.post('/api/contacts/',
+                                 data=json.dumps(contact_data),
+                                 content_type='application/json')
+
+            assert response.status_code == 201
+            data = json.loads(response.data)
+            assert data['contact']['full_name'] == 'Jane Smith'
+            assert data['contact']['email'] == 'jane@example.com'
+
+    def test_search_contacts(self, client, test_user, test_contact):
+        with patch('flask_login.current_user', test_user):
+            response = client.get('/api/contacts/search?q=John')
+
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert 'results' in data
+            assert len(data['results']) > 0
+            assert 'John' in data['results'][0]['full_name']
+
+    @patch('app.services.ai_service.AIService.analyze_note')
+    def test_analyze_contact_note(self, mock_analyze, client, test_user, test_contact):
+        mock_analyze.return_value = {
+            'categories': {
+                'personal_info': {
+                    'content': 'Lives in San Francisco',
+                    'confidence': 0.9
+                }
+            },
+            'engine': 'gemini'
+        }
+
+        note_data = {
+            'note': 'John lives in San Francisco and loves hiking'
+        }
+
+        with patch('flask_login.current_user', test_user):
+            response = client.post(f'/api/contacts/{test_contact.id}/analyze',
+                                 data=json.dumps(note_data),
+                                 content_type='application/json')
+
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert 'analysis_result' in data
+            assert data['analysis_result']['engine'] == 'gemini'
+
+# tests/test_frontend/test_main.js
+// Frontend JavaScript tests using Jest
+describe('KithPlatformApp', () => {
+    let app;
+    let mockFetch;
+
+    beforeEach(() => {
+        // Reset DOM
+        document.body.innerHTML = `
+            <div id="contacts-container"></div>
+            <div id="note-input"></div>
+            <button id="analyze-btn"></button>
+            <div id="performance-stats"></div>
+        `;
+
+        // Mock fetch
+        mockFetch = jest.fn();
+        global.fetch = mockFetch;
+
+        app = new KithPlatformApp();
+    });
+
+    test('should initialize correctly', () => {
+        expect(app.currentView).toBe('main');
+        expect(app.currentContactId).toBeNull();
+        expect(app.cache).toBeInstanceOf(Map);
+        expect(app.performance).toBeInstanceOf(PerformanceMonitor);
+    });
+
+    test('should load contacts with caching', async () => {
+        const mockContacts = {
+            contacts: [
+                { id: 1, full_name: 'John Doe', tier: 1 },
+                { id: 2, full_name: 'Jane Smith', tier: 2 }
+            ],
+            tier_summary: { 1: 1, 2: 1, 3: 0 }
+        };
+
+        mockFetch.mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve(mockContacts)
+        });
+
+        const data = await app.loadContacts();
+
+        expect(data.contacts).toHaveLength(2);
+        expect(app.cache.has('contacts_{}')).toBe(true);
+        expect(mockFetch).toHaveBeenCalledWith('/api/contacts', expect.any(Object));
+    });
+
+    test('should handle contact selection', () => {
+        const mockEmit = jest.spyOn(app.eventBus, 'emit');
+
+        app.selectContact(1, 'John Doe');
+
+        expect(app.currentContactId).toBe(1);
+        expect(mockEmit).toHaveBeenCalledWith('contact:selected', {
+            id: 1,
+            name: 'John Doe'
+        });
+    });
+
+    test('should render contact cards correctly', () => {
+        const contact = {
+            id: 1,
+            full_name: 'John Doe',
+            tier: 1,
+            email: 'john@example.com',
+            company: 'Acme Corp',
+            tags: [
+                { name: 'Client', color: '#3b82f6' }
+            ]
+        };
+
+        const html = app.renderContactCard(contact);
+
+        expect(html).toContain('John Doe');
+        expect(html).toContain('john@example.com');
+        expect(html).toContain('Acme Corp');
+        expect(html).toContain('tier-1');
+        expect(html).toContain('Client');
+    });
+
+    test('should handle note analysis with loading states', async () => {
+        const mockAnalysis = {
+            analysis_result: {
+                categories: {
+                    personal_info: {
+                        content: 'Lives in SF',
+                        confidence: 0.9
+                    }
+                },
+                engine: 'gemini'
+            },
+            note_id: 'note_123'
+        };
+
+        mockFetch.mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve(mockAnalysis)
+        });
+
+        app.currentContactId = 1;
+        document.getElementById('note-input').value = 'John lives in San Francisco';
+
+        await app.analyzeNote('John lives in San Francisco', 1);
+
+        expect(mockFetch).toHaveBeenCalledWith('/api/contacts/1/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: 'John lives in San Francisco' })
+        });
+    });
+});
+
+// Performance monitoring tests
+describe('PerformanceMonitor', () => {
+    let monitor;
+
+    beforeEach(() => {
+        monitor = new PerformanceMonitor();
+    });
+
+    test('should record metrics correctly', () => {
+        monitor.recordMetric('test_metric', 100);
+
+        const stats = monitor.getStats();
+        expect(stats.test_metric).toBeDefined();
+        expect(stats.test_metric.latest).toBe(100);
+        expect(stats.test_metric.avg).toBe(100);
+        expect(stats.test_metric.count).toBe(1);
+    });
+
+    test('should calculate averages correctly', () => {
+        monitor.recordMetric('response_time', 100);
+        monitor.recordMetric('response_time', 200);
+        monitor.recordMetric('response_time', 300);
+
+        const stats = monitor.getStats();
+        expect(stats.response_time.avg).toBe(200);
+        expect(stats.response_time.min).toBe(100);
+        expect(stats.response_time.max).toBe(300);
+        expect(stats.response_time.count).toBe(3);
+    });
+});
+
+# Run tests
+# Frontend: npm test
+# Backend: pytest tests/ -v --cov=app --cov-report=html
+```
+
+This comprehensive project brief now includes every aspect of the Kith Platform with the latest performance optimizations, advanced caching, full-text search, and complete testing suite. A junior developer can use this guide to build the exact same sophisticated personal intelligence platform from scratch, with all the modern features and optimizations included.
+```
+
+### Technology Stack
+- **Backend**: Flask 2.3.3, SQLAlchemy 2.0.21, Alembic 1.12.0, Gunicorn 21.2.0
+- **Database**: PostgreSQL (production), SQLite (development), Redis for caching
+- **Frontend**: Vanilla JavaScript ES6+, vis.js for graphs, modern CSS Grid/Flexbox design system
+- **AI Processing**: OpenAI API 0.28.1, Google Generative AI 0.8.5, Google Cloud Vision 3.10.2
+- **Background Tasks**: Celery with Redis broker for async processing
+- **Integrations**: Telethon 1.34.0 (Telegram), vobject 0.9.6.1 (vCard), boto3 (AWS S3)
+- **Authentication**: Flask-Login 0.6.3 with PBKDF2-SHA256 hashing, multi-user support
+- **Performance**: Advanced caching system, lazy loading, optimized queries, monitoring
+- **Testing**: pytest, factory-boy, comprehensive test suite
+- **Deployment**: Render.com, Docker support, environment-based configuration, health checks
 
 ## Core Features & Functionality
 
@@ -290,55 +2105,52 @@ CREATE TABLE task_status (
 #### SQLAlchemy Models Implementation
 ```python
 # models.py - Complete database models
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, JSON, Date, CheckConstraint
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-from sqlalchemy.sql import func
+from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, UniqueConstraint
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.dialects.postgresql import JSON
 from flask_login import UserMixin
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 Base = declarative_base()
 
 class User(Base, UserMixin):
-    """Admin user management for the platform"""
+    """Multi-user authentication system"""
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True)
-    username = Column(String(80), unique=True, nullable=False)
+    username = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(50), default='user')  # 'admin', 'user'
+    password_plaintext = Column(String(255), nullable=True)  # Store plain text for admin viewing
+    role = Column(String(50), nullable=False, default='user')  # 'admin', 'user'
     created_at = Column(DateTime, default=datetime.utcnow)
-    last_login = Column(DateTime)
 
     # Relationships
     contacts = relationship("Contact", back_populates="user")
 
 class Contact(Base):
-    """Core contact entity with comprehensive fields"""
+    """Core contact entity with comprehensive Telegram integration"""
     __tablename__ = 'contacts'
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     full_name = Column(String(255), nullable=False)
-    tier = Column(Integer, default=2)  # 1=close, 2=regular, 3=distant
+    tier = Column(Integer, default=2, nullable=False)  # 1 for inner circle, 2 for outer
+    vector_collection_id = Column(String(255), unique=True)
 
-    # Basic contact information
-    email = Column(String(255))
-    phone = Column(String(255))
-    company = Column(String(255))
-    location = Column(String(255))
-
-    # Telegram Integration Fields
+    # Telegram Integration Fields (Current Implementation)
     telegram_id = Column(String(255))               # Telegram user ID
     telegram_username = Column(String(255))         # @username handle
     telegram_phone = Column(String(255))            # Phone number
-    telegram_handle = Column(String(255))           # User-provided identifier
-    is_verified = Column(Boolean, default=False)    # Verified account
-    is_premium = Column(Boolean, default=False)     # Premium account
-    telegram_last_sync = Column(DateTime)           # Last sync timestamp
-    telegram_metadata = Column(JSON)                # Complex Telegram data
-    custom_fields = Column(JSON)                    # Extensible fields
-
+    telegram_handle = Column(String(255))           # User-provided Telegram identifier for sync
+    is_verified = Column(Boolean, default=False)    # Verified Telegram account
+    is_premium = Column(Boolean, default=False)     # Premium Telegram account
+    telegram_last_sync = Column(DateTime)           # Last successful sync
+    telegram_metadata = Column(JSON)                # For storing complex Telegram data
+    custom_fields = Column(JSON)                    # For extensible contact fields
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -346,6 +2158,8 @@ class Contact(Base):
     user = relationship("User", back_populates="contacts")
     raw_notes = relationship("RawNote", back_populates="contact", cascade="all, delete-orphan")
     synthesized_entries = relationship("SynthesizedEntry", back_populates="contact", cascade="all, delete-orphan")
+    groups = relationship("ContactGroup", secondary="contact_group_memberships", back_populates="members")
+    tags = relationship("Tag", secondary="contact_tags", back_populates="contacts")
 
 class RawNote(Base):
     """Original unprocessed notes about contacts"""
@@ -355,8 +2169,9 @@ class RawNote(Base):
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata_tags = Column(JSON)  # Processing metadata
+    metadata_tags = Column(JSON)  # JSON column for PostgreSQL
 
+    # Relationships
     contact = relationship("Contact", back_populates="raw_notes")
 
 class SynthesizedEntry(Base):
@@ -365,23 +2180,99 @@ class SynthesizedEntry(Base):
 
     id = Column(Integer, primary_key=True)
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
-    category = Column(String(255), nullable=False)  # personal_details, preferences, etc.
-    content = Column(Text, nullable=False)
-    confidence_score = Column(Float, default=1.0)
-    source_note_id = Column(Integer, ForeignKey('raw_notes.id', ondelete='SET NULL'))
+    category = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)  # Main content column that matches the database
+    confidence_score = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Relationships
     contact = relationship("Contact", back_populates="synthesized_entries")
 
+class ImportTask(Base):
+    """Background task tracking for imports and processing"""
+    __tablename__ = 'import_tasks'
+
+    id = Column(String(255), primary_key=True)  # UUID string
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    contact_id = Column(Integer, ForeignKey('contacts.id'))
+    task_type = Column(String(50), default='telegram_import', nullable=False)
+    status = Column(String(50), default='pending', nullable=False)  # pending, connecting, fetching, processing, completed, failed
+    progress = Column(Integer, default=0)
+    status_message = Column(Text)
+    error_details = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+
+    # Relationships
+    user = relationship("User")
+    contact = relationship("Contact")
+
+class UploadedFile(Base):
+    """File upload tracking for AI analysis"""
+    __tablename__ = 'uploaded_files'
+
+    id = Column(Integer, primary_key=True)
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    stored_filename = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    file_type = Column(String(100), nullable=False)
+    file_size_bytes = Column(Integer, nullable=False)
+    analysis_task_id = Column(String(255), ForeignKey('import_tasks.id'))
+    generated_raw_note_id = Column(Integer, ForeignKey('raw_notes.id'))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    contact = relationship("Contact")
+    user = relationship("User")
+    analysis_task = relationship("ImportTask")
+    generated_raw_note = relationship("RawNote")
+
+class ContactGroup(Base):
+    """Group management for relationship visualization"""
+    __tablename__ = 'contact_groups'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    color = Column(String(7), default='#97C2FC')  # Default color for nodes
+
+    members = relationship("Contact", secondary="contact_group_memberships", back_populates="groups")
+
+class ContactGroupMembership(Base):
+    """Many-to-many relationship between contacts and groups"""
+    __tablename__ = 'contact_group_memberships'
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), primary_key=True)
+    group_id = Column(Integer, ForeignKey('contact_groups.id', ondelete='CASCADE'), primary_key=True)
+
+class ContactRelationship(Base):
+    """Define relationships between contacts for network visualization"""
+    __tablename__ = 'contact_relationships'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    source_contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    target_contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    label = Column(String(100))
+
+    __table_args__ = (UniqueConstraint('user_id', 'source_contact_id', 'target_contact_id', name='_user_source_target_uc'),)
+
 class Tag(Base):
-    """Flexible tagging system for contacts"""
+    """Hierarchical tagging system for flexible contact categorization"""
     __tablename__ = 'tags'
 
     id = Column(Integer, primary_key=True)
-    name = Column(String(255), unique=True, nullable=False)
-    color = Column(String(7), default='#97C2FC')  # Hex color
-    description = Column(Text)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    color = Column(String(7), default='#97C2FC')  # Hex color for tag display
+    description = Column(Text)  # Optional description
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")
+    contacts = relationship("Contact", secondary="contact_tags", back_populates="tags")
+
+    __table_args__ = (UniqueConstraint('user_id', 'name', name='_user_tag_name_uc'),)
 
 class ContactTag(Base):
     """Many-to-many relationship between contacts and tags"""
@@ -391,8 +2282,12 @@ class ContactTag(Base):
     tag_id = Column(Integer, ForeignKey('tags.id', ondelete='CASCADE'), primary_key=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Relationships
     contact = relationship("Contact")
     tag = relationship("Tag")
+
+# Database initialization is now handled by Alembic migrations
+# This file only contains the model definitions
 ```
 
 ### Database Configuration
@@ -456,212 +2351,566 @@ class DatabaseManager:
             return result.fetchall()
 ```
 
-## Backend API Implementation
+## Backend Architecture Implementation
 
-### Flask Application Structure
+### Modular Application Structure
 
-```python
-# __init__.py - Application Factory Pattern
-from flask import Flask
-from flask_login import LoginManager
-from config.database import DatabaseManager
-import os
+The Kith Platform backend uses a sophisticated modular architecture with clear separation of concerns:
 
-def create_app():
-    """Create and configure Flask application"""
-    app = Flask(__name__)
-
-    # Configuration
-    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-key-change-in-production')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-    # Initialize extensions
-    login_manager = LoginManager()
-    login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-
-    @login_manager.user_loader
-    def load_user(user_id):
-        from models import User
-        from config.database import DatabaseManager
-        db_manager = DatabaseManager()
-        with db_manager.get_session() as session:
-            return session.get(User, int(user_id))
-
-    # Register blueprints
-    from routes.main import main_bp
-    from routes.api import api_bp
-    from routes.auth import auth_bp
-
-    app.register_blueprint(main_bp)
-    app.register_blueprint(api_bp, url_prefix='/api')
-    app.register_blueprint(auth_bp, url_prefix='/auth')
-
-    return app
+```
+kith-platform/
+├── app.py                    # Main Flask application
+├── wsgi.py                   # WSGI entry point for production
+├── models.py                 # Core SQLAlchemy models
+├── scheduler.py              # Background task scheduler
+├── analytics.py              # Performance analytics
+│
+├── app/                      # Modular application components
+│   ├── __init__.py
+│   ├── api/                  # REST API endpoints (Blueprints)
+│   │   ├── admin.py          # Admin management API
+│   │   ├── analytics.py      # Analytics endpoints
+│   │   ├── auth.py           # Authentication API
+│   │   ├── contacts.py       # Contact management API
+│   │   ├── notes.py          # Note processing API
+│   │   └── telegram.py       # Telegram integration API
+│   │
+│   ├── services/             # Business logic layer
+│   │   ├── ai_service.py     # AI analysis service
+│   │   ├── analytics_service.py # Performance tracking
+│   │   ├── auth_service.py   # Authentication logic
+│   │   ├── file_service.py   # File processing
+│   │   ├── note_service.py   # Note analysis logic
+│   │   └── telegram_service.py # Telegram integration
+│   │
+│   ├── tasks/                # Celery background tasks
+│   │   ├── ai_tasks.py       # AI processing tasks
+│   │   └── telegram_tasks.py # Telegram sync tasks
+│   │
+│   ├── utils/                # Shared utilities
+│   │   ├── database.py       # Database connection manager
+│   │   ├── logging_config.py # Structured logging
+│   │   ├── monitoring.py     # Health checks & metrics
+│   │   ├── structured_logging.py # Performance logging
+│   │   └── validators.py     # Input validation
+│   │
+│   └── models/               # Modular model definitions
+│       ├── contact.py        # Contact-related models
+│       └── note.py           # Note-related models
+│
+├── config/                   # Configuration management
+│   ├── database.py           # Database configuration
+│   └── settings.py           # Application settings
+│
+├── database/                 # Database utilities
+│   ├── connection_manager.py # Connection pooling
+│   └── optimized_queries.py  # Performance-optimized queries
+│
+└── migrations/               # Alembic database migrations
+    └── versions/
+        ├── 77cd9dc6a008_initial_database_schema.py
+        └── 4288915872ea_add_performance_indexes.py
 ```
 
-### Core API Routes
+### Main Flask Application
 
 ```python
-# routes/api.py
-from flask import Blueprint, request, jsonify, current_app
-from config.database import DatabaseManager
-from models import Contact, RawNote, SynthesizedEntry, Tag
-from ai.analysis_engine import AnalysisEngine
-from integrations.telegram_client import TelegramClient
-import json
+# app.py - Main Flask application with modular structure
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
+from flask_login import LoginManager, login_required, current_user
+from app.utils.database import DatabaseManager
+from app.utils.monitoring import HealthChecker
+from app.services.auth_service import AuthService
+from models import User
+import os
+import logging
+from datetime import datetime
 
-api_bp = Blueprint('api', __name__)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize core components
 db_manager = DatabaseManager()
+auth_service = AuthService()
+health_checker = HealthChecker(db_manager)
 
-@api_bp.route('/contacts', methods=['GET'])
-def get_contacts():
-    """Retrieve all contacts with optional filtering"""
+# Create Flask app
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-key-change-in-production')
+
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'Please log in to access this page.'
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Load user for Flask-Login"""
     try:
-        tier = request.args.get('tier', type=int)
-        search = request.args.get('search', '').strip()
-
         with db_manager.get_session() as session:
-            query = session.query(Contact)
+            return session.get(User, int(user_id))
+    except Exception as e:
+        logger.error(f"Error loading user {user_id}: {e}")
+        return None
 
-            if tier:
-                query = query.filter(Contact.tier == tier)
+# Register API Blueprints
+from app.api.contacts import contacts_bp
+from app.api.notes import notes_bp
+from app.api.auth import auth_bp
+from app.api.telegram import telegram_bp
+from app.api.admin import admin_bp
+from app.api.analytics import analytics_bp
 
-            if search:
-                query = query.filter(Contact.full_name.ilike(f'%{search}%'))
+app.register_blueprint(contacts_bp, url_prefix='/api/contacts')
+app.register_blueprint(notes_bp, url_prefix='/api/notes')
+app.register_blueprint(auth_bp, url_prefix='/api/auth')
+app.register_blueprint(telegram_bp, url_prefix='/api/telegram')
+app.register_blueprint(admin_bp, url_prefix='/api/admin')
+app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
 
-            contacts = query.order_by(Contact.full_name).all()
+# Health check endpoint
+@app.route('/health')
+def health_check():
+    """Comprehensive health check with timeout protection"""
+    try:
+        # Quick database connectivity check
+        with db_manager.get_session() as session:
+            session.execute('SELECT 1')
 
-            return jsonify({
-                'contacts': [{
-                    'id': contact.id,
-                    'full_name': contact.full_name,
-                    'tier': contact.tier,
-                    'email': contact.email,
-                    'phone': contact.phone,
-                    'company': contact.company,
-                    'telegram_username': contact.telegram_username,
-                    'created_at': contact.created_at.isoformat() if contact.created_at else None
-                } for contact in contacts]
-            })
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat(),
+            'version': '1.0.0'
+        })
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# Main routes
+@app.route('/')
+@login_required
+def index():
+    """Main application interface"""
+    return render_template('index.html', user=current_user)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Login page"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+
+        if auth_service.authenticate_user(username, password):
+            return redirect(url_for('index'))
+        else:
+            flash('Invalid username or password')
+
+    return render_template('login.html')
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
+```
+
+### API Blueprint Architecture
+
+#### Contacts API (app/api/contacts.py)
+```python
+from flask import Blueprint, request, jsonify
+from flask_login import login_required, current_user
+import logging
+from database.optimized_queries import OptimizedContactQueries
+from config.database import DatabaseConfig
+
+contacts_bp = Blueprint('contacts', __name__)
+logger = logging.getLogger(__name__)
+
+# Initialize optimized queries
+optimized_queries = OptimizedContactQueries(DatabaseConfig)
+
+@contacts_bp.route('/', methods=['GET'])
+@login_required
+def get_contacts():
+    """Get all contacts for the current user with optimized queries"""
+    try:
+        # Get query parameters
+        tier = request.args.get('tier', type=int)
+        search = request.args.get('search', type=str)
+        limit = request.args.get('limit', type=int)
+        page = request.args.get('page', 1, type=int)
+
+        # Calculate offset for pagination
+        offset = (page - 1) * (limit or 50) if limit else None
+
+        # Use optimized query
+        contacts = optimized_queries.get_contacts_with_details(
+            user_id=current_user.id,
+            tier=tier,
+            search=search,
+            limit=limit
+        )
+
+        # Get tier summary
+        tier_summary = optimized_queries.get_contacts_by_tier_summary(current_user.id)
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'contacts': contacts,
+                'tier_summary': tier_summary,
+                'total': len(contacts),
+                'page': page,
+                'limit': limit
+            }
+        })
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error getting contacts: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-@api_bp.route('/contact/<int:contact_id>', methods=['GET'])
+@contacts_bp.route('/<int:contact_id>', methods=['GET'])
+@login_required
 def get_contact_profile(contact_id):
-    """Get detailed contact profile with synthesized entries"""
+    """Get complete contact profile with optimized queries"""
     try:
-        with db_manager.get_session() as session:
-            contact = session.get(Contact, contact_id)
-            if not contact:
-                return jsonify({'error': 'Contact not found'}), 404
+        profile = optimized_queries.get_contact_profile_complete(
+            contact_id=contact_id,
+            user_id=current_user.id
+        )
 
-            # Get synthesized entries grouped by category
-            entries = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).all()
+        if not profile:
+            return jsonify({'success': False, 'error': 'Contact not found'}), 404
 
+        return jsonify({
+            'success': True,
+            'data': profile
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting contact profile: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@contacts_bp.route('/search', methods=['GET'])
+@login_required
+def search_contacts():
+    """Search contacts with optimized full-text search"""
+    try:
+        query = request.args.get('q', '').strip()
+        limit = request.args.get('limit', 50, type=int)
+
+        if not query:
+            return jsonify({'success': False, 'error': 'Search query required'}), 400
+
+        contacts = optimized_queries.search_contacts_optimized(
+            user_id=current_user.id,
+            search_term=query,
+            limit=limit
+        )
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'contacts': contacts,
+                'query': query,
+                'total': len(contacts)
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error searching contacts: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+```
+
+### Services Layer Architecture
+
+#### AI Service (app/services/ai_service.py)
+```python
+import os
+import openai
+import google.generativeai as genai
+from typing import Dict, Any, List
+import logging
+from app.utils.structured_logging import log_performance, StructuredLogger
+
+logger = logging.getLogger(__name__)
+
+class AIService:
+    def __init__(self):
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+
+        # Initialize OpenAI
+        if self.openai_api_key:
+            openai.api_key = self.openai_api_key
+
+        # Initialize Gemini
+        if self.gemini_api_key:
+            genai.configure(api_key=self.gemini_api_key)
+
+    @log_performance("ai_analysis")
+    def analyze_note(self, content: str, contact_name: str) -> Dict[str, Any]:
+        """Analyze a note and extract structured information"""
+        try:
+            # Use Gemini for analysis
+            if self.gemini_api_key:
+                return self._analyze_with_gemini(content, contact_name)
+            elif self.openai_api_key:
+                return self._analyze_with_openai(content, contact_name)
+            else:
+                raise ValueError("No AI service configured")
+        except Exception as e:
+            logger.error(f"AI analysis failed: {e}")
+            raise
+
+    def _analyze_with_gemini(self, content: str, contact_name: str) -> Dict[str, Any]:
+        """Analyze note using Google Gemini"""
+        model = genai.GenerativeModel('gemini-pro')
+
+        prompt = f"""
+        Analyze this note about {contact_name} and extract structured information.
+        Categorize the content into these categories: personal_info, preferences, relationships, work, interests, goals, concerns, other.
+
+        Note content: {content}
+
+        Return a JSON response with this structure:
+        {{
+            "categories": {{
+                "personal_info": {{"content": "...", "confidence": 0.8}},
+                "preferences": {{"content": "...", "confidence": 0.7}},
+                "relationships": {{"content": "...", "confidence": 0.9}},
+                "work": {{"content": "...", "confidence": 0.6}},
+                "interests": {{"content": "...", "confidence": 0.7}},
+                "goals": {{"content": "...", "confidence": 0.8}},
+                "concerns": {{"content": "...", "confidence": 0.6}},
+                "other": {{"content": "...", "confidence": 0.5}}
+            }}
+        }}
+
+        Only include categories that have relevant content. Confidence should be between 0.0 and 1.0.
+        """
+
+        response = model.generate_content(prompt)
+        # Parse the JSON response
+        import json
+        return json.loads(response.text)
+```
+
+#### Database Connection Manager (app/utils/database.py)
+```python
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import QueuePool
+from contextlib import contextmanager
+import os
+import logging
+from typing import Optional
+from functools import lru_cache
+
+logger = logging.getLogger(__name__)
+
+class DatabaseManager:
+    """Centralized database connection management with connection pooling"""
+
+    _instance: Optional['DatabaseManager'] = None
+    _engine = None
+    _session_factory = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if self._engine is None:
+            self._initialize_engine()
+
+    def _initialize_engine(self):
+        """Initialize SQLAlchemy engine with connection pooling"""
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            raise ValueError("DATABASE_URL environment variable is required")
+
+        # Create engine with optimized settings
+        self._engine = create_engine(
+            database_url,
+            poolclass=QueuePool,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            echo=False  # Set to True for SQL debugging
+        )
+
+        # Create session factory
+        self._session_factory = sessionmaker(bind=self._engine)
+
+        logger.info("Database engine initialized successfully")
+
+    @contextmanager
+    def get_session(self) -> Session:
+        """Get database session with automatic cleanup"""
+        session = self._session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Database session error: {e}")
+            raise
+        finally:
+            session.close()
+
+    def health_check(self) -> bool:
+        """Check database connectivity"""
+        try:
+            with self.get_session() as session:
+                session.execute(text("SELECT 1"))
+            return True
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            return False
+
+    @property
+    def engine(self):
+        """Get the SQLAlchemy engine"""
+        return self._engine
+```
+
+#### Optimized Queries (database/optimized_queries.py)
+```python
+from sqlalchemy import text, func
+from typing import List, Dict, Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+class OptimizedContactQueries:
+    """High-performance, optimized database queries for contacts"""
+
+    def __init__(self, db_config):
+        self.db_config = db_config
+
+    def get_contacts_with_details(self, user_id: int, tier: Optional[int] = None,
+                                 search: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get contacts with optimized single query including related data"""
+
+        query = text("""
+            SELECT
+                c.id,
+                c.full_name,
+                c.tier,
+                c.telegram_username,
+                c.telegram_id,
+                c.created_at,
+                c.updated_at,
+                COUNT(DISTINCT rn.id) as note_count,
+                COUNT(DISTINCT se.id) as synthesis_count,
+                STRING_AGG(DISTINCT t.name, ', ') as tag_names
+            FROM contacts c
+            LEFT JOIN raw_notes rn ON c.id = rn.contact_id
+            LEFT JOIN synthesized_entries se ON c.id = se.contact_id
+            LEFT JOIN contact_tags ct ON c.id = ct.contact_id
+            LEFT JOIN tags t ON ct.tag_id = t.id
+            WHERE c.user_id = :user_id
+            AND (:tier IS NULL OR c.tier = :tier)
+            AND (:search IS NULL OR c.full_name ILIKE :search_pattern)
+            GROUP BY c.id, c.full_name, c.tier, c.telegram_username, c.telegram_id, c.created_at, c.updated_at
+            ORDER BY c.full_name
+            LIMIT :limit_val
+        """)
+
+        search_pattern = f"%{search}%" if search else None
+        limit_val = limit if limit else 1000
+
+        with self.db_config.create_engine().connect() as conn:
+            result = conn.execute(query, {
+                'user_id': user_id,
+                'tier': tier,
+                'search_pattern': search_pattern,
+                'limit_val': limit_val
+            })
+
+            return [dict(row._mapping) for row in result]
+
+    def get_contact_profile_complete(self, contact_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get complete contact profile with all related data in optimized queries"""
+
+        # Get contact basic info
+        contact_query = text("""
+            SELECT
+                c.*,
+                COUNT(DISTINCT rn.id) as total_notes,
+                COUNT(DISTINCT se.id) as total_syntheses,
+                MAX(rn.created_at) as last_note_date
+            FROM contacts c
+            LEFT JOIN raw_notes rn ON c.id = rn.contact_id
+            LEFT JOIN synthesized_entries se ON c.id = se.contact_id
+            WHERE c.id = :contact_id AND c.user_id = :user_id
+            GROUP BY c.id
+        """)
+
+        # Get synthesized entries grouped by category
+        syntheses_query = text("""
+            SELECT
+                category,
+                content,
+                confidence_score,
+                created_at
+            FROM synthesized_entries
+            WHERE contact_id = :contact_id
+            ORDER BY created_at DESC
+        """)
+
+        # Get tags
+        tags_query = text("""
+            SELECT t.id, t.name, t.color
+            FROM tags t
+            JOIN contact_tags ct ON t.id = ct.tag_id
+            WHERE ct.contact_id = :contact_id
+        """)
+
+        with self.db_config.create_engine().connect() as conn:
+            # Execute all queries
+            contact_result = conn.execute(contact_query, {
+                'contact_id': contact_id,
+                'user_id': user_id
+            }).fetchone()
+
+            if not contact_result:
+                return None
+
+            syntheses_result = conn.execute(syntheses_query, {
+                'contact_id': contact_id
+            }).fetchall()
+
+            tags_result = conn.execute(tags_query, {
+                'contact_id': contact_id
+            }).fetchall()
+
+            # Build response
+            contact_data = dict(contact_result._mapping)
+
+            # Group syntheses by category
             categorized_data = {}
-            for entry in entries:
-                if entry.category not in categorized_data:
-                    categorized_data[entry.category] = []
-                categorized_data[entry.category].append({
-                    'content': entry.content,
-                    'confidence_score': entry.confidence_score,
-                    'created_at': entry.created_at.isoformat()
+            for synthesis in syntheses_result:
+                category = synthesis.category
+                if category not in categorized_data:
+                    categorized_data[category] = []
+                categorized_data[category].append({
+                    'content': synthesis.content,
+                    'confidence_score': synthesis.confidence_score,
+                    'created_at': synthesis.created_at.isoformat() if synthesis.created_at else None
                 })
 
-            return jsonify({
-                'contact': {
-                    'id': contact.id,
-                    'full_name': contact.full_name,
-                    'tier': contact.tier,
-                    'email': contact.email,
-                    'phone': contact.phone,
-                    'company': contact.company,
-                    'location': contact.location,
-                    'telegram_username': contact.telegram_username,
-                    'created_at': contact.created_at.isoformat() if contact.created_at else None,
-                    'updated_at': contact.updated_at.isoformat() if contact.updated_at else None
-                },
-                'categorized_data': categorized_data
-            })
+            contact_data['categorized_data'] = categorized_data
+            contact_data['tags'] = [dict(tag._mapping) for tag in tags_result]
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@api_bp.route('/process-note', methods=['POST'])
-def process_note():
-    """Process unstructured note using AI analysis"""
-    try:
-        data = request.get_json()
-        note_content = data.get('note', '').strip()
-        contact_id = data.get('contact_id')
-
-        if not note_content or not contact_id:
-            return jsonify({'error': 'Note content and contact_id are required'}), 400
-
-        with db_manager.get_session() as session:
-            contact = session.get(Contact, contact_id)
-            if not contact:
-                return jsonify({'error': 'Contact not found'}), 404
-
-            # Save raw note
-            raw_note = RawNote(contact_id=contact_id, content=note_content)
-            session.add(raw_note)
-            session.commit()
-
-            # Process with AI
-            analysis_engine = AnalysisEngine()
-            analysis_result = analysis_engine.analyze_note(note_content, contact.full_name)
-
-            return jsonify({
-                'status': 'success',
-                'raw_note_id': raw_note.id,
-                'categorized_updates': analysis_result.get('categorized_updates', []),
-                'confidence_score': analysis_result.get('confidence_score', 1.0)
-            })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@api_bp.route('/save-synthesis', methods=['POST'])
-def save_synthesis():
-    """Save processed analysis results to database"""
-    try:
-        data = request.get_json()
-        contact_id = data.get('contact_id')
-        raw_note_content = data.get('raw_note')
-        synthesis_data = data.get('synthesis', {})
-
-        with db_manager.get_session() as session:
-            # Save raw note if not already saved
-            raw_note = RawNote(contact_id=contact_id, content=raw_note_content)
-            session.add(raw_note)
-            session.flush()  # Get the ID
-
-            # Save synthesized entries
-            categorized_updates = synthesis_data.get('categorized_updates', [])
-            for update in categorized_updates:
-                category = update.get('category')
-                details = update.get('details', [])
-
-                for detail in details:
-                    entry = SynthesizedEntry(
-                        contact_id=contact_id,
-                        category=category,
-                        content=detail,
-                        source_note_id=raw_note.id,
-                        confidence_score=synthesis_data.get('confidence_score', 1.0)
-                    )
-                    session.add(entry)
-
-            session.commit()
-
-            return jsonify({'status': 'success', 'message': 'Analysis saved successfully'})
-
-    except Exception as e:
-        session.rollback()
-        return jsonify({'error': str(e)}), 500
+            return contact_data
 ```
 
 ## AI Integration Systems
@@ -831,6 +3080,538 @@ Return ONLY a valid JSON response in this exact format:
             self.logger.error(f"Vision analysis failed: {e}")
             return {"error": str(e)}
 ```
+
+## Monitoring, Performance & Health Checks
+
+### Comprehensive Health Monitoring System
+
+The Kith Platform includes a sophisticated monitoring system that tracks application health, performance metrics, and provides real-time diagnostics.
+
+#### Health Checker Implementation (app/utils/monitoring.py)
+
+```python
+import time
+import os
+import psutil
+import redis
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
+from sqlalchemy import text
+from app.utils.database import DatabaseManager
+from app.celery_app import celery_app
+import logging
+
+logger = logging.getLogger(__name__)
+
+class HealthChecker:
+    """Comprehensive health checking system"""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db_manager = db_manager
+        self.start_time = datetime.utcnow()
+
+    def check_database(self) -> Dict[str, Any]:
+        """Check database connectivity and performance"""
+        try:
+            start_time = time.time()
+            with self.db_manager.get_session() as session:
+                # Test basic connectivity
+                result = session.execute(text("SELECT 1")).scalar()
+
+                # Get database stats
+                db_stats = session.execute(text("""
+                    SELECT
+                        (SELECT COUNT(*) FROM users) as user_count,
+                        (SELECT COUNT(*) FROM contacts) as contact_count,
+                        (SELECT COUNT(*) FROM raw_notes) as note_count
+                """)).fetchone()
+
+                duration = time.time() - start_time
+
+                return {
+                    'status': 'healthy',
+                    'response_time': round(duration * 1000, 2),  # ms
+                    'stats': {
+                        'users': db_stats.user_count,
+                        'contacts': db_stats.contact_count,
+                        'notes': db_stats.note_count
+                    }
+                }
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            return {
+                'status': 'unhealthy',
+                'error': str(e)
+            }
+
+    def check_redis(self) -> Dict[str, Any]:
+        """Check Redis connectivity and performance"""
+        try:
+            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+            r = redis.from_url(redis_url)
+
+            start_time = time.time()
+            r.ping()
+            duration = time.time() - start_time
+
+            # Get Redis info
+            info = r.info()
+
+            return {
+                'status': 'healthy',
+                'response_time': round(duration * 1000, 2),  # ms
+                'memory_used': info.get('used_memory_human', 'unknown'),
+                'connected_clients': info.get('connected_clients', 0)
+            }
+        except Exception as e:
+            logger.error(f"Redis health check failed: {e}")
+            return {
+                'status': 'unhealthy',
+                'error': str(e)
+            }
+
+    def check_celery(self) -> Dict[str, Any]:
+        """Check Celery worker status"""
+        try:
+            # Get active workers
+            inspect = celery_app.control.inspect()
+            active_workers = inspect.active()
+
+            if not active_workers:
+                return {
+                    'status': 'unhealthy',
+                    'error': 'No active Celery workers found'
+                }
+
+            # Get worker stats
+            stats = inspect.stats()
+
+            return {
+                'status': 'healthy',
+                'active_workers': len(active_workers),
+                'worker_stats': stats
+            }
+        except Exception as e:
+            logger.error(f"Celery health check failed: {e}")
+            return {
+                'status': 'unhealthy',
+                'error': str(e)
+            }
+
+    def check_system_resources(self) -> Dict[str, Any]:
+        """Check system resource usage"""
+        try:
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=1)
+
+            # Memory usage
+            memory = psutil.virtual_memory()
+
+            # Disk usage
+            disk = psutil.disk_usage('/')
+
+            return {
+                'status': 'healthy',
+                'cpu_percent': cpu_percent,
+                'memory': {
+                    'total': memory.total,
+                    'available': memory.available,
+                    'percent': memory.percent,
+                    'used': memory.used
+                },
+                'disk': {
+                    'total': disk.total,
+                    'used': disk.used,
+                    'free': disk.free,
+                    'percent': round((disk.used / disk.total) * 100, 2)
+                }
+            }
+        except Exception as e:
+            logger.error(f"System resource check failed: {e}")
+            return {
+                'status': 'unhealthy',
+                'error': str(e)
+            }
+
+    def get_application_metrics(self) -> Dict[str, Any]:
+        """Get application-specific metrics"""
+        try:
+            uptime = datetime.utcnow() - self.start_time
+
+            # Get cache hit rates if available
+            cache_stats = {}
+            if hasattr(self, 'cache_manager'):
+                cache_stats = self.cache_manager.getStats()
+
+            return {
+                'uptime_seconds': uptime.total_seconds(),
+                'uptime_human': str(uptime),
+                'cache_stats': cache_stats,
+                'start_time': self.start_time.isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Application metrics check failed: {e}")
+            return {
+                'error': str(e)
+            }
+
+    def comprehensive_health_check(self) -> Dict[str, Any]:
+        """Run all health checks and return comprehensive status"""
+        checks = {
+            'database': self.check_database(),
+            'redis': self.check_redis(),
+            'celery': self.check_celery(),
+            'system': self.check_system_resources(),
+            'application': self.get_application_metrics()
+        }
+
+        # Determine overall health
+        overall_status = 'healthy'
+        unhealthy_services = []
+
+        for service, check in checks.items():
+            if check.get('status') == 'unhealthy':
+                overall_status = 'unhealthy'
+                unhealthy_services.append(service)
+
+        return {
+            'overall_status': overall_status,
+            'unhealthy_services': unhealthy_services,
+            'timestamp': datetime.utcnow().isoformat(),
+            'checks': checks
+        }
+```
+
+#### Performance Analytics (analytics.py)
+
+```python
+import time
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, Any, List
+from collections import defaultdict, deque
+from threading import Lock
+import psutil
+import os
+
+logger = logging.getLogger(__name__)
+
+class PerformanceAnalytics:
+    """Real-time performance monitoring and analytics"""
+
+    def __init__(self, retention_minutes: int = 60):
+        self.retention_minutes = retention_minutes
+        self.metrics = defaultdict(deque)
+        self.lock = Lock()
+
+        # Metric storage
+        self.request_times = deque(maxlen=1000)
+        self.error_rates = deque(maxlen=100)
+        self.cache_hit_rates = deque(maxlen=100)
+        self.database_query_times = deque(maxlen=1000)
+
+        logger.info("Performance analytics initialized")
+
+    def record_request(self, endpoint: str, method: str, duration: float, status_code: int):
+        """Record HTTP request metrics"""
+        with self.lock:
+            timestamp = datetime.utcnow()
+
+            self.request_times.append({
+                'timestamp': timestamp,
+                'endpoint': endpoint,
+                'method': method,
+                'duration': duration,
+                'status_code': status_code
+            })
+
+            # Clean old data
+            self._cleanup_old_data()
+
+    def record_database_query(self, query_type: str, duration: float, error: bool = False):
+        """Record database query performance"""
+        with self.lock:
+            self.database_query_times.append({
+                'timestamp': datetime.utcnow(),
+                'query_type': query_type,
+                'duration': duration,
+                'error': error
+            })
+
+    def record_cache_operation(self, operation: str, hit: bool):
+        """Record cache operation metrics"""
+        with self.lock:
+            self.cache_hit_rates.append({
+                'timestamp': datetime.utcnow(),
+                'operation': operation,
+                'hit': hit
+            })
+
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """Get comprehensive performance summary"""
+        with self.lock:
+            now = datetime.utcnow()
+            cutoff = now - timedelta(minutes=self.retention_minutes)
+
+            # Filter recent data
+            recent_requests = [r for r in self.request_times if r['timestamp'] > cutoff]
+            recent_db_queries = [q for q in self.database_query_times if q['timestamp'] > cutoff]
+            recent_cache_ops = [c for c in self.cache_hit_rates if c['timestamp'] > cutoff]
+
+            return {
+                'request_metrics': self._analyze_requests(recent_requests),
+                'database_metrics': self._analyze_database_queries(recent_db_queries),
+                'cache_metrics': self._analyze_cache_operations(recent_cache_ops),
+                'system_metrics': self._get_system_metrics(),
+                'timestamp': now.isoformat(),
+                'retention_minutes': self.retention_minutes
+            }
+
+    def _analyze_requests(self, requests: List[Dict]) -> Dict[str, Any]:
+        """Analyze HTTP request performance"""
+        if not requests:
+            return {'total_requests': 0}
+
+        durations = [r['duration'] for r in requests]
+        error_requests = [r for r in requests if r['status_code'] >= 400]
+
+        # Group by endpoint
+        endpoint_stats = defaultdict(list)
+        for req in requests:
+            endpoint_stats[req['endpoint']].append(req['duration'])
+
+        return {
+            'total_requests': len(requests),
+            'error_rate': len(error_requests) / len(requests) * 100,
+            'avg_response_time': sum(durations) / len(durations),
+            'min_response_time': min(durations),
+            'max_response_time': max(durations),
+            'p95_response_time': self._percentile(durations, 95),
+            'p99_response_time': self._percentile(durations, 99),
+            'slowest_endpoints': self._get_slowest_endpoints(endpoint_stats),
+            'requests_per_minute': len(requests)  # Over retention period
+        }
+
+    def _analyze_database_queries(self, queries: List[Dict]) -> Dict[str, Any]:
+        """Analyze database query performance"""
+        if not queries:
+            return {'total_queries': 0}
+
+        durations = [q['duration'] for q in queries]
+        error_queries = [q for q in queries if q['error']]
+
+        # Group by query type
+        query_type_stats = defaultdict(list)
+        for query in queries:
+            query_type_stats[query['query_type']].append(query['duration'])
+
+        return {
+            'total_queries': len(queries),
+            'error_rate': len(error_queries) / len(queries) * 100,
+            'avg_query_time': sum(durations) / len(durations),
+            'min_query_time': min(durations),
+            'max_query_time': max(durations),
+            'p95_query_time': self._percentile(durations, 95),
+            'slowest_query_types': self._get_slowest_query_types(query_type_stats)
+        }
+
+    def _analyze_cache_operations(self, operations: List[Dict]) -> Dict[str, Any]:
+        """Analyze cache operation performance"""
+        if not operations:
+            return {'total_operations': 0, 'hit_rate': 0}
+
+        hits = len([op for op in operations if op['hit']])
+        total = len(operations)
+
+        return {
+            'total_operations': total,
+            'hit_rate': (hits / total) * 100,
+            'miss_rate': ((total - hits) / total) * 100,
+            'operations_per_minute': total
+        }
+
+    def _get_system_metrics(self) -> Dict[str, Any]:
+        """Get current system performance metrics"""
+        try:
+            return {
+                'cpu_percent': psutil.cpu_percent(interval=0.1),
+                'memory_percent': psutil.virtual_memory().percent,
+                'disk_percent': psutil.disk_usage('/').percent,
+                'load_average': os.getloadavg() if hasattr(os, 'getloadavg') else None,
+                'process_count': len(psutil.pids())
+            }
+        except Exception as e:
+            logger.error(f"Error getting system metrics: {e}")
+            return {'error': str(e)}
+
+    def _percentile(self, data: List[float], percentile: int) -> float:
+        """Calculate percentile from sorted data"""
+        if not data:
+            return 0
+        sorted_data = sorted(data)
+        index = int((percentile / 100) * len(sorted_data))
+        return sorted_data[min(index, len(sorted_data) - 1)]
+
+    def _get_slowest_endpoints(self, endpoint_stats: Dict[str, List[float]]) -> List[Dict[str, Any]]:
+        """Get slowest endpoints by average response time"""
+        endpoint_averages = []
+        for endpoint, durations in endpoint_stats.items():
+            avg_duration = sum(durations) / len(durations)
+            endpoint_averages.append({
+                'endpoint': endpoint,
+                'avg_duration': avg_duration,
+                'request_count': len(durations)
+            })
+
+        return sorted(endpoint_averages, key=lambda x: x['avg_duration'], reverse=True)[:5]
+
+    def _get_slowest_query_types(self, query_stats: Dict[str, List[float]]) -> List[Dict[str, Any]]:
+        """Get slowest query types by average execution time"""
+        query_averages = []
+        for query_type, durations in query_stats.items():
+            avg_duration = sum(durations) / len(durations)
+            query_averages.append({
+                'query_type': query_type,
+                'avg_duration': avg_duration,
+                'query_count': len(durations)
+            })
+
+        return sorted(query_averages, key=lambda x: x['avg_duration'], reverse=True)[:5]
+
+    def _cleanup_old_data(self):
+        """Remove data older than retention period"""
+        cutoff = datetime.utcnow() - timedelta(minutes=self.retention_minutes)
+
+        # Clean request times
+        while self.request_times and self.request_times[0]['timestamp'] < cutoff:
+            self.request_times.popleft()
+
+        # Clean database query times
+        while self.database_query_times and self.database_query_times[0]['timestamp'] < cutoff:
+            self.database_query_times.popleft()
+
+        # Clean cache operations
+        while self.cache_hit_rates and self.cache_hit_rates[0]['timestamp'] < cutoff:
+            self.cache_hit_rates.popleft()
+
+# Global analytics instance
+performance_analytics = PerformanceAnalytics()
+```
+
+#### Structured Performance Logging (app/utils/structured_logging.py)
+
+```python
+import logging
+import time
+import functools
+from datetime import datetime
+from typing import Dict, Any, Callable
+import json
+
+class StructuredLogger:
+    """Structured logging for performance monitoring"""
+
+    def __init__(self, logger_name: str = __name__):
+        self.logger = logging.getLogger(logger_name)
+
+    def log_performance(self, operation: str, duration: float, metadata: Dict[str, Any] = None):
+        """Log performance metrics in structured format"""
+        log_data = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'operation': operation,
+            'duration_ms': round(duration * 1000, 2),
+            'metadata': metadata or {}
+        }
+
+        self.logger.info(f"PERFORMANCE: {json.dumps(log_data)}")
+
+    def log_error(self, operation: str, error: Exception, metadata: Dict[str, Any] = None):
+        """Log errors in structured format"""
+        log_data = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'operation': operation,
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'metadata': metadata or {}
+        }
+
+        self.logger.error(f"ERROR: {json.dumps(log_data)}")
+
+def log_performance(operation_name: str):
+    """Decorator for automatic performance logging"""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            structured_logger = StructuredLogger()
+
+            try:
+                result = func(*args, **kwargs)
+                duration = time.time() - start_time
+
+                structured_logger.log_performance(
+                    operation=operation_name,
+                    duration=duration,
+                    metadata={
+                        'function': func.__name__,
+                        'args_count': len(args),
+                        'kwargs_count': len(kwargs)
+                    }
+                )
+
+                return result
+            except Exception as e:
+                duration = time.time() - start_time
+
+                structured_logger.log_error(
+                    operation=operation_name,
+                    error=e,
+                    metadata={
+                        'function': func.__name__,
+                        'duration_before_error': duration
+                    }
+                )
+                raise
+
+        return wrapper
+    return decorator
+
+# Example usage:
+# @log_performance("contact_search")
+# def search_contacts(query: str) -> List[Contact]:
+#     # Function implementation
+#     pass
+```
+
+### Performance Optimization Strategies
+
+#### Database Query Optimization
+
+1. **Optimized Connection Pooling**: Using SQLAlchemy connection pooling with pool size 5, max overflow 10
+2. **Query Performance**: Specialized optimized queries in `database/optimized_queries.py`
+3. **Index Strategy**: Performance indexes on frequently queried columns
+4. **Query Monitoring**: Automatic logging of slow queries and performance metrics
+
+#### Frontend Performance
+
+1. **Intelligent Caching**: 5-minute TTL cache with automatic cleanup and LRU eviction
+2. **Lazy Loading**: Intersection Observer-based loading with 20-item batches
+3. **Request Deduplication**: Prevents duplicate API calls when requests are in progress
+4. **Prefetching**: Intelligent prefetching of likely-needed data
+
+#### Background Task Processing
+
+1. **Celery Integration**: Async processing for AI analysis and Telegram sync
+2. **Task Monitoring**: Real-time task status tracking with progress indicators
+3. **Error Handling**: Comprehensive error recovery and retry logic
+4. **Resource Management**: Task queuing and priority handling
+
+#### Monitoring & Alerting
+
+1. **Health Checks**: Comprehensive health monitoring for all system components
+2. **Performance Analytics**: Real-time performance tracking and analysis
+3. **Structured Logging**: JSON-formatted logs for easy parsing and analysis
+4. **Resource Monitoring**: CPU, memory, disk usage tracking with psutil
 
 ## Telegram Integration
 
@@ -1136,6 +3917,333 @@ def telegram_import_contacts():
 ```
 
 ## Frontend Implementation
+
+### Frontend Architecture Overview
+
+The Kith Platform frontend is built with a modular, performance-first architecture using vanilla JavaScript ES6+ modules:
+
+```
+static/js/
+├── main.js              # Core application logic
+├── cache-manager.js     # Frontend caching system (5min TTL)
+├── lazy-loader.js       # Intersection Observer-based lazy loading
+├── debounced-search.js  # Optimized search with debouncing
+├── prefetch-manager.js  # Intelligent prefetching system
+├── contacts.js          # Contact management features
+├── tag-management.js    # Hierarchical tag system
+├── relationship-graph.js # vis.js network visualization
+├── settings.js          # User preferences and configuration
+└── ui-enhancements.js   # Advanced UI interactions
+```
+
+### Performance Optimization System
+
+#### Advanced Caching Manager
+```javascript
+// static/js/cache-manager.js
+class CacheManager {
+    constructor() {
+        // Cache configuration
+        this.CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+        this.MAX_CACHE_SIZE = 100; // Maximum number of cached items per type
+
+        // Cache storage - separate caches for different data types
+        this.caches = {
+            contacts: new Map(),           // Contact lists by filter
+            profiles: new Map(),           // Individual contact profiles
+            search: new Map(),             // Search results
+            tags: new Map(),               // Tag lists
+            tierSummary: new Map()         // Tier summaries
+        };
+
+        // Cache metadata for cleanup and statistics
+        this.cacheStats = {
+            hits: 0,
+            misses: 0,
+            evictions: 0
+        };
+    }
+
+    // Cache key generation with parameter sorting for consistency
+    _generateKey(prefix, params = {}) {
+        const sortedParams = Object.keys(params)
+            .sort()
+            .map(key => `${key}:${params[key]}`)
+            .join('|');
+        return `${prefix}_${sortedParams}`;
+    }
+
+    // Intelligent cache validation
+    _isValid(entry) {
+        if (!entry) return false;
+        return Date.now() - entry.timestamp < this.CACHE_DURATION;
+    }
+
+    // Automatic cleanup with LRU eviction
+    _cleanup(cacheType) {
+        const cache = this.caches[cacheType];
+        const now = Date.now();
+
+        // Remove expired entries
+        for (const [key, entry] of cache.entries()) {
+            if (now - entry.timestamp > this.CACHE_DURATION) {
+                cache.delete(key);
+                this.cacheStats.evictions++;
+            }
+        }
+
+        // Remove oldest entries if over size limit
+        if (cache.size > this.MAX_CACHE_SIZE) {
+            const entries = Array.from(cache.entries());
+            entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+            const toRemove = entries.slice(0, cache.size - this.MAX_CACHE_SIZE);
+            toRemove.forEach(([key]) => {
+                cache.delete(key);
+                this.cacheStats.evictions++;
+            });
+        }
+    }
+
+    // High-performance cache operations
+    get(cacheType, key) {
+        const cache = this.caches[cacheType];
+        const entry = cache.get(key);
+
+        if (this._isValid(entry)) {
+            this.cacheStats.hits++;
+            console.log(`Cache HIT for ${cacheType}:${key}`);
+            return entry.data;
+        }
+
+        if (entry) {
+            cache.delete(key);
+            this.cacheStats.evictions++;
+        }
+
+        this.cacheStats.misses++;
+        console.log(`Cache MISS for ${cacheType}:${key}`);
+        return null;
+    }
+
+    set(cacheType, key, data) {
+        const cache = this.caches[cacheType];
+        this._cleanup(cacheType);
+
+        cache.set(key, {
+            data: data,
+            timestamp: Date.now()
+        });
+
+        console.log(`Cached ${cacheType}:${key}`);
+    }
+
+    // Smart cache invalidation
+    invalidate(cacheType, pattern = null) {
+        const cache = this.caches[cacheType];
+
+        if (pattern) {
+            for (const key of cache.keys()) {
+                if (key.includes(pattern)) {
+                    cache.delete(key);
+                }
+            }
+        } else {
+            cache.clear();
+        }
+
+        console.log(`Invalidated ${cacheType} cache${pattern ? ` matching ${pattern}` : ''}`);
+    }
+
+    // Performance analytics
+    getStats() {
+        const totalRequests = this.cacheStats.hits + this.cacheStats.misses;
+        const hitRate = totalRequests > 0 ? (this.cacheStats.hits / totalRequests * 100).toFixed(2) : 0;
+
+        return {
+            ...this.cacheStats,
+            hitRate: `${hitRate}%`,
+            cacheSizes: Object.fromEntries(
+                Object.entries(this.caches).map(([type, cache]) => [type, cache.size])
+            )
+        };
+    }
+}
+```
+
+#### Lazy Loading System
+```javascript
+// static/js/lazy-loader.js
+class LazyContactLoader {
+    constructor(apiClient, containerId = 'contacts-container') {
+        this.apiClient = apiClient || window.cachedAPIClient;
+        this.container = document.getElementById(containerId);
+
+        // Configuration
+        this.batchSize = 20; // Load 20 contacts at a time
+        this.loadingThreshold = 5; // Start loading when 5 items from bottom
+        this.currentPage = 0;
+        this.isLoading = false;
+        this.hasMore = true;
+
+        // State
+        this.contacts = [];
+        this.filters = {};
+
+        // Create loading indicator
+        this.loadingIndicator = this._createLoadingIndicator();
+
+        // Initialize intersection observer
+        this._initIntersectionObserver();
+    }
+
+    _initIntersectionObserver() {
+        const options = {
+            root: null, // Use viewport as root
+            rootMargin: '100px', // Start loading 100px before element is visible
+            threshold: 0.1
+        };
+
+        this.observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && this.hasMore && !this.isLoading) {
+                    this.loadNextBatch();
+                }
+            });
+        }, options);
+
+        this.observer.observe(this.loadingIndicator);
+    }
+
+    async loadNextBatch() {
+        if (this.isLoading || !this.hasMore) return;
+
+        this.isLoading = true;
+        this.currentPage++;
+
+        try {
+            const response = await this.apiClient.getContacts({
+                ...this.filters,
+                page: this.currentPage,
+                limit: this.batchSize
+            });
+
+            if (response.success && response.data) {
+                const newContacts = response.data.contacts || response.data;
+
+                if (newContacts.length === 0) {
+                    this.hasMore = false;
+                    this.loadingIndicator.style.display = 'none';
+                    return;
+                }
+
+                this.contacts.push(...newContacts);
+                this._renderContacts(newContacts);
+
+                if (newContacts.length < this.batchSize) {
+                    this.hasMore = false;
+                    this.loadingIndicator.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading contacts:', error);
+            this.hasMore = false;
+            this.loadingIndicator.style.display = 'none';
+        } finally {
+            this.isLoading = false;
+        }
+    }
+}
+```
+
+#### Enhanced API Client with Caching
+```javascript
+// Cached API client that prevents duplicate requests and provides intelligent caching
+class CachedAPIClient {
+    constructor(baseURL = '/api') {
+        this.baseURL = baseURL;
+        this.cache = new CacheManager();
+        this.requestQueue = new Map(); // Prevent duplicate requests
+    }
+
+    async request(endpoint, options = {}) {
+        const {
+            cacheType = 'default',
+            cacheKey = null,
+            useCache = true,
+            method = 'GET',
+            body = null
+        } = options;
+
+        // Generate cache key if not provided
+        const key = cacheKey || this._generateRequestKey(endpoint, options);
+
+        // Check cache for GET requests
+        if (useCache && method === 'GET') {
+            const cached = this.cache.get(cacheType, key);
+            if (cached) {
+                return cached;
+            }
+        }
+
+        // Check if request is already in progress
+        if (this.requestQueue.has(key)) {
+            console.log(`Request already in progress for ${key}, waiting...`);
+            return this.requestQueue.get(key);
+        }
+
+        // Make the request
+        const requestPromise = this._makeRequest(endpoint, { method, body });
+        this.requestQueue.set(key, requestPromise);
+
+        try {
+            const response = await requestPromise;
+
+            // Cache successful GET responses
+            if (useCache && method === 'GET' && response.success) {
+                this.cache.set(cacheType, key, response);
+            }
+
+            return response;
+        } finally {
+            this.requestQueue.delete(key);
+        }
+    }
+
+    // Specialized API methods with intelligent caching
+    async getContacts(filters = {}) {
+        return this.request('/contacts', {
+            cacheType: 'contacts',
+            params: filters
+        });
+    }
+
+    async getContactProfile(contactId) {
+        return this.request(`/contacts/${contactId}`, {
+            cacheType: 'profiles',
+            cacheKey: `profile_${contactId}`
+        });
+    }
+
+    async searchContacts(query, filters = {}) {
+        return this.request('/contacts/search', {
+            cacheType: 'search',
+            params: { query, ...filters }
+        });
+    }
+
+    // Cache invalidation when data changes
+    invalidateContact(contactId) {
+        this.cache.invalidate('contacts');
+        this.cache.invalidate('profiles', `profile_${contactId}`);
+        this.cache.invalidate('search');
+        this.cache.invalidate('tierSummary');
+    }
+}
+
+// Initialize global cached API client
+window.cachedAPIClient = new CachedAPIClient();
+```
 
 ### Core JavaScript Functionality
 
@@ -5969,3 +9077,263 @@ def add_database_monitoring_routes(app):
 # Cleanup handler for application shutdown
 import atexit
 atexit.register(close_db_connections)
+
+## Deployment & Setup Guide
+
+### Development Environment Setup
+
+#### Prerequisites
+
+1. **Python 3.9+** - Required for modern asyncio features and type hints
+2. **PostgreSQL 13+** - Primary database for production
+3. **Redis 6+** - Caching and background task queue
+4. **Node.js 16+** - For frontend tooling (optional but recommended)
+
+#### Step-by-Step Development Setup
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/your-org/kith-platform.git
+cd kith-platform
+
+# 2. Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# 3. Install Python dependencies
+pip install -r requirements.txt
+
+# 4. Set up environment variables
+cp .env.example .env
+# Edit .env with your specific configuration
+
+# 5. Initialize the database
+python -c "from config.database import DatabaseConfig; from models import Base; engine = DatabaseConfig.create_engine(); Base.metadata.create_all(engine)"
+
+# 6. Run database migrations
+alembic upgrade head
+
+# 7. Create initial admin user
+python create_admin_user.py
+
+# 8. Start Redis (if running locally)
+redis-server
+
+# 9. Start Celery worker (in separate terminal)
+celery -A celery_worker worker --loglevel=info
+
+# 10. Start the Flask application
+python app.py
+```
+
+#### Environment Configuration (.env)
+
+```bash
+# Database Configuration
+DATABASE_URL=postgresql://username:password@localhost:5432/kith_platform
+
+# Redis Configuration
+REDIS_URL=redis://localhost:6379/0
+
+# Flask Configuration
+FLASK_SECRET_KEY=your-secret-key-change-in-production
+FLASK_ENV=development
+FLASK_DEBUG=True
+
+# AI Service API Keys
+OPENAI_API_KEY=your-openai-api-key
+GEMINI_API_KEY=your-gemini-api-key
+
+# Google Cloud Vision (for image analysis)
+GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
+
+# Telegram API Credentials
+TELEGRAM_API_ID=your-telegram-api-id
+TELEGRAM_API_HASH=your-telegram-api-hash
+
+# File Storage Configuration
+UPLOAD_FOLDER=uploads/
+MAX_CONTENT_LENGTH=16777216  # 16MB
+
+# Celery Configuration
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+# Monitoring Configuration
+ENABLE_PERFORMANCE_MONITORING=True
+LOG_LEVEL=INFO
+
+# Security Configuration
+SESSION_COOKIE_SECURE=False  # Set to True in production with HTTPS
+SESSION_COOKIE_HTTPONLY=True
+PERMANENT_SESSION_LIFETIME=3600  # 1 hour
+```
+
+### Production Deployment
+
+#### Option 1: Render.com Deployment (Recommended)
+
+```yaml
+# render.yaml
+services:
+  - type: web
+    name: kith-platform
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-platform-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: kith-platform-redis
+          property: connectionString
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: FLASK_ENV
+        value: production
+
+  - type: worker
+    name: kith-platform-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A celery_worker worker --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-platform-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: kith-platform-redis
+          property: connectionString
+
+databases:
+  - name: kith-platform-db
+    databaseName: kith_platform
+    user: kith_platform_user
+
+services:
+  - type: redis
+    name: kith-platform-redis
+    ipAllowList: []
+```
+
+#### Option 2: Docker Deployment
+
+```dockerfile
+# Dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash app
+RUN chown -R app:app /app
+USER app
+
+# Expose port
+EXPOSE 5000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# Start command
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "wsgi:app"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/kith_platform
+      - REDIS_URL=redis://redis:6379/0
+      - FLASK_ENV=production
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./uploads:/app/uploads
+
+  worker:
+    build: .
+    command: celery -A celery_worker worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/kith_platform
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./uploads:/app/uploads
+
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_DB=kith_platform
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:6-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
+```
+
+### Performance Optimization Strategies
+
+#### Database Query Optimization
+
+1. **Optimized Connection Pooling**: Using SQLAlchemy connection pooling with pool size 5, max overflow 10
+2. **Query Performance**: Specialized optimized queries in `database/optimized_queries.py`
+3. **Index Strategy**: Performance indexes on frequently queried columns
+4. **Query Monitoring**: Automatic logging of slow queries and performance metrics
+
+#### Frontend Performance
+
+1. **Intelligent Caching**: 5-minute TTL cache with automatic cleanup and LRU eviction
+2. **Lazy Loading**: Intersection Observer-based loading with 20-item batches
+3. **Request Deduplication**: Prevents duplicate API calls when requests are in progress
+4. **Prefetching**: Intelligent prefetching of likely-needed data
+
+#### Background Task Processing
+
+1. **Celery Integration**: Async processing for AI analysis and Telegram sync
+2. **Task Monitoring**: Real-time task status tracking with progress indicators
+3. **Error Handling**: Comprehensive error recovery and retry logic
+4. **Resource Management**: Task queuing and priority handling
+
+This comprehensive setup guide ensures that any junior developer can successfully deploy and maintain the Kith Platform with confidence and understanding of all system components.

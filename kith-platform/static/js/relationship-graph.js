@@ -258,7 +258,7 @@ async function showManageGraphModal() {
     
     try {
         // Populate contact dropdowns
-        const response = await fetch('/api/contacts');
+        const response = await fetch('/api/contacts/');
         const contacts = await response.json();
         
         sourceSelect.innerHTML = '<option value="">Select first contact...</option>';

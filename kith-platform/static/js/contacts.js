@@ -3,7 +3,7 @@
 
 async function loadContacts(bustCache = false) {
     try {
-        const url = bustCache ? `/api/contacts?_=${Date.now()}` : '/api/contacts';
+        const url = bustCache ? `/api/contacts/?_=${Date.now()}` : '/api/contacts/';
         const response = await fetch(url);
         const contacts = await response.json();
         
@@ -81,7 +81,7 @@ async function loadContacts(bustCache = false) {
 
 async function loadTier1Contacts() {
     try {
-        const response = await fetch(`/api/contacts?tier=1&_=${Date.now()}`);
+        const response = await fetch(`/api/contacts/?tier=1&_=${Date.now()}`);
         const contacts = await response.json();
         const tier1 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 1) : [];
         displayTier1Contacts(tier1);
@@ -92,7 +92,7 @@ async function loadTier1Contacts() {
 
 async function loadTier2Contacts() {
     try {
-        const response = await fetch(`/api/contacts?tier=2&_=${Date.now()}`);
+        const response = await fetch(`/api/contacts/?tier=2&_=${Date.now()}`);
         const contacts = await response.json();
         const tier2 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 2) : [];
         displayTier2Contacts(tier2);

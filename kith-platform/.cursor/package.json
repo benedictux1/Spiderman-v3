@@ -1,0 +1,15 @@
+{
+  "name": "render-mcp-server",
+  "version": "1.0.0",
+  "description": "Render MCP Server for Cursor IDE",
+  "main": "mcp_render_server.js",
+  "scripts": {
+    "start": "node mcp_render_server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

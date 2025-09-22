@@ -107,6 +107,41 @@ def seed_contact_demo(contact_id: int):
         logger.error(f"Error seeding demo data: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@contacts_bp.route('/seed-demo-all', methods=['POST'])
+@login_required
+def seed_all_contacts_demo():
+    """Seed demo data for all contacts of the current user in one shot."""
+    try:
+        created_total = 0
+        with get_session() as session:
+            contacts = session.query(Contact).filter_by(user_id=current_user.id).all()
+            import random
+            from datetime import datetime, timedelta
+            samples = {
+                'Actionable': ["Follow up next week", "Send intro email"],
+                'Goals': ["Aiming for promotion", "Wants to learn ML"],
+                'Relationship strategy': ["Prefers WhatsApp", "Monthly check-in"],
+                'Avocation': ["Enjoys photography", "Likes hiking"],
+                'Professional background': ["Software engineer", "Led a team of 8"]
+            }
+            for c in contacts:
+                cats = random.sample(CATEGORY_ORDER, 5)
+                for cat in cats:
+                    for text in samples.get(cat, ["Sample info"]):
+                        session.add(SynthesizedEntry(
+                            contact_id=c.id,
+                            category=cat,
+                            content=text,
+                            confidence_score=0.9,
+                            created_at=datetime.utcnow() - timedelta(days=random.randint(1, 90))
+                        ))
+                        created_total += 1
+            session.commit()
+        return jsonify({'success': True, 'created': created_total})
+    except Exception as e:
+        logger.error(f"Error seeding all contacts: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @contacts_bp.route('/search', methods=['GET'])
 @login_required
 def search_contacts():

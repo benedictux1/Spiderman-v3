@@ -483,8 +483,14 @@ function renderContactProfile(profileData, noticeMessage) {
         const id = parseInt(document.getElementById('selected-contact-id').value, 10);
         btn.disabled = true; btn.textContent = 'Seeding...';
         try {
-          const res = await fetch(`/api/contact/${id}/seed-demo`, { method: 'POST' });
-          const out = await res.json();
+          // Prefer modular API if available
+          let res = await fetch(`/api/contacts/${id}/seed-demo`, { method: 'POST' });
+          let out = await res.json().catch(() => ({}));
+          if (!res.ok || out.error) {
+            // fallback to legacy
+            res = await fetch(`/api/contact/${id}/seed-demo`, { method: 'POST' });
+            out = await res.json().catch(() => ({}));
+          }
           if (!res.ok || out.error) throw new Error(out.error || 'Failed to seed');
           await loadContactProfile(id);
         } catch (e) {

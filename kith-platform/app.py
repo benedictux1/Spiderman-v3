@@ -4925,6 +4925,7 @@ def _is_allowed_mime(m):
     return any(m == p or m.startswith(p.rstrip('/')) for p in ALLOWED_UPLOAD_MIME_PREFIXES)
 
 @app.route('/api/files/upload', methods=['POST'])
+@login_required
 def upload_file_endpoint():
     """Accept a file for a given contact and schedule analysis."""
     try:
@@ -4963,47 +4964,45 @@ def upload_file_endpoint():
         mime_type = file.mimetype or 'application/octet-stream'
         # Create DB records using SQLAlchemy
         task_id = str(uuid.uuid4())
-        session = get_session()
         try:
-            # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
-            if not contact:
-                return jsonify({"error": "Contact not found"}), 404
-            
-            # Create import task record
-            from models import ImportTask, UploadedFile
-            import_task = ImportTask(
-                id=task_id,
-                user_id=current_user.id,
-                contact_id=contact_id,
-                task_type='file_analysis',
-                status='pending',
-                progress=0,
-                status_message='Queued for analysis'
-            )
-            session.add(import_task)
-            
-            # Create uploaded file record
-            uploaded_file = UploadedFile(
-                contact_id=contact_id,
-                user_id=current_user.id,
-                original_filename=original_filename,
-                stored_filename=stored_filename,
-                file_path=file_path,
-                file_type=mime_type,
-                file_size_bytes=size_bytes,
-                analysis_task_id=task_id
-            )
-            session.add(uploaded_file)
-            session.commit()
-            
-            file_id = uploaded_file.id
+            with get_session() as session:
+                # Verify contact exists
+                contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
+                if not contact:
+                    return jsonify({"error": "Contact not found"}), 404
+
+                # Create import task record
+                from models import ImportTask, UploadedFile
+                import_task = ImportTask(
+                    id=task_id,
+                    user_id=current_user.id,
+                    contact_id=contact_id,
+                    task_type='file_analysis',
+                    status='pending',
+                    progress=0,
+                    status_message='Queued for analysis'
+                )
+                session.add(import_task)
+
+                # Create uploaded file record
+                uploaded_file = UploadedFile(
+                    contact_id=contact_id,
+                    user_id=current_user.id,
+                    original_filename=original_filename,
+                    stored_filename=stored_filename,
+                    file_path=file_path,
+                    file_type=mime_type,
+                    file_size_bytes=size_bytes,
+                    analysis_task_id=task_id
+                )
+                session.add(uploaded_file)
+
+                # Ensure IDs are generated before leaving the context
+                session.flush()
+                file_id = uploaded_file.id
         except Exception as e:
-            session.rollback()
             logger.error(f"Failed to create file records: {e}")
             return jsonify({"error": f"Failed to create file records: {e}"}), 500
-        finally:
-            session.close()
         # Schedule job via APScheduler and also start a safe fallback thread
         try:
             scheduler.add_job(id=task_id, func=run_file_analysis_job, trigger='date', args=[task_id, file_id])

@@ -299,7 +299,15 @@ def get_connection_manager(database_url: str = None, options: Dict[str, Any] = N
     
     if _connection_manager is None:
         if not database_url:
-            database_url = os.getenv('DATABASE_URL', 'sqlite:///kith_platform.db')
+            # Get database URL from environment
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                # Fallback to SQLite for development
+                database_url = 'sqlite:///kith_platform.db'
+            
+            # Ensure proper PostgreSQL URI format for Render
+            if database_url.startswith('postgres://'):
+                database_url = database_url.replace('postgres://', 'postgresql://', 1)
         
         _connection_manager = SmartConnectionManager(database_url, options)
     

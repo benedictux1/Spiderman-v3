@@ -63,14 +63,27 @@ CORS(app, origins=["*"])  # Configure with specific origins in production
 # --- Database Session Management ---
 try:
     _db_manager = DatabaseManager()
+    logger.info("Database manager initialized successfully")
 except Exception as e:
-    print(f"Warning: Database initialization failed: {e}")
+    logger.error(f"Database initialization failed: {e}", exc_info=True)
     _db_manager = None
+    # Try to use connection_manager as fallback
+    try:
+        from database.connection_manager import get_session as cm_get_session
+        logger.info("Using connection_manager as fallback")
+    except Exception as cm_e:
+        logger.error(f"Connection manager fallback also failed: {cm_e}")
 
 def get_session():
     """Get a new SQLAlchemy session (synchronous)."""
     if _db_manager is None:
-        raise Exception("Database not initialized")
+        # Try connection_manager fallback
+        try:
+            from database.connection_manager import get_session as cm_get_session
+            return cm_get_session()
+        except Exception as e:
+            logger.error(f"Failed to get session from connection_manager: {e}")
+            raise Exception(f"Database not initialized: {e}")
     return _db_manager.get_session_sync()
 
 # --- Caching (Redis preferred, fallback to SimpleCache) ---
@@ -4929,13 +4942,23 @@ def _is_allowed_mime(m):
 def upload_file_endpoint():
     """Accept a file for a given contact and schedule analysis."""
     try:
+        logger.info(f"Upload request from user {current_user.id}")
+        
         if 'file' not in request.files:
+            logger.warning("Upload request missing file part")
             return jsonify({"error": "No file part"}), 400
+        
         file = request.files['file']
         contact_id = validate_input('contact_id', request.form.get('contact_id'))
+        
+        logger.info(f"Upload for contact_id: {contact_id}, filename: {file.filename if file else 'None'}")
+        
         if not contact_id or not file or file.filename == '':
+            logger.warning(f"Invalid upload params: contact_id={contact_id}, file={bool(file)}")
             return jsonify({"error": "Missing file or contact_id"}), 400
+        
         if secure_filename is None:
+            logger.error("secure_filename not available")
             return jsonify({"error": "Upload dependency unavailable"}), 500
         original_filename = secure_filename(file.filename)
         _, ext = os.path.splitext(original_filename)
@@ -5017,10 +5040,15 @@ def upload_file_endpoint():
             logger.info(f"🧵 Fallback thread started for job {task_id}")
         except Exception as thread_err:
             logger.warning(f"Could not start fallback analysis thread: {thread_err}")
+        logger.info(f"Upload successful: task_id={task_id}, file_id={file_id}")
         return jsonify({"task_id": task_id, "message": "File uploaded and analysis started."}), 202
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        return jsonify({"error": f"Upload failed: {e}"}), 500
+        logger.error(f"Upload failed: {e}", exc_info=True)
+        # Return more specific error message
+        error_msg = str(e)
+        if "Database not initialized" in error_msg:
+            return jsonify({"error": "Database connection error. Please try again."}), 500
+        return jsonify({"error": f"Upload failed: {error_msg}"}), 500
 
 @app.route('/api/files/status/<task_id>', methods=['GET'])
 def get_file_task_status(task_id: str):

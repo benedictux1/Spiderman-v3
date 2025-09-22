@@ -1,7 +1,6 @@
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.pool import QueuePool
-from database.connection_manager import get_connection_manager, get_engine, get_session
 
 class DatabaseConfig:
     @staticmethod
@@ -24,12 +23,15 @@ class DatabaseConfig:
     @staticmethod
     def create_engine():
         """Create SQLAlchemy engine with optimized connection pooling."""
-        # Use the smart connection manager for better performance
+        # Import here to avoid circular import
+        from database.connection_manager import get_engine
         return get_engine()
     
     @staticmethod
     def get_session():
         """Get a database session with automatic retry logic."""
+        # Import here to avoid circular import
+        from database.connection_manager import get_session
         return get_session()
     
     @staticmethod

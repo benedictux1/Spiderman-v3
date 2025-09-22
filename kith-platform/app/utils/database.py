@@ -1,14 +1,37 @@
 from contextlib import contextmanager
 from sqlalchemy.orm import sessionmaker
-from config.database import DatabaseConfig
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self):
         try:
-            self.engine = DatabaseConfig.create_engine()
+            # Get database URL directly to avoid circular import
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                database_url = 'sqlite:///kith_platform.db'
+            
+            # Fix Render's postgres:// URL format
+            if database_url.startswith('postgres://'):
+                database_url = database_url.replace('postgres://', 'postgresql://', 1)
+            
+            logger.info(f"Initializing database with URL pattern: {database_url[:30]}...")
+            
+            # Create engine directly
+            from sqlalchemy import create_engine, text
+            self.engine = create_engine(database_url, pool_pre_ping=True)
             self.SessionLocal = sessionmaker(bind=self.engine)
+            
+            # Test connection
+            from sqlalchemy import text
+            with self.engine.connect() as conn:
+                conn.execute(text('SELECT 1'))
+            logger.info("Database connection successful")
+            
         except Exception as e:
-            print(f"Database initialization error: {e}")
+            logger.error(f"Database initialization error: {e}", exc_info=True)
             raise
     
     @contextmanager

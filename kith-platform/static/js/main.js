@@ -352,11 +352,57 @@ async function loadContactProfile(contactId) {
       } catch (e) { /* no-op */ }
   } catch (err) {
     console.error('Error loading contact profile:', err);
-    alert('Failed to load contact profile.');
+    // Show non-blocking message and still render empty categories so the UI appears
+    try {
+      renderContactProfile({ contact_info: {}, categorized_data: {} }, 'Could not load latest data.');
+    } catch (_) {}
   }
 }
 
-function renderContactProfile(profileData) {
+// Category order helper (mirrors backend constants)
+function getCategoryOrder() {
+  if (Array.isArray(window.CATEGORY_ORDER) && window.CATEGORY_ORDER.length) return window.CATEGORY_ORDER;
+  return [
+    'Actionable',
+    'Goals',
+    'Relationship strategy',
+    'Social',
+    'Wellbeing',
+    'Avocation',
+    'Professional background',
+    'Environment and lifestyle',
+    'Psychology and values',
+    'Communication style',
+    'Challenges and development',
+    'Deeper insights',
+    'Financial situation',
+    'Admin matters',
+    'Established patterns',
+    'Core identity',
+    'Information gaps',
+    'Memory anchors',
+    'Positionality',
+    'Others'
+  ];
+}
+
+function resolveCategoryItems(categoriesObj, desiredCategory) {
+  const categories = categoriesObj || {};
+  const want = (desiredCategory || '').toLowerCase().replace(/_/g, ' ');
+  // direct match
+  if (categories[desiredCategory]) return categories[desiredCategory];
+  // try underscore variant
+  const underscore = desiredCategory.replace(/ /g, '_');
+  if (categories[underscore]) return categories[underscore];
+  // flexible scan
+  for (const key of Object.keys(categories)) {
+    const normKey = key.toLowerCase().replace(/_/g, ' ');
+    if (normKey === want) return categories[key];
+  }
+  return [];
+}
+
+function renderContactProfile(profileData, noticeMessage) {
   const { contact_info: info, categorized_data: categories } = profileData || {};
   const container = document.getElementById('contact-profile-content');
   if (!container) return;
@@ -378,13 +424,26 @@ function renderContactProfile(profileData) {
   `;
   container.appendChild(meta);
 
+  // Optional inline notice (non-blocking)
+  if (noticeMessage) {
+    const warn = document.createElement('div');
+    warn.className = 'card';
+    warn.style.background = '#fff7ed';
+    warn.style.border = '1px solid #fed7aa';
+    warn.style.color = '#9a3412';
+    warn.style.marginBottom = '8px';
+    warn.innerHTML = `<div>${noticeMessage}</div>`;
+    container.appendChild(warn);
+  }
+
   // Categories grid with editable textareas (disabled by default)
   const categoriesWrapper = document.createElement('div');
   categoriesWrapper.className = 'categories-grid';
 
-  Object.keys(categories || {}).forEach(category => {
+  // Always render all 20 categories in fixed order
+  getCategoryOrder().forEach(category => {
     // Items may be array of strings or array of objects with {content}
-    const rawItems = categories[category] || [];
+    const rawItems = resolveCategoryItems(categories, category) || [];
     const items = rawItems.map(it => (typeof it === 'string' ? it : (it && (it.content || it.text)) || '')).filter(Boolean);
     const section = document.createElement('section');
     section.className = 'card category-section';

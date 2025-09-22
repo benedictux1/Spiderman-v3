@@ -259,10 +259,23 @@ function openContactProfile(contactId, contactName) {
 // Fetch and render a contact profile, including all categories
 async function loadContactProfile(contactId) {
   try {
-    const res = await fetch(`/api/contact/${contactId}`);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    renderContactProfile(data);
+    // Prefer new modular API (/api/contacts/:id). Fallback to legacy (/api/contact/:id)
+    let res = await fetch(`/api/contacts/${contactId}`);
+    let payload = await res.json().catch(() => ({}));
+    // If modular route not available, try legacy
+    if (!res.ok || (payload && payload.error)) {
+      res = await fetch(`/api/contact/${contactId}`);
+      payload = await res.json().catch(() => ({}));
+    }
+
+    if (!res.ok) throw new Error(payload && (payload.error || payload.message) || 'Failed to load contact');
+
+    // Normalize to { contact_info, categorized_data }
+    const normalized = (payload && payload.success && payload.data)
+      ? normalizeProfileShape(payload.data)
+      : normalizeProfileShape(payload);
+
+    renderContactProfile(normalized);
     
     // Load contact tags if tag management is available
     if (window.tagManagement && window.tagManagement.loadContactTags) {
@@ -344,7 +357,7 @@ async function loadContactProfile(contactId) {
 }
 
 function renderContactProfile(profileData) {
-  const { contact_info: info, categorized_data: categories } = profileData;
+  const { contact_info: info, categorized_data: categories } = profileData || {};
   const container = document.getElementById('contact-profile-content');
   if (!container) return;
 
@@ -370,7 +383,9 @@ function renderContactProfile(profileData) {
   categoriesWrapper.className = 'categories-grid';
 
   Object.keys(categories || {}).forEach(category => {
-    const items = categories[category] || [];
+    // Items may be array of strings or array of objects with {content}
+    const rawItems = categories[category] || [];
+    const items = rawItems.map(it => (typeof it === 'string' ? it : (it && (it.content || it.text)) || '')).filter(Boolean);
     const section = document.createElement('section');
     section.className = 'card category-section';
     section.innerHTML = `
@@ -393,6 +408,29 @@ function renderContactProfile(profileData) {
     editAllBtn.style.display = 'inline-block';
     saveAllBtn.style.display = 'none';
   }
+}
+
+// Convert various backend profile shapes into the UI-friendly shape
+function normalizeProfileShape(input) {
+  if (!input || typeof input !== 'object') return { contact_info: {}, categorized_data: {} };
+
+  // Case 1: Optimized API shape: { contact: {...}, categorized_data: {...} }
+  if (input.contact && input.categorized_data) {
+    return {
+      contact_info: input.contact,
+      categorized_data: input.categorized_data || {}
+    };
+  }
+
+  // Case 2: Legacy shape already: { contact_info: {...}, categorized_data: {...} }
+  if (input.contact_info && input.categorized_data) {
+    return input;
+  }
+
+  // Fallback: try to infer
+  const contact_info = input.contact_info || input.contact || input.info || {};
+  const categorized_data = input.categorized_data || input.categories || {};
+  return { contact_info, categorized_data };
 }
 
 // Expose for other scripts

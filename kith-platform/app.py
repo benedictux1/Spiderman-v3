@@ -2660,7 +2660,7 @@ def delete_contact(contact_id):
         session = get_session()
         
         # Find the contact
-        contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+        contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
         if not contact:
             return jsonify({"error": "Contact not found"}), 404
         
@@ -2810,22 +2810,29 @@ def import_vcard_endpoint():
         return jsonify({"error": f"Failed to process VCF file: {e}"}), 500
 
 @app.route('/api/contact/<int:contact_id>', methods=['GET'])
+@login_required
 def get_contact_details(contact_id):
     """Fetches all synthesized data for a single contact, ordered correctly."""
     from constants import CATEGORY_ORDER
 
     session = get_session()
     try:
-        contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+        contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
         if not contact:
             return jsonify({"error": "Contact not found"}), 404
 
         synthesized_entries = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).order_by(SynthesizedEntry.created_at.desc()).limit(500).all()
 
+        # Build categories using canonical names so UI always renders
         categorized_data = {category: [] for category in CATEGORY_ORDER}
         for entry in synthesized_entries:
-            if entry.category in categorized_data:
-                categorized_data[entry.category].append(entry.content)
+            # Normalize stored category variants like "Communication_Style" → "Communication style"
+            canonical = canonicalize_category(getattr(entry, 'category', ''))
+            # Ensure the bucket exists even if category wasn't in initial set
+            if canonical not in categorized_data:
+                categorized_data[canonical] = []
+            # Store only the text content for rendering in textareas
+            categorized_data[canonical].append(entry.content)
 
         final_response = {
             "contact_info": {
@@ -2893,13 +2900,14 @@ def update_contact(contact_id):
         return jsonify({"error": f"Failed to update contact: {e}"}), 500
 
 @app.route('/api/contact/<int:contact_id>/raw-logs', methods=['GET'])
+@login_required
 def get_raw_logs_for_contact(contact_id):
     """Fetches all raw notes for a single contact, ordered by creation date."""
     try:
         session = get_session()
         try:
             # Check if contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
             
@@ -3102,7 +3110,7 @@ def save_synthesis_endpoint():
         session = get_session()
         try:
             # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
 
@@ -3159,7 +3167,7 @@ def save_synthesis_endpoint():
                     # Fallback: single note added record
                     log_audit_event(
                         contact_id=contact_id,
-                        user_id=1,
+                        user_id=current_user.id,
                         event_type='NOTE_ADDED',
                         source='MANUAL_USER',
                         before_state=None,
@@ -3317,7 +3325,7 @@ def process_transcript_endpoint():
         session = get_session()
         try:
             # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
 
@@ -4888,7 +4896,7 @@ def upload_file_endpoint():
         session = get_session()
         try:
             # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
             
@@ -4896,7 +4904,7 @@ def upload_file_endpoint():
             from models import ImportTask, UploadedFile
             import_task = ImportTask(
                 id=task_id,
-                user_id=1,
+                user_id=current_user.id,
                 contact_id=contact_id,
                 task_type='file_analysis',
                 status='pending',
@@ -4908,7 +4916,7 @@ def upload_file_endpoint():
             # Create uploaded file record
             uploaded_file = UploadedFile(
                 contact_id=contact_id,
-                user_id=1,
+                user_id=current_user.id,
                 original_filename=original_filename,
                 stored_filename=stored_filename,
                 file_path=file_path,
@@ -5520,7 +5528,7 @@ def seed_contacts():
         created_contacts = []
         for contact_data in sample_contacts:
             contact = Contact(
-                user_id=1,
+                user_id=current_user.id,
                 full_name=contact_data["full_name"],
                 tier=contact_data["tier"],
                 telegram_username=contact_data["telegram_username"]
@@ -5743,7 +5751,7 @@ def update_tag(tag_id):
             if 'name' in data and data['name'].strip():
                 new_name = data['name'].strip()
                 # Check for duplicate name (excluding current tag)
-                existing = session.query(Tag).filter_by(user_id=1, name=new_name).filter(Tag.id != tag_id).first()
+                existing = session.query(Tag).filter_by(user_id=current_user.id, name=new_name).filter(Tag.id != tag_id).first()
                 if existing:
                     return jsonify({"error": "Tag with this name already exists"}), 409
                 tag.name = new_name
@@ -5845,7 +5853,7 @@ def get_contact_tags(contact_id):
     try:
         session = get_session()
         try:
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
             
@@ -5878,12 +5886,12 @@ def assign_tag_to_contact(contact_id):
         session = get_session()
         try:
             # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
             
             # Verify tag exists
-            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
             if not tag:
                 return jsonify({"error": "Tag not found"}), 404
             
@@ -5926,12 +5934,12 @@ def remove_tag_from_contact(contact_id, tag_id):
         session = get_session()
         try:
             # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=1).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
             
             # Verify tag exists
-            tag = session.query(Tag).filter_by(id=tag_id, user_id=1).first()
+            tag = session.query(Tag).filter_by(id=tag_id, user_id=current_user.id).first()
             if not tag:
                 return jsonify({"error": "Tag not found"}), 404
             

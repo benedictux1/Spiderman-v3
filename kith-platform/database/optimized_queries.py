@@ -63,24 +63,28 @@ class OptimizedContactQueries:
             # Convert to dictionaries with all related data
             result = []
             for contact in contacts:
+                # Use getattr to avoid AttributeError when columns are not present
                 contact_dict = {
                     'id': contact.id,
                     'full_name': contact.full_name,
-                    'tier': contact.tier,
-                    'telegram_username': contact.telegram_username,
-                    'telegram_id': contact.telegram_id,
-                    'telegram_phone': contact.telegram_phone,
-                    'is_verified': contact.is_verified,
-                    'is_premium': contact.is_premium,
-                    'created_at': contact.created_at.isoformat() if contact.created_at else None,
-                    'updated_at': contact.updated_at.isoformat() if contact.updated_at else None,
-                    # Include tags without additional queries
+                    'tier': getattr(contact, 'tier', None),
+                    'email': getattr(contact, 'email', None),
+                    'phone': getattr(contact, 'phone', None),
+                    'company': getattr(contact, 'company', None),
+                    'location': getattr(contact, 'location', None),
+                    'telegram_username': getattr(contact, 'telegram_username', None),
+                    'telegram_id': getattr(contact, 'telegram_id', None),
+                    'telegram_phone': getattr(contact, 'telegram_phone', None),
+                    'is_verified': getattr(contact, 'is_verified', False),
+                    'is_premium': getattr(contact, 'is_premium', False),
+                    'created_at': contact.created_at.isoformat() if getattr(contact, 'created_at', None) else None,
+                    'updated_at': contact.updated_at.isoformat() if getattr(contact, 'updated_at', None) else None,
                     'tags': [
                         {
                             'id': tag.id,
                             'name': tag.name,
-                            'color': getattr(tag, 'color', '#3b82f6')  # Default color if not set
-                        } for tag in contact.tags
+                            'color': getattr(tag, 'color', '#3b82f6')
+                        } for tag in getattr(contact, 'tags', [])
                     ]
                 }
                 result.append(contact_dict)
@@ -129,21 +133,21 @@ class OptimizedContactQueries:
                 'contact': {
                     'id': contact.id,
                     'full_name': contact.full_name,
-                    'tier': contact.tier,
-                    'email': contact.email,
-                    'phone': contact.phone,
-                    'company': contact.company,
-                    'location': contact.location,
-                    'telegram_username': contact.telegram_username,
-                    'telegram_id': contact.telegram_id,
-                    'created_at': contact.created_at.isoformat() if contact.created_at else None,
-                    'updated_at': contact.updated_at.isoformat() if contact.updated_at else None,
+                    'tier': getattr(contact, 'tier', None),
+                    'email': getattr(contact, 'email', None),
+                    'phone': getattr(contact, 'phone', None),
+                    'company': getattr(contact, 'company', None),
+                    'location': getattr(contact, 'location', None),
+                    'telegram_username': getattr(contact, 'telegram_username', None),
+                    'telegram_id': getattr(contact, 'telegram_id', None),
+                    'created_at': contact.created_at.isoformat() if getattr(contact, 'created_at', None) else None,
+                    'updated_at': contact.updated_at.isoformat() if getattr(contact, 'updated_at', None) else None,
                     'tags': [
                         {
                             'id': tag.id,
                             'name': tag.name,
-                            'color': getattr(tag, 'color', '#3b82f6')  # Default color if not set
-                        } for tag in contact.tags
+                            'color': getattr(tag, 'color', '#3b82f6')
+                        } for tag in getattr(contact, 'tags', [])
                     ]
                 },
                 'categorized_data': categorized_data,

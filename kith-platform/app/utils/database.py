@@ -57,3 +57,18 @@ class DatabaseManager:
             session.close()
         except Exception:
             pass
+
+# Backward-compat alias for tests expecting DatabaseConfig
+class DatabaseConfig:
+    @staticmethod
+    def get_database_url() -> str:
+        # Mirror DatabaseManager's URL selection
+        database_url = os.getenv('DATABASE_URL') or 'sqlite:///kith_platform.db'
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        return database_url
+
+    @staticmethod
+    def create_engine(echo: bool = False):
+        from sqlalchemy import create_engine
+        return create_engine(DatabaseConfig.get_database_url(), echo=echo, pool_pre_ping=True)

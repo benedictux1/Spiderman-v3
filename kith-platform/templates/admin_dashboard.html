@@ -3,6 +3,115 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin – Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body { background:#0b1020; color:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif; }
+    .container { max-width: 1100px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin-bottom: 16px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+    .card { background:#111832; border-radius:12px; padding:16px; border:1px solid #1c2447; }
+    .metric { font-size: 28px; font-weight: 700; }
+    .muted { color:#9fb3ff; }
+    canvas { background:#0e1530; border-radius:8px; padding:8px; }
+    a.nav { color:#9fb3ff; text-decoration:none; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    async function fetchJSON(url){
+      const res = await fetch(url, { credentials:'include' });
+      if(!res.ok) throw new Error('Request failed: '+res.status);
+      return res.json();
+    }
+    function setText(id, text){ const el=document.getElementById(id); if(el) el.textContent = text; }
+
+    function renderTrendsChart(trends){
+      const ctx = document.getElementById('trends').getContext('2d');
+      const labels = trends.map(t => t.date);
+      const success = trends.map(t => t.success_rate);
+      const avg = trends.map(t => t.avg_execution_time);
+      new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [
+          { label:'Success %', data: success, borderColor:'#4f6cff', backgroundColor:'rgba(79,108,255,0.2)' },
+          { label:'Avg Time (s)', data: avg, borderColor:'#2ecc71', backgroundColor:'rgba(46,204,113,0.2)', yAxisID:'y1' }
+        ]},
+        options: { responsive:true, scales:{ y:{ beginAtZero:true }, y1:{ position:'right', beginAtZero:true } } }
+      });
+    }
+
+    function renderCategoriesChart(categories){
+      const ctx = document.getElementById('categories').getContext('2d');
+      new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: categories.map(c=>c.category),
+          datasets: [{ data: categories.map(c=>c.success_rate), backgroundColor: ['#4f6cff','#a855f7','#f59e0b','#10b981','#ef4444'] }]
+        },
+        options: { responsive:true }
+      });
+    }
+
+    async function load(){
+      try{
+        const overview = await fetchJSON('/api/analytics/dashboard/overview');
+        setText('successRate', (overview.summary.success_rate_24h||0)+'%');
+        setText('failedTests', overview.summary.failed_tests_24h||0);
+        setText('avgTime', (overview.summary.avg_execution_time_seconds||0)+'s');
+
+        const trends = await fetchJSON('/api/analytics/dashboard/trends?days=7');
+        renderTrendsChart(trends.trends||[]);
+
+        const cats = await fetchJSON('/api/analytics/dashboard/test-categories');
+        renderCategoriesChart(cats.categories||[]);
+      }catch(e){
+        console.error(e);
+        setText('error', e.message);
+      }
+    }
+    window.addEventListener('DOMContentLoaded', load);
+  </script>
+</head>
+<body>
+  <div class="container">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h1>Admin – Dashboard</h1>
+      <a class="nav" href="/api/admin/users">← Back to Users</a>
+    </div>
+    <div id="error" class="muted"></div>
+    <div class="grid" style="margin-bottom:16px;">
+      <div class="card">
+        <div class="muted">Success Rate (24h)</div>
+        <div id="successRate" class="metric">–</div>
+      </div>
+      <div class="card">
+        <div class="muted">Failed Tests (24h)</div>
+        <div id="failedTests" class="metric">–</div>
+      </div>
+      <div class="card">
+        <div class="muted">Avg Execution Time</div>
+        <div id="avgTime" class="metric">–</div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="muted">Performance Trends (7d)</div>
+        <canvas id="trends" height="160"></canvas>
+      </div>
+      <div class="card">
+        <div class="muted">Test Categories</div>
+        <canvas id="categories" height="160"></canvas>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin Dashboard - Kith</title>
   <link rel="stylesheet" href="/static/style.css" />
   <style>

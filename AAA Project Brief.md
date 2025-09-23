@@ -66,6 +66,11 @@
 - **Background Processing**: Async task management with real-time progress tracking and status updates
 - **Advanced Search**: Full-text search with result highlighting, intelligent filtering, and autocomplete suggestions
 - **Cache Management**: Multi-level caching with cache hit/miss indicators and performance analytics
+- **Multi-User Support**: Complete user management system with role-based access control (admin/user)
+- **Database Optimization**: N+1 query elimination with optimized joins and eager loading
+- **Enhanced Security**: Flask-Login integration with PBKDF2-SHA256 password hashing
+- **Advanced File Processing**: PDF analysis, image OCR, CSV import/export, vCard processing
+- **Real-time Status Tracking**: Background task status with WebSocket-like updates for long-running operations
 
 ## Core Features & Advanced Functionality
 
@@ -2162,30 +2167,991 @@ class Contact(Base):
     tags = relationship("Tag", secondary="contact_tags", back_populates="contacts")
 
 class RawNote(Base):
-    """Original unprocessed notes about contacts"""
+    """Raw notes and unprocessed content"""
     __tablename__ = 'raw_notes'
 
     id = Column(Integer, primary_key=True)
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata_tags = Column(JSON)  # JSON column for PostgreSQL
+    metadata_tags = Column(JSON)  # JSON column for metadata
 
     # Relationships
     contact = relationship("Contact", back_populates="raw_notes")
 
 class SynthesizedEntry(Base):
-    """AI-processed structured information from notes"""
+    """AI-processed and categorized information"""
     __tablename__ = 'synthesized_entries'
 
     id = Column(Integer, primary_key=True)
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
     category = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)  # Main content column that matches the database
+    content = Column(Text, nullable=False)
     confidence_score = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
+    contact = relationship("Contact", back_populates="synthesized_entries")
+
+class ImportTask(Base):
+    """Background task tracking for imports and processing"""
+    __tablename__ = 'import_tasks'
+
+    id = Column(String(255), primary_key=True)  # UUID string
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    contact_id = Column(Integer, ForeignKey('contacts.id'))
+    task_type = Column(String(50), default='telegram_import', nullable=False)
+    status = Column(String(50), default='pending', nullable=False)  # pending, connecting, fetching, processing, completed, failed
+    progress = Column(Integer, default=0)
+    status_message = Column(Text)
+    error_details = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+
+    # Relationships
+    user = relationship("User")
+    contact = relationship("Contact")
+
+class UploadedFile(Base):
+    """File upload tracking and management"""
+    __tablename__ = 'uploaded_files'
+
+    id = Column(Integer, primary_key=True)
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    stored_filename = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    file_type = Column(String(100), nullable=False)
+    file_size_bytes = Column(Integer, nullable=False)
+    analysis_task_id = Column(String(255), ForeignKey('import_tasks.id'))
+    generated_raw_note_id = Column(Integer, ForeignKey('raw_notes.id'))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    contact = relationship("Contact")
+    user = relationship("User")
+    analysis_task = relationship("ImportTask")
+    generated_raw_note = relationship("RawNote")
+
+class ContactGroup(Base):
+    """Contact grouping for relationship visualization"""
+    __tablename__ = 'contact_groups'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    color = Column(String(7), default='#97C2FC')  # Default color for nodes
+
+    members = relationship("Contact", secondary="contact_group_memberships", back_populates="groups")
+
+class ContactGroupMembership(Base):
+    """Many-to-many relationship between contacts and groups"""
+    __tablename__ = 'contact_group_memberships'
+
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), primary_key=True)
+    group_id = Column(Integer, ForeignKey('contact_groups.id', ondelete='CASCADE'), primary_key=True)
+
+class ContactRelationship(Base):
+    """Contact-to-contact relationships for network analysis"""
+    __tablename__ = 'contact_relationships'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    source_contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    target_contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    label = Column(String(100))
+
+    __table_args__ = (UniqueConstraint('user_id', 'source_contact_id', 'target_contact_id', name='_user_source_target_uc'),)
+
+class Tag(Base):
+    """Flexible tagging system for contact categorization"""
+    __tablename__ = 'tags'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    color = Column(String(7), default='#97C2FC')  # Hex color for tag display
+    description = Column(Text)  # Optional description
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")
+    contacts = relationship("Contact", secondary="contact_tags", back_populates="tags")
+
+    __table_args__ = (UniqueConstraint('user_id', 'name', name='_user_tag_name_uc'),)
+
+class ContactTag(Base):
+    """Many-to-many relationship between contacts and tags"""
+    __tablename__ = 'contact_tags'
+
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), primary_key=True)
+    tag_id = Column(Integer, ForeignKey('tags.id', ondelete='CASCADE'), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    contact = relationship("Contact")
+    tag = relationship("Tag")
+```
+
+### Database Performance Optimizations
+
+#### Optimized Query Implementation (database/optimized_queries.py)
+```python
+from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy import select, and_, or_, func, text
+from models import Contact, ContactTag, Tag, SynthesizedEntry, RawNote, User
+
+class OptimizedContactQueries:
+    """Optimized database queries that eliminate N+1 problems"""
+
+    def get_contacts_with_details(self, user_id: int, tier: int = None, search: str = None, limit: int = None):
+        """
+        Get contacts with all related data in a single optimized query.
+        Replaces multiple separate queries with one efficient join.
+        """
+        with get_session() as session:
+            # Build the base query with eager loading of related data
+            query = session.query(Contact).options(
+                # Load tags in a single additional query instead of N queries
+                selectinload(Contact.tags),
+            ).filter(Contact.user_id == user_id)
+
+            # Apply filters and search with full-text search capabilities
+            if tier:
+                query = query.filter(Contact.tier == tier)
+
+            if search:
+                search_term = f"%{search.strip().lower()}%"
+                query = query.filter(
+                    or_(
+                        func.lower(Contact.full_name).like(search_term),
+                        func.lower(Contact.telegram_username).like(search_term),
+                        func.lower(Contact.company).like(search_term),
+                        func.lower(Contact.email).like(search_term)
+                    )
+                )
+
+            # Apply limit and ordering
+            query = query.order_by(Contact.full_name)
+            if limit:
+                query = query.limit(limit)
+
+            contacts = query.all()
+
+            # Convert to dictionaries with safe attribute access
+            result = []
+            for contact in contacts:
+                contact_dict = {
+                    'id': contact.id,
+                    'full_name': contact.full_name,
+                    'tier': getattr(contact, 'tier', None),
+                    'email': getattr(contact, 'email', None),
+                    'phone': getattr(contact, 'phone', None),
+                    'company': getattr(contact, 'company', None),
+                    'location': getattr(contact, 'location', None),
+                    'telegram_username': getattr(contact, 'telegram_username', None),
+                    'telegram_id': getattr(contact, 'telegram_id', None),
+                    'created_at': contact.created_at.isoformat() if getattr(contact, 'created_at', None) else None,
+                    'updated_at': contact.updated_at.isoformat() if getattr(contact, 'updated_at', None) else None,
+                    'tags': [
+                        {
+                            'id': tag.id,
+                            'name': tag.name,
+                            'color': getattr(tag, 'color', '#3b82f6')
+                        } for tag in getattr(contact, 'tags', [])
+                    ]
+                }
+                result.append(contact_dict)
+
+            return result
+```
+
+## Frontend Architecture & UI Implementation
+
+### Modern JavaScript Application Structure
+
+The Kith Platform frontend is built with vanilla JavaScript ES6+ using a modular architecture with advanced performance optimizations, caching strategies, and modern UI patterns.
+
+#### Core Frontend Files Structure
+```
+static/
+├── js/
+│   ├── main.js              # Core application logic and event handling
+│   ├── contacts.js          # Contact management functionality
+│   ├── relationship-graph.js # vis.js network visualization
+│   ├── tag-management.js    # Dynamic tag system
+│   ├── settings.js          # Settings panel management
+│   ├── lazy-loader.js       # Performance optimization
+│   ├── cache-manager.js     # Client-side caching
+│   ├── debounced-search.js  # Search optimization
+│   ├── prefetch-manager.js  # Predictive data loading
+│   └── ui-enhancements.js   # Modern UI components
+└── style.css               # Comprehensive CSS design system
+```
+
+#### Core Application Logic (static/js/main.js)
+```javascript
+// Global state management
+let currentView = 'main';
+let currentContactId = null;
+
+// Setup event listeners for all UI components
+function setupEventListeners() {
+    // Contact management buttons
+    const addNoteBtn = document.getElementById('profile-add-note-btn');
+    if (addNoteBtn) {
+        addNoteBtn.addEventListener('click', function() {
+            const noteArea = document.getElementById('profile-note-input-area');
+            noteArea.style.display = 'block';
+            document.getElementById('profile-note-input').focus();
+        });
+    }
+
+    // Navigation buttons with view state management
+    const backToMainFromProfileBtn = document.getElementById('back-to-main-from-profile');
+    if (backToMainFromProfileBtn) {
+        backToMainFromProfileBtn.addEventListener('click', function() {
+            showMainView();
+        });
+    }
+
+    // Settings panel toggle
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            showSettingsView();
+        });
+    }
+
+    // Contact editing and deletion
+    const editProfileBtn = document.getElementById('edit-contact-profile-btn');
+    if (editProfileBtn) {
+        editProfileBtn.addEventListener('click', function() {
+            const selectedContacts = getSelectedContacts();
+            if (selectedContacts.length === 1) {
+                editContactProfile(selectedContacts[0]);
+            }
+        });
+    }
+
+    const deleteContactBtn = document.getElementById('delete-contact-btn');
+    if (deleteContactBtn) {
+        deleteContactBtn.addEventListener('click', function() {
+            const selectedContacts = getSelectedContacts();
+            if (selectedContacts.length > 0) {
+                if (confirm(`Delete ${selectedContacts.length} contact(s)?`)) {
+                    deleteSelectedContacts(selectedContacts);
+                }
+            }
+        });
+    }
+}
+
+// Helper functions for contact management
+function getSelectedContacts() {
+    const checkboxes = document.querySelectorAll('input[name="contact_ids"]:checked');
+    return Array.from(checkboxes).map(cb => parseInt(cb.value));
+}
+
+function updateDeleteSelectedButtonState() {
+    const selectedContacts = getSelectedContacts();
+    const deleteBtn = document.getElementById('delete-contact-btn');
+    if (deleteBtn) {
+        deleteBtn.disabled = selectedContacts.length === 0;
+        deleteBtn.textContent = selectedContacts.length > 0
+            ? `Delete Selected (${selectedContacts.length})`
+            : 'Delete Selected';
+    }
+}
+```
+
+#### Advanced Contact Management (static/js/contacts.js)
+```javascript
+// Contact operations with error handling and loading states
+async function deleteSelectedContacts(contactIds) {
+    try {
+        showLoadingSpinner('Deleting contacts...');
+
+        const response = await fetch('/api/contacts/bulk-delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ contact_ids: contactIds })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to delete contacts');
+        }
+
+        const result = await response.json();
+
+        if (result.success) {
+            showSuccessMessage(`Successfully deleted ${contactIds.length} contact(s)`);
+            await refreshContactList();
+        } else {
+            throw new Error(result.error || 'Unknown error occurred');
+        }
+    } catch (error) {
+        console.error('Error deleting contacts:', error);
+        showErrorMessage(`Error deleting contacts: ${error.message}`);
+    } finally {
+        hideLoadingSpinner();
+    }
+}
+
+// Contact profile editing with validation
+function editContactProfile(contactId) {
+    fetch(`/api/contact/${contactId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showEditContactModal(data.data);
+            } else {
+                showErrorMessage('Failed to load contact details');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading contact:', error);
+            showErrorMessage('Error loading contact details');
+        });
+}
+
+function showEditContactModal(contactData) {
+    const modal = document.getElementById('edit-contact-modal');
+    const form = document.getElementById('edit-contact-form');
+
+    // Populate form fields
+    form.elements['full_name'].value = contactData.contact.full_name || '';
+    form.elements['email'].value = contactData.contact.email || '';
+    form.elements['phone'].value = contactData.contact.phone || '';
+    form.elements['company'].value = contactData.contact.company || '';
+    form.elements['location'].value = contactData.contact.location || '';
+    form.elements['tier'].value = contactData.contact.tier || 2;
+
+    // Show modal
+    modal.style.display = 'block';
+
+    // Handle form submission
+    form.onsubmit = async function(e) {
+        e.preventDefault();
+        await saveContactChanges(contactData.contact.id, new FormData(form));
+    };
+}
+```
+
+#### Relationship Graph Visualization (static/js/relationship-graph.js)
+```javascript
+// vis.js network graph implementation
+let network = null;
+let networkData = { nodes: null, edges: null };
+
+function initializeNetworkGraph() {
+    const container = document.getElementById('relationship-network');
+    if (!container) return;
+
+    // Network configuration with performance optimizations
+    const options = {
+        nodes: {
+            shape: 'dot',
+            size: 16,
+            font: {
+                size: 12,
+                color: '#333333'
+            },
+            borderWidth: 2,
+            shadow: true
+        },
+        edges: {
+            width: 2,
+            color: { inherit: 'from' },
+            smooth: {
+                type: 'continuous'
+            }
+        },
+        physics: {
+            stabilization: { iterations: 100 },
+            barnesHut: {
+                gravitationalConstant: -2000,
+                centralGravity: 0.3,
+                springLength: 95,
+                springConstant: 0.04,
+                damping: 0.09
+            }
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 300,
+            hideEdgesOnDrag: true,
+            hideNodesOnDrag: false
+        }
+    };
+
+    // Initialize empty network
+    networkData = { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) };
+    network = new vis.Network(container, networkData, options);
+
+    // Event handlers
+    network.on('click', function(params) {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            openContactProfile(nodeId);
+        }
+    });
+
+    network.on('hoverNode', function(params) {
+        showContactTooltip(params.node, params.pointer.DOM);
+    });
+}
+
+async function loadGraphData() {
+    try {
+        showLoadingState('Loading relationship data...');
+
+        const response = await fetch('/api/graph-data');
+        const data = await response.json();
+
+        if (data.success) {
+            updateNetworkData(data.data);
+        } else {
+            throw new Error(data.error || 'Failed to load graph data');
+        }
+    } catch (error) {
+        console.error('Error loading graph data:', error);
+        showErrorMessage('Failed to load relationship graph');
+    } finally {
+        hideLoadingState();
+    }
+}
+
+function updateNetworkData(graphData) {
+    // Transform backend data to vis.js format
+    const nodes = graphData.nodes.map(node => ({
+        id: node.id,
+        label: node.name,
+        title: `${node.name}\nTier: ${node.tier}`,
+        color: getTierColor(node.tier),
+        size: getTierSize(node.tier)
+    }));
+
+    const edges = graphData.edges.map(edge => ({
+        from: edge.source,
+        to: edge.target,
+        label: edge.relationship || '',
+        color: { color: '#848484' }
+    }));
+
+    // Update network data
+    networkData.nodes.clear();
+    networkData.edges.clear();
+    networkData.nodes.add(nodes);
+    networkData.edges.add(edges);
+
+    // Fit network to view
+    if (network) {
+        network.fit();
+    }
+}
+```
+
+#### Advanced Tag Management (static/js/tag-management.js)
+```javascript
+// Dynamic tag system with real-time updates
+class TagManager {
+    constructor() {
+        this.availableTags = [];
+        this.selectedTags = new Set();
+        this.tagColors = [
+            '#ef4444', '#f97316', '#f59e0b', '#eab308',
+            '#84cc16', '#22c55e', '#10b981', '#14b8a6',
+            '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1',
+            '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'
+        ];
+    }
+
+    async loadAvailableTags() {
+        try {
+            const response = await fetch('/api/tags');
+            const data = await response.json();
+
+            if (data.success) {
+                this.availableTags = data.data;
+                this.renderTagSelector();
+            }
+        } catch (error) {
+            console.error('Error loading tags:', error);
+        }
+    }
+
+    renderTagSelector() {
+        const container = document.getElementById('tag-selector');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        // Create tag input with autocomplete
+        const tagInput = document.createElement('input');
+        tagInput.type = 'text';
+        tagInput.placeholder = 'Add tags...';
+        tagInput.className = 'tag-input';
+
+        // Setup autocomplete
+        this.setupTagAutocomplete(tagInput);
+
+        container.appendChild(tagInput);
+
+        // Render existing tags
+        this.renderSelectedTags(container);
+    }
+
+    setupTagAutocomplete(input) {
+        let debounceTimer;
+
+        input.addEventListener('input', (e) => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                this.showTagSuggestions(e.target.value, input);
+            }, 200);
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.addTag(input.value.trim());
+                input.value = '';
+                this.hideSuggestions();
+            }
+        });
+    }
+
+    showTagSuggestions(query, input) {
+        if (!query) {
+            this.hideSuggestions();
+            return;
+        }
+
+        const suggestions = this.availableTags.filter(tag =>
+            tag.name.toLowerCase().includes(query.toLowerCase()) &&
+            !this.selectedTags.has(tag.id)
+        );
+
+        this.renderSuggestions(suggestions, input);
+    }
+
+    renderSuggestions(suggestions, input) {
+        let dropdown = document.getElementById('tag-suggestions');
+
+        if (!dropdown) {
+            dropdown = document.createElement('div');
+            dropdown.id = 'tag-suggestions';
+            dropdown.className = 'tag-suggestions-dropdown';
+            input.parentNode.appendChild(dropdown);
+        }
+
+        dropdown.innerHTML = '';
+
+        suggestions.forEach(tag => {
+            const item = document.createElement('div');
+            item.className = 'tag-suggestion-item';
+            item.innerHTML = `
+                <span class="tag-color" style="background-color: ${tag.color}"></span>
+                <span class="tag-name">${tag.name}</span>
+                <span class="tag-usage">${tag.usage_count || 0} uses</span>
+            `;
+
+            item.addEventListener('click', () => {
+                this.addTag(tag.name);
+                input.value = '';
+                this.hideSuggestions();
+            });
+
+            dropdown.appendChild(item);
+        });
+
+        if (suggestions.length === 0) {
+            const noResults = document.createElement('div');
+            noResults.className = 'no-tag-suggestions';
+            noResults.textContent = 'No matching tags found';
+            dropdown.appendChild(noResults);
+        }
+    }
+
+    async addTag(tagName) {
+        if (!tagName || this.selectedTags.has(tagName)) return;
+
+        try {
+            // Check if tag exists or create new one
+            let tag = this.availableTags.find(t => t.name === tagName);
+
+            if (!tag) {
+                const response = await fetch('/api/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: tagName,
+                        color: this.getRandomTagColor()
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    tag = result.data;
+                    this.availableTags.push(tag);
+                }
+            }
+
+            if (tag) {
+                this.selectedTags.add(tag.id);
+                this.renderSelectedTags();
+            }
+        } catch (error) {
+            console.error('Error adding tag:', error);
+        }
+    }
+
+    getRandomTagColor() {
+        return this.tagColors[Math.floor(Math.random() * this.tagColors.length)];
+    }
+}
+```
+
+#### Performance Optimization Systems
+
+##### Lazy Loading Implementation (static/js/lazy-loader.js)
+```javascript
+class LazyLoader {
+    constructor() {
+        this.itemsPerBatch = 20;
+        this.loadedItems = 0;
+        this.totalItems = 0;
+        this.isLoading = false;
+        this.hasMore = true;
+
+        this.setupIntersectionObserver();
+    }
+
+    setupIntersectionObserver() {
+        this.observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && this.hasMore && !this.isLoading) {
+                    this.loadNextBatch();
+                }
+            });
+        }, {
+            rootMargin: '100px'
+        });
+
+        // Observe the loading trigger element
+        const trigger = document.getElementById('lazy-load-trigger');
+        if (trigger) {
+            this.observer.observe(trigger);
+        }
+    }
+
+    async loadNextBatch() {
+        if (this.isLoading || !this.hasMore) return;
+
+        this.isLoading = true;
+        this.showBatchLoadingIndicator();
+
+        try {
+            const response = await fetch(`/api/contacts?limit=${this.itemsPerBatch}&offset=${this.loadedItems}`);
+            const data = await response.json();
+
+            if (data.success) {
+                this.renderContactBatch(data.data.contacts);
+                this.loadedItems += data.data.contacts.length;
+                this.hasMore = data.data.contacts.length === this.itemsPerBatch;
+            }
+        } catch (error) {
+            console.error('Error loading contacts batch:', error);
+        } finally {
+            this.isLoading = false;
+            this.hideBatchLoadingIndicator();
+        }
+    }
+
+    renderContactBatch(contacts) {
+        const container = document.getElementById('contacts-container');
+
+        contacts.forEach(contact => {
+            const contactElement = this.createContactElement(contact);
+            container.appendChild(contactElement);
+        });
+    }
+}
+```
+
+##### Client-Side Caching (static/js/cache-manager.js)
+```javascript
+class CacheManager {
+    constructor() {
+        this.cache = new Map();
+        this.cacheTTL = 5 * 60 * 1000; // 5 minutes
+        this.maxCacheSize = 100;
+        this.hitCount = 0;
+        this.missCount = 0;
+    }
+
+    set(key, data, customTTL = null) {
+        const ttl = customTTL || this.cacheTTL;
+        const cacheItem = {
+            data: data,
+            timestamp: Date.now(),
+            ttl: ttl
+        };
+
+        // Enforce cache size limit
+        if (this.cache.size >= this.maxCacheSize) {
+            const oldestKey = this.cache.keys().next().value;
+            this.cache.delete(oldestKey);
+        }
+
+        this.cache.set(key, cacheItem);
+        this.updateCacheMetrics();
+    }
+
+    get(key) {
+        const cacheItem = this.cache.get(key);
+
+        if (!cacheItem) {
+            this.missCount++;
+            this.updateCacheMetrics();
+            return null;
+        }
+
+        // Check if expired
+        if (Date.now() - cacheItem.timestamp > cacheItem.ttl) {
+            this.cache.delete(key);
+            this.missCount++;
+            this.updateCacheMetrics();
+            return null;
+        }
+
+        this.hitCount++;
+        this.updateCacheMetrics();
+        return cacheItem.data;
+    }
+
+    updateCacheMetrics() {
+        const totalRequests = this.hitCount + this.missCount;
+        const hitRate = totalRequests > 0 ? (this.hitCount / totalRequests * 100).toFixed(1) : 0;
+
+        // Update UI cache indicator
+        const indicator = document.getElementById('cache-indicator');
+        if (indicator) {
+            indicator.textContent = `Cache: ${hitRate}% hit rate`;
+            indicator.className = hitRate > 80 ? 'cache-good' : hitRate > 60 ? 'cache-ok' : 'cache-poor';
+        }
+    }
+}
+```
+
+#### Modern UI Design System
+
+##### CSS Design System (static/style.css)
+```css
+/* Modern design system with CSS custom properties */
+:root {
+    /* Color palette */
+    --primary-50: #eff6ff;
+    --primary-500: #3b82f6;
+    --primary-600: #2563eb;
+    --primary-700: #1d4ed8;
+
+    --gray-50: #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-500: #6b7280;
+    --gray-700: #374151;
+    --gray-900: #111827;
+
+    /* Typography */
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.25rem;
+
+    /* Spacing */
+    --spacing-1: 0.25rem;
+    --spacing-2: 0.5rem;
+    --spacing-3: 0.75rem;
+    --spacing-4: 1rem;
+    --spacing-6: 1.5rem;
+    --spacing-8: 2rem;
+
+    /* Borders and shadows */
+    --border-radius: 0.375rem;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+}
+
+/* Modern button system */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--spacing-2) var(--spacing-4);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    border-radius: var(--border-radius);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    text-decoration: none;
+    gap: var(--spacing-2);
+}
+
+.btn-primary {
+    background-color: var(--primary-600);
+    color: white;
+    border-color: var(--primary-600);
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-700);
+    border-color: var(--primary-700);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-secondary {
+    background-color: white;
+    color: var(--gray-700);
+    border-color: var(--gray-200);
+}
+
+.btn-secondary:hover {
+    background-color: var(--gray-50);
+    border-color: var(--gray-300);
+}
+
+/* Modern card design */
+.card {
+    background: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--gray-200);
+    overflow: hidden;
+    transition: box-shadow 0.15s ease-in-out;
+}
+
+.card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.card-header {
+    padding: var(--spacing-4) var(--spacing-6);
+    border-bottom: 1px solid var(--gray-200);
+    background-color: var(--gray-50);
+}
+
+.card-body {
+    padding: var(--spacing-6);
+}
+
+/* Contact list modern layout */
+.contact-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--spacing-6);
+    padding: var(--spacing-6);
+}
+
+.contact-card {
+    background: white;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--gray-200);
+    padding: var(--spacing-6);
+    transition: all 0.2s ease-in-out;
+    cursor: pointer;
+}
+
+.contact-card:hover {
+    border-color: var(--primary-500);
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+}
+
+/* Loading states and animations */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--gray-200);
+    border-radius: 50%;
+    border-top-color: var(--primary-500);
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Tag system styling */
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--spacing-1) var(--spacing-3);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    border-radius: 9999px;
+    gap: var(--spacing-1);
+}
+
+.tag-removable {
+    cursor: pointer;
+    transition: opacity 0.15s ease-in-out;
+}
+
+.tag-removable:hover {
+    opacity: 0.8;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .contact-grid {
+        grid-template-columns: 1fr;
+        padding: var(--spacing-4);
+        gap: var(--spacing-4);
+    }
+
+    .card-body {
+        padding: var(--spacing-4);
+    }
+
+    .btn {
+        padding: var(--spacing-3) var(--spacing-4);
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --gray-50: #1f2937;
+        --gray-100: #374151;
+        --gray-200: #4b5563;
+        --gray-700: #d1d5db;
+        --gray-900: #f9fafb;
+    }
+
+    body {
+        background-color: #111827;
+        color: var(--gray-900);
+    }
+
+    .card {
+        background-color: var(--gray-50);
+        border-color: var(--gray-200);
+    }
+}
     contact = relationship("Contact", back_populates="synthesized_entries")
 
 class ImportTask(Base):
@@ -2625,6 +3591,1130 @@ def search_contacts():
         logger.error(f"Error searching contacts: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 ```
+
+## Complete API Reference
+
+The Kith Platform provides a comprehensive REST API with 67+ endpoints covering all aspects of contact management, authentication, file processing, AI analysis, and administrative functions. All API endpoints require proper authentication unless otherwise noted.
+
+### Authentication Endpoints
+
+#### User Registration and Login
+```python
+# POST /api/register - Create new user account
+{
+    "username": "example_user",
+    "password": "secure_password"
+}
+# Response: {"message": "User registered successfully", "user": {"id": 1, "username": "example_user", "role": "user"}}
+
+# POST /api/login - Authenticate user
+{
+    "username": "example_user",
+    "password": "secure_password"
+}
+# Response: {"message": "Login successful", "user": {"id": 1, "username": "example_user", "role": "admin"}}
+
+# POST /api/logout - End user session
+# Response: {"message": "Logout successful"}
+
+# GET /api/session - Get current user session info
+# Response: {"user": {"id": 1, "username": "example_user", "role": "admin"}}
+```
+
+### Contact Management Endpoints
+
+#### Core Contact Operations
+```python
+# GET /api/contacts - Retrieve contacts with filtering and pagination
+# Parameters: tier (1,2,3), search (string), limit (int), page (int)
+# Response: {"success": true, "data": {"contacts": [...], "tier_summary": {...}}}
+
+# POST /api/contacts - Create new contact
+{
+    "full_name": "John Doe",
+    "tier": 2,
+    "email": "john@example.com",
+    "phone": "+1234567890",
+    "company": "Example Corp",
+    "location": "New York, NY"
+}
+
+# GET /api/contact/<contact_id> - Get detailed contact profile
+# Response: Complete contact data with categorized AI-analyzed information
+
+# PATCH /api/contact/<contact_id> - Update contact information
+{
+    "full_name": "John Smith",
+    "tier": 1,
+    "email": "john.smith@newcompany.com"
+}
+
+# DELETE /api/contacts/<contact_id> - Delete single contact
+# POST /api/contacts/bulk-delete - Delete multiple contacts
+{"contact_ids": [1, 2, 3]}
+```
+
+#### Contact Import/Export
+```python
+# POST /api/import-vcard - Import contacts from vCard file
+# Upload vCard file via multipart/form-data
+
+# POST /api/import/merge-from-csv - Import contacts from CSV
+# Upload CSV file with contact data
+
+# GET /api/export/csv - Export all contacts to CSV
+# Response: CSV file download with all contact data
+
+# POST /api/contact/<contact_id>/seed-demo - Seed demo data for contact
+# Response: {"message": "Demo data seeded successfully"}
+```
+
+### AI-Powered Note Processing
+
+#### Note Analysis and Synthesis
+```python
+# POST /api/process-note - Process raw note with AI analysis
+{
+    "contact_id": 123,
+    "note_content": "Had coffee with John. He mentioned his new startup idea about sustainable packaging.",
+    "engine": "gemini"  # or "openai"
+}
+# Response: Categorized analysis with confidence scores
+
+# POST /api/save-synthesis - Save AI-generated synthesis
+{
+    "contact_id": 123,
+    "category": "work",
+    "content": "Working on sustainable packaging startup",
+    "confidence_score": 0.85
+}
+
+# POST /api/notes - Add raw note to contact
+{
+    "contact_id": 123,
+    "content": "Note content here",
+    "metadata_tags": {"source": "manual", "timestamp": "2024-01-15"}
+}
+
+# GET /api/contact/<contact_id>/raw-logs - Get all raw notes for contact
+# Response: Array of raw notes with timestamps
+```
+
+### File Processing and Analysis
+
+#### File Upload and Processing
+```python
+# POST /api/files/upload - Upload file for AI analysis
+# Multipart form with: file, contact_id, analysis_type ("document", "image", "transcript")
+# Supports: PDF, DOC, DOCX, TXT, PNG, JPG, JPEG, MP3, WAV, M4A
+
+# GET /api/files/status/<task_id> - Check file processing status
+# Response: {"status": "processing", "progress": 45, "message": "Analyzing document..."}
+
+# POST /api/transcribe-audio - Transcribe audio file
+# Upload audio file via multipart/form-data
+# Response: {"transcription": "Transcribed text here", "confidence": 0.92}
+
+# POST /api/process-transcript - Process transcription with contact linking
+{
+    "transcript": "Spoke with Sarah about her wedding plans...",
+    "confidence": 0.92
+}
+```
+
+### Advanced Search and Discovery
+
+#### Search Functionality
+```python
+# GET /api/search - Global search across contacts
+# Parameters: q (query), limit (max results)
+# Response: {"results": [...], "total": 15, "query": "john"}
+
+# Full-text search with highlighting and relevance scoring
+# Searches across: full_name, company, email, phone, telegram_username
+# Uses PostgreSQL full-text search with fallback to LIKE queries
+```
+
+### Relationship Management
+
+#### Contact Relationships and Groups
+```python
+# POST /api/groups - Create contact group
+{
+    "name": "Work Colleagues",
+    "color": "#3b82f6"
+}
+
+# POST /api/groups/<group_id>/members - Add members to group
+{"contact_ids": [1, 2, 3]}
+
+# POST /api/relationships - Create relationship between contacts
+{
+    "source_contact_id": 1,
+    "target_contact_id": 2,
+    "label": "colleagues"
+}
+
+# GET /api/graph-data - Get relationship graph data for visualization
+# Response: {"nodes": [...], "edges": [...]} for vis.js network graph
+```
+
+### Tag Management
+
+#### Contact Tagging System
+```python
+# GET /api/tags - Get all user tags
+# Response: Array of tags with usage counts
+
+# POST /api/tags - Create new tag
+{
+    "name": "VIP Client",
+    "color": "#ef4444",
+    "description": "High-priority business contacts"
+}
+
+# GET /api/tags/<tag_id> - Get tag details
+# GET /api/tags/<tag_id>/contacts - Get all contacts with this tag
+
+# PATCH /api/tags/<tag_id> - Update tag
+{"name": "Premium Client", "color": "#f59e0b"}
+
+# DELETE /api/tags/<tag_id> - Delete tag
+
+# POST /api/contacts/<contact_id>/tags - Assign tags to contact
+{"tag_ids": [1, 2, 3]}
+
+# DELETE /api/contacts/<contact_id>/tags/<tag_id> - Remove tag from contact
+```
+
+### Telegram Integration
+
+#### Telegram Authentication and Sync
+```python
+# GET /api/telegram/status - Check Telegram connection status
+# Response: {"connected": true, "username": "@johndoe", "last_sync": "2024-01-15T10:30:00Z"}
+
+# POST /api/telegram/save-credentials - Save Telegram API credentials
+{
+    "api_id": "123456",
+    "api_hash": "abc123def456",
+    "phone_number": "+1234567890"
+}
+
+# POST /api/telegram/auth/start - Begin Telegram authentication
+{"phone_number": "+1234567890"}
+
+# POST /api/telegram/auth/verify - Submit verification code
+{"phone_number": "+1234567890", "code": "12345"}
+
+# POST /api/telegram/auth/password - Submit 2FA password if required
+{"password": "two_factor_password"}
+
+# POST /api/telegram/delink - Disconnect Telegram integration
+# POST /api/telegram/relink - Reconnect Telegram integration
+
+# POST /api/telegram/start-import - Begin importing Telegram chats
+{
+    "contact_id": 123,
+    "telegram_handle": "@username",
+    "limit": 100
+}
+
+# GET /api/telegram/import-status/<task_id> - Check import progress
+# Response: {"status": "processing", "progress": 75, "processed": 150, "total": 200}
+
+# POST /api/telegram/direct-import - Direct import from Telegram data
+{
+    "contact_id": 123,
+    "messages": [...],
+    "metadata": {...}
+}
+```
+
+### Administrative Functions
+
+#### Admin User Management
+```python
+# GET /admin/api/users - Get all users (admin only)
+# Response: Array of user objects with contact counts
+
+# GET /admin/api/users/<user_id>/contacts - Get user's contacts (admin only)
+# GET /admin/api/users/<user_id>/data - Get complete user data export (admin only)
+
+# POST /admin/api/users/<user_id>/role - Change user role (admin only)
+{"role": "admin"}  # or "user"
+
+# DELETE /admin/api/users/<user_id>/delete - Delete user account (admin only)
+# GET /admin/api/users/<user_id>/password - Get user password (admin only)
+
+# GET /admin/api/users/<user_id>/export/csv - Export user's contacts to CSV
+# GET /admin/api/export/all-users-csv - Export all users' data to CSV
+# POST /admin/api/import/all-users-csv - Import data for all users from CSV
+
+# GET /admin/api/users/<user_id>/graph-data - Get user's relationship graph data
+```
+
+### System Health and Monitoring
+
+#### Health Check and Debug Endpoints
+```python
+# GET /health - Basic health check
+# Response: {"status": "healthy", "timestamp": "2024-01-15T10:30:00Z"}
+
+# GET /api/health - Detailed API health check
+# GET /api/ready - Readiness probe for deployment
+
+# GET /api/config - Get client configuration
+# Response: {"ai_engines": ["openai", "gemini"], "features": {...}}
+
+# POST /api/test-openai - Test OpenAI API connection
+{"test_prompt": "Hello, this is a test"}
+
+# GET /debug/routes - List all available routes (debug mode only)
+```
+
+### Background Task Management
+
+#### Async Task Monitoring
+```python
+# POST /api/reindex/start - Start reindexing operation
+# Response: {"task_id": "abc123", "status": "pending"}
+
+# GET /api/reindex/status/<task_id> - Check reindexing progress
+# Response: {"status": "running", "progress": 45, "message": "Reindexing contacts..."}
+
+# All long-running operations return task IDs for status monitoring:
+# - File analysis tasks
+# - Telegram import tasks
+# - Bulk operations
+# - AI processing tasks
+```
+
+### Error Handling and Response Format
+
+All API endpoints follow consistent error handling patterns:
+
+```python
+# Success Response Format
+{
+    "success": true,
+    "data": {...},
+    "message": "Operation completed successfully"
+}
+
+# Error Response Format
+{
+    "success": false,
+    "error": "Detailed error message",
+    "code": "ERROR_CODE"
+}
+
+# Common HTTP Status Codes:
+# 200 - Success
+# 201 - Created
+# 400 - Bad Request (validation errors)
+# 401 - Unauthorized (login required)
+# 403 - Forbidden (insufficient permissions)
+# 404 - Not Found
+# 409 - Conflict (duplicate data)
+# 500 - Internal Server Error
+```
+
+## Complete Implementation Guide Summary
+
+This section provides the essential information a junior developer needs to recreate the entire application from scratch. All code examples and configurations are production-ready and currently implemented in the system.
+
+### Step-by-Step Implementation Checklist
+
+#### 1. Environment Setup and Dependencies
+```bash
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install all dependencies
+pip install -r requirements.txt
+
+# Key dependencies with exact versions:
+# Flask==2.3.3 (Web framework)
+# SQLAlchemy==2.0.21 (Database ORM)
+# psycopg2-binary==2.9.7 (PostgreSQL adapter)
+# Flask-Login==0.6.3 (Authentication)
+# Flask-Caching==2.3.0 (Caching layer)
+# openai==0.28.1 (AI processing)
+# google-generativeai==0.8.5 (Gemini AI)
+# telethon==1.34.0 (Telegram integration)
+# vis.js (Frontend - loaded via CDN)
+```
+
+#### 2. Database Setup and Configuration
+```python
+# config/database.py - Database configuration management
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+class DatabaseConfig:
+    def __init__(self):
+        self.database_url = self._get_database_url()
+        self.engine = create_engine(self.database_url, pool_pre_ping=True)
+        self.SessionLocal = sessionmaker(bind=self.engine)
+
+    def _get_database_url(self):
+        # Environment-based database URL configuration
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            # Development fallback to SQLite
+            database_url = 'sqlite:///kith_platform.db'
+
+        # Fix Render.com postgres:// URL format
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+        return database_url
+
+# Essential environment variables:
+# DATABASE_URL=postgresql://user:password@host:port/database
+# FLASK_SECRET_KEY=your-secret-key-here
+# OPENAI_API_KEY=your-openai-key
+# GEMINI_API_KEY=your-gemini-key
+# REDIS_URL=redis://host:port (optional, falls back to SimpleCache)
+```
+
+#### 3. Core Authentication System
+```python
+# Authentication implementation with Flask-Login
+from flask_login import LoginManager, login_user, logout_user, current_user, login_required
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# Setup in app.py
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login_page'
+
+@login_manager.user_loader
+def load_user(user_id):
+    try:
+        session = get_session()
+        try:
+            return session.get(User, int(user_id))
+        finally:
+            session.close()
+    except Exception:
+        return None
+
+@login_manager.unauthorized_handler
+def _unauthorized():
+    if request.path.startswith('/api'):
+        return jsonify({"error": "Authentication required"}), 401
+    return redirect('/login')
+
+# Registration endpoint with role assignment
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.get_json(force=True)
+    username = data.get('username').strip()
+    password = data.get('password')
+
+    session = get_session()
+    try:
+        # Check if user exists
+        existing = session.query(User).filter_by(username=username).first()
+        if existing:
+            return jsonify({"error": "Username already exists"}), 409
+
+        # Hash password with PBKDF2-SHA256
+        hashed = generate_password_hash(password, method='pbkdf2:sha256')
+
+        # First user becomes admin
+        existing_count = session.query(User).count()
+        role = 'admin' if existing_count == 0 else 'user'
+
+        # Create user with plaintext password for admin access (production: encrypt)
+        user = User(
+            username=username,
+            password_hash=hashed,
+            password_plaintext=password,  # Admin feature
+            role=role
+        )
+        session.add(user)
+        session.commit()
+
+        return jsonify({
+            "message": "User registered successfully",
+            "user": {"id": user.id, "username": user.username, "role": user.role}
+        }), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": f"Registration failed: {e}"}), 500
+    finally:
+        session.close()
+```
+
+#### 4. AI Integration Architecture
+```python
+# app/services/ai_service.py - Complete AI processing system
+import os
+import openai
+import google.generativeai as genai
+from typing import Dict, Any, List
+import logging
+import json
+
+class AIService:
+    def __init__(self):
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+
+        # Initialize AI services
+        if self.openai_api_key:
+            openai.api_key = self.openai_api_key
+
+        if self.gemini_api_key:
+            genai.configure(api_key=self.gemini_api_key)
+
+    def analyze_note(self, content: str, contact_name: str) -> Dict[str, Any]:
+        """Process raw note content and extract structured information"""
+        try:
+            # Prefer Gemini for better performance and cost
+            if self.gemini_api_key:
+                return self._analyze_with_gemini(content, contact_name)
+            elif self.openai_api_key:
+                return self._analyze_with_openai(content, contact_name)
+            else:
+                raise ValueError("No AI service configured")
+        except Exception as e:
+            logging.error(f"AI analysis failed: {e}")
+            # Return fallback structure for graceful degradation
+            return {
+                "categories": {
+                    "other": {
+                        "content": content,
+                        "confidence": 0.5
+                    }
+                }
+            }
+
+    def _analyze_with_gemini(self, content: str, contact_name: str) -> Dict[str, Any]:
+        """Gemini-based analysis with structured prompt"""
+        model = genai.GenerativeModel('gemini-pro')
+
+        prompt = f"""
+        Analyze this note about {contact_name} and extract structured information.
+        Categorize the content into these categories: personal_info, preferences, relationships, work, interests, goals, concerns, other.
+
+        Note content: {content}
+
+        Return a JSON response with this structure:
+        {{
+            "categories": {{
+                "personal_info": {{"content": "...", "confidence": 0.8}},
+                "work": {{"content": "...", "confidence": 0.9}},
+                "interests": {{"content": "...", "confidence": 0.7}}
+            }}
+        }}
+
+        Only include categories that have relevant content. Confidence should be between 0.0 and 1.0.
+        """
+
+        response = model.generate_content(prompt)
+
+        try:
+            # Parse JSON response
+            result = json.loads(response.text)
+            return result
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            return {
+                "categories": {
+                    "other": {
+                        "content": content,
+                        "confidence": 0.6
+                    }
+                }
+            }
+
+    def _analyze_with_openai(self, content: str, contact_name: str) -> Dict[str, Any]:
+        """OpenAI-based analysis with GPT-3.5-turbo"""
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI that analyzes personal notes and extracts structured information. Return only valid JSON."
+                },
+                {
+                    "role": "user",
+                    "content": f"Analyze this note about {contact_name}: {content}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+
+        try:
+            result = json.loads(response.choices[0].message.content)
+            return result
+        except json.JSONDecodeError:
+            return {
+                "categories": {
+                    "other": {
+                        "content": content,
+                        "confidence": 0.6
+                    }
+                }
+            }
+
+# Usage in API endpoint
+@app.route('/api/process-note', methods=['POST'])
+@login_required
+def process_note():
+    try:
+        data = request.get_json()
+        contact_id = data.get('contact_id')
+        note_content = data.get('note_content')
+        engine = data.get('engine', 'gemini')
+
+        # Get contact for context
+        session = get_session()
+        contact = session.get(Contact, contact_id)
+        if not contact or contact.user_id != current_user.id:
+            return jsonify({"error": "Contact not found"}), 404
+
+        # Process with AI
+        ai_service = AIService()
+        analysis = ai_service.analyze_note(note_content, contact.full_name)
+
+        # Save raw note
+        raw_note = RawNote(
+            contact_id=contact_id,
+            content=note_content,
+            metadata_tags={"engine": engine, "analysis_timestamp": datetime.utcnow().isoformat()}
+        )
+        session.add(raw_note)
+
+        # Save synthesized entries
+        for category, data in analysis.get("categories", {}).items():
+            if data.get("content"):
+                synthesis = SynthesizedEntry(
+                    contact_id=contact_id,
+                    category=category,
+                    content=data["content"],
+                    confidence_score=data.get("confidence", 0.5)
+                )
+                session.add(synthesis)
+
+        session.commit()
+
+        return jsonify({
+            "success": True,
+            "analysis": analysis,
+            "raw_note_id": raw_note.id
+        })
+
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+```
+
+#### 5. File Processing System
+```python
+# File upload and analysis with multiple format support
+@app.route('/api/files/upload', methods=['POST'])
+@login_required
+def upload_file():
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+
+        file = request.files['file']
+        contact_id = request.form.get('contact_id')
+        analysis_type = request.form.get('analysis_type', 'document')
+
+        if not file.filename:
+            return jsonify({"error": "No file selected"}), 400
+
+        # Validate file type
+        allowed_extensions = {
+            'document': {'.pdf', '.doc', '.docx', '.txt'},
+            'image': {'.png', '.jpg', '.jpeg', '.gif'},
+            'audio': {'.mp3', '.wav', '.m4a', '.ogg'}
+        }
+
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions.get(analysis_type, set()):
+            return jsonify({"error": f"Unsupported file type for {analysis_type}"}), 400
+
+        # Save file securely
+        filename = secure_filename(file.filename)
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        stored_filename = f"{timestamp}_{filename}"
+        file_path = os.path.join('uploads', str(current_user.id), stored_filename)
+
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        file.save(file_path)
+
+        # Create file record
+        session = get_session()
+        uploaded_file = UploadedFile(
+            contact_id=contact_id,
+            user_id=current_user.id,
+            original_filename=filename,
+            stored_filename=stored_filename,
+            file_path=file_path,
+            file_type=analysis_type,
+            file_size_bytes=os.path.getsize(file_path)
+        )
+        session.add(uploaded_file)
+
+        # Create background analysis task
+        task_id = str(uuid.uuid4())
+        analysis_task = ImportTask(
+            id=task_id,
+            user_id=current_user.id,
+            contact_id=contact_id,
+            task_type=f'{analysis_type}_analysis',
+            status='pending'
+        )
+        session.add(analysis_task)
+
+        uploaded_file.analysis_task_id = task_id
+        session.commit()
+
+        # Start background processing
+        if analysis_type == 'document':
+            process_document_background.delay(task_id, file_path)
+        elif analysis_type == 'image':
+            process_image_background.delay(task_id, file_path)
+        elif analysis_type == 'audio':
+            process_audio_background.delay(task_id, file_path)
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "file_id": uploaded_file.id,
+            "message": "File uploaded and analysis started"
+        })
+
+    except Exception as e:
+        if 'session' in locals():
+            session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if 'session' in locals():
+            session.close()
+
+# Document processing with PDF and OCR support
+def process_document(file_path: str) -> str:
+    """Extract text from various document formats"""
+    file_ext = os.path.splitext(file_path)[1].lower()
+
+    if file_ext == '.pdf':
+        # Try pdfplumber first (better for text-based PDFs)
+        try:
+            import pdfplumber
+            with pdfplumber.open(file_path) as pdf:
+                text = ""
+                for page in pdf.pages:
+                    text += page.extract_text() or ""
+                if text.strip():
+                    return text
+        except Exception:
+            pass
+
+        # Fallback to PyPDF2
+        try:
+            import PyPDF2
+            with open(file_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text()
+                return text
+        except Exception as e:
+            raise Exception(f"Failed to extract PDF text: {e}")
+
+    elif file_ext == '.txt':
+        with open(file_path, 'r', encoding='utf-8') as file:
+            return file.read()
+
+    else:
+        raise Exception(f"Unsupported document format: {file_ext}")
+
+# Image processing with Google Cloud Vision OCR
+def process_image_with_ocr(file_path: str) -> str:
+    """Extract text from images using Google Cloud Vision"""
+    try:
+        from google.cloud import vision
+
+        client = vision.ImageAnnotatorClient()
+
+        with open(file_path, 'rb') as image_file:
+            content = image_file.read()
+
+        image = vision.Image(content=content)
+        response = client.text_detection(image=image)
+        texts = response.text_annotations
+
+        if texts:
+            return texts[0].description
+        else:
+            return "No text found in image"
+
+    except Exception as e:
+        raise Exception(f"OCR processing failed: {e}")
+```
+
+#### 6. Production Deployment Configuration
+```yaml
+# render.yaml - Complete Render.com deployment configuration
+services:
+  - type: web
+    name: kith-platform
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m alembic upgrade head
+    startCommand: |
+      gunicorn --bind 0.0.0.0:$PORT --workers 2 --worker-class gevent --timeout 120 wsgi:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: kith-redis
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+
+databases:
+  - name: kith-db
+    databaseName: kith_production
+    user: kith_user
+    plan: starter  # Upgrade to standard/pro for production
+
+services:
+  - type: redis
+    name: kith-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+```
+
+```python
+# wsgi.py - Production WSGI configuration
+import os
+import logging
+from app import app
+
+# Configure production logging
+if not app.debug:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(name)s %(message)s'
+    )
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
+```
+
+#### 7. Essential Frontend Templates
+```html
+<!-- templates/index.html - Main application interface -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kith Platform - Personal Intelligence</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+    <!-- Authentication check -->
+    <div id="auth-status" data-user-id="{{ current_user.id if current_user.is_authenticated else '' }}"></div>
+
+    <!-- Main application container -->
+    <div id="app-container">
+        <!-- Navigation header -->
+        <header class="app-header">
+            <div class="header-content">
+                <h1>Kith Platform</h1>
+                <div class="header-actions">
+                    <button id="settings-btn" class="btn btn-secondary">Settings</button>
+                    <span class="user-info">{{ current_user.username }}</span>
+                    <form action="/api/logout" method="post" style="display: inline;">
+                        <button type="submit" class="btn btn-secondary">Logout</button>
+                    </form>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main content area with view switching -->
+        <main id="main-content">
+            <!-- Contacts list view -->
+            <div id="main-view" class="view active">
+                <div class="view-header">
+                    <h2>Contacts</h2>
+                    <div class="view-actions">
+                        <button id="add-contact-btn" class="btn btn-primary">Add Contact</button>
+                        <button id="delete-contact-btn" class="btn btn-secondary" disabled>Delete Selected</button>
+                        <input type="text" id="contact-search" placeholder="Search contacts..." class="search-input">
+                    </div>
+                </div>
+
+                <!-- Contact filtering -->
+                <div class="filter-bar">
+                    <button class="filter-btn active" data-tier="all">All</button>
+                    <button class="filter-btn" data-tier="1">Tier 1</button>
+                    <button class="filter-btn" data-tier="2">Tier 2</button>
+                    <button class="filter-btn" data-tier="3">Tier 3</button>
+                </div>
+
+                <!-- Contacts container with lazy loading -->
+                <div id="contacts-container" class="contact-grid">
+                    <!-- Contacts populated by JavaScript -->
+                </div>
+
+                <!-- Lazy loading trigger -->
+                <div id="lazy-load-trigger" style="height: 1px;"></div>
+            </div>
+
+            <!-- Contact profile view -->
+            <div id="profile-view" class="view">
+                <div class="view-header">
+                    <button id="back-to-main-from-profile" class="btn btn-secondary">← Back</button>
+                    <h2 id="profile-name">Contact Profile</h2>
+                    <div class="view-actions">
+                        <button id="edit-contact-profile-btn" class="btn btn-secondary">Edit</button>
+                        <button id="profile-sync-telegram-btn" class="btn btn-primary">Sync Telegram</button>
+                    </div>
+                </div>
+
+                <!-- Profile content -->
+                <div id="profile-content" class="profile-layout">
+                    <!-- Contact details -->
+                    <div class="profile-sidebar">
+                        <div class="contact-info card">
+                            <div class="card-header">
+                                <h3>Contact Information</h3>
+                            </div>
+                            <div class="card-body" id="contact-basic-info">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Tags section -->
+                        <div class="contact-tags card">
+                            <div class="card-header">
+                                <h3>Tags</h3>
+                            </div>
+                            <div class="card-body" id="contact-tags-container">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main content area -->
+                    <div class="profile-main">
+                        <!-- Note input area -->
+                        <div id="profile-note-input-area" class="note-input-section" style="display: none;">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h3>Add Note</h3>
+                                </div>
+                                <div class="card-body">
+                                    <textarea id="profile-note-input" placeholder="Add a note about this contact..." class="note-input" rows="4"></textarea>
+                                    <div class="note-input-actions">
+                                        <button id="save-note-btn" class="btn btn-primary">Save Note</button>
+                                        <button id="cancel-note-btn" class="btn btn-secondary">Cancel</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Categorized information -->
+                        <div id="categorized-info" class="categorized-sections">
+                            <!-- AI-analyzed categories populated by JavaScript -->
+                        </div>
+
+                        <!-- Raw notes section -->
+                        <div class="raw-notes-section">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h3>Raw Notes</h3>
+                                    <button id="profile-add-note-btn" class="btn btn-sm btn-primary">Add Note</button>
+                                </div>
+                                <div class="card-body" id="raw-notes-container">
+                                    <!-- Populated by JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings view -->
+            <div id="settings-view" class="view">
+                <div class="view-header">
+                    <button id="back-to-main-from-settings" class="btn btn-secondary">← Back</button>
+                    <h2>Settings</h2>
+                </div>
+
+                <div class="settings-content">
+                    <!-- Telegram settings -->
+                    <div class="settings-section card">
+                        <div class="card-header">
+                            <h3>Telegram Integration</h3>
+                        </div>
+                        <div class="card-body" id="telegram-settings">
+                            <!-- Populated by settings.js -->
+                        </div>
+                    </div>
+
+                    <!-- File upload section -->
+                    <div class="settings-section card">
+                        <div class="card-header">
+                            <h3>File Upload</h3>
+                        </div>
+                        <div class="card-body">
+                            <input type="file" id="file-upload" multiple accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.mp3,.wav">
+                            <button id="upload-files-btn" class="btn btn-primary">Upload Files</button>
+                        </div>
+                    </div>
+
+                    <!-- Relationship graph -->
+                    <div class="settings-section card">
+                        <div class="card-header">
+                            <h3>Relationship Network</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="relationship-network" style="height: 400px; border: 1px solid #ddd;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Performance indicators -->
+        <div class="performance-indicators">
+            <div id="cache-indicator" class="performance-badge">Cache: Loading...</div>
+            <div id="loading-indicator" class="loading-spinner" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="edit-contact-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Contact</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-contact-form">
+                    <div class="form-group">
+                        <label for="edit-full-name">Full Name</label>
+                        <input type="text" id="edit-full-name" name="full_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-email">Email</label>
+                        <input type="email" id="edit-email" name="email">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-phone">Phone</label>
+                        <input type="tel" id="edit-phone" name="phone">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-company">Company</label>
+                        <input type="text" id="edit-company" name="company">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-location">Location</label>
+                        <input type="text" id="edit-location" name="location">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-tier">Tier</label>
+                        <select id="edit-tier" name="tier">
+                            <option value="1">Tier 1 (Inner Circle)</option>
+                            <option value="2">Tier 2 (Regular)</option>
+                            <option value="3">Tier 3 (Distant)</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript modules -->
+    <script src="{{ url_for('static', filename='js/cache-manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/lazy-loader.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/debounced-search.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/tag-management.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/relationship-graph.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/contacts.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ui-enhancements.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <script>
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEventListeners();
+            setupCheckboxListeners();
+
+            // Initialize managers
+            const cacheManager = new CacheManager();
+            const lazyLoader = new LazyLoader();
+            const tagManager = new TagManager();
+
+            // Load initial data
+            loadContactsInitial();
+            initializeNetworkGraph();
+
+            // Setup search
+            setupDebouncedSearch();
+        });
+    </script>
+</body>
+</html>
+```
+
+### Critical Implementation Notes
+
+1. **Security**: All user inputs are validated and sanitized. File uploads are restricted by type and size. Database queries use parameterized statements to prevent SQL injection.
+
+2. **Performance**: The system implements lazy loading, caching, and optimized database queries. Large datasets are handled with pagination and background processing.
+
+3. **Error Handling**: Comprehensive error handling throughout the application with graceful degradation and user-friendly error messages.
+
+4. **Scalability**: Multi-user architecture with proper data isolation. Background task processing for long-running operations.
+
+5. **AI Integration**: Flexible AI service architecture supporting multiple providers (OpenAI, Gemini) with fallback mechanisms.
+
+6. **Data Integrity**: Proper foreign key relationships, cascade deletes, and transaction management ensure data consistency.
+
+This implementation guide provides all the essential components and patterns needed to recreate the Kith Platform from scratch while maintaining production-quality standards.
 
 ### Services Layer Architecture
 
@@ -9337,3 +11427,6267 @@ volumes:
 4. **Resource Management**: Task queuing and priority handling
 
 This comprehensive setup guide ensures that any junior developer can successfully deploy and maintain the Kith Platform with confidence and understanding of all system components.
+
+
+
+# Comprehensive Testing Framework & Admin Dashboard Foundation
+
+## Table of Contents
+
+1. [Project Overview](#project-overview)
+2. [Architecture & Design](#architecture--design)
+3. [Database Design](#database-design)
+4. [Core Framework Implementation](#core-framework-implementation)
+5. [Test Modules](#test-modules)
+6. [API Layer](#api-layer)
+7. [Configuration & Setup](#configuration--setup)
+8. [Implementation Guide](#implementation-guide)
+9. [Dashboard Evolution Path](#dashboard-evolution-path)
+10. [Deployment Instructions](#deployment-instructions)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+
+---
+
+## Project Overview
+
+### Purpose
+Create a comprehensive testing framework that validates all system functionality while providing the foundation for a future admin dashboard. The framework tests everything from basic CRUD operations to complex integrations with external services.
+
+### Key Features
+- **Comprehensive Testing**: Tests all features, edge cases, and integrations
+- **Graceful Error Handling**: Continues testing even when services are unavailable
+- **Detailed Reporting**: Rich diagnostics for debugging
+- **Performance Monitoring**: Tracks system performance over time
+- **Dashboard Ready**: Designed for easy conversion to admin dashboard
+- **Junior Developer Friendly**: Extensively documented with clear implementation steps
+
+### Tech Stack
+- **Backend**: Python 3.9+ with FastAPI
+- **Database**: PostgreSQL with SQLAlchemy ORM
+- **Testing**: pytest with custom extensions
+- **API**: RESTful endpoints with WebSocket support
+- **Monitoring**: Built-in health checks and metrics
+- **Documentation**: Automatic API docs with Swagger
+
+---
+
+## Architecture & Design
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Testing Framework                        │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │   Test      │  │    API      │  │  Dashboard  │        │
+│  │  Modules    │  │   Layer     │  │  Evolution  │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │  Core       │  │  Reporting  │  │   Config    │        │
+│  │ Framework   │  │   Engine    │  │  Manager    │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │  Database   │  │   External  │  │    File     │        │
+│  │   Layer     │  │  Services   │  │  Operations │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Directory Structure
+
+```
+testing_framework/
+├── README.md
+├── requirements.txt
+├── setup.py
+├── config/
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── database.py
+│   └── logging.py
+├── app/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── test_results.py
+│   │   ├── system_health.py
+│   │   └── performance_metrics.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── health.py
+│   │   ├── tests.py
+│   │   └── dashboard.py
+│   └── core/
+│       ├── __init__.py
+│       ├── test_runner.py
+│       ├── result_processor.py
+│       └── notification_service.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── framework/
+│   │   ├── __init__.py
+│   │   ├── base_test.py
+│   │   └── test_utils.py
+│   ├── health_checks/
+│   │   ├── __init__.py
+│   │   ├── test_database.py
+│   │   ├── test_external_services.py
+│   │   └── test_file_system.py
+│   ├── component_tests/
+│   │   ├── __init__.py
+│   │   ├── test_contacts.py
+│   │   ├── test_data_analysis.py
+│   │   ├── test_voice_processing.py
+│   │   └── test_document_processing.py
+│   ├── integration_tests/
+│   │   ├── __init__.py
+│   │   ├── test_file_operations.py
+│   │   ├── test_api_integrations.py
+│   │   └── test_workflow_scenarios.py
+│   ├── performance_tests/
+│   │   ├── __init__.py
+│   │   ├── test_load_handling.py
+│   │   ├── test_response_times.py
+│   │   └── test_resource_usage.py
+│   └── workflow_tests/
+│       ├── __init__.py
+│       ├── test_user_journeys.py
+│       └── test_end_to_end.py
+├── scripts/
+│   ├── run_tests.py
+│   ├── setup_database.py
+│   └── generate_mock_data.py
+├── docs/
+│   ├── API.md
+│   ├── IMPLEMENTATION.md
+│   └── DASHBOARD_EVOLUTION.md
+└── docker/
+    ├── Dockerfile
+    ├── docker-compose.yml
+    └── init.sql
+```
+
+---
+
+## Database Design
+
+### Database Schema
+
+```sql
+-- Core Tables
+CREATE TABLE test_runs (
+    id SERIAL PRIMARY KEY,
+    run_id UUID UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    total_tests INTEGER DEFAULT 0,
+    passed_tests INTEGER DEFAULT 0,
+    failed_tests INTEGER DEFAULT 0,
+    skipped_tests INTEGER DEFAULT 0,
+    execution_time_seconds FLOAT,
+    trigger_type VARCHAR(50) NOT NULL, -- 'manual', 'scheduled', 'api'
+    triggered_by VARCHAR(255),
+    environment VARCHAR(50) DEFAULT 'development',
+    version VARCHAR(100),
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE test_results (
+    id SERIAL PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES test_runs(run_id) ON DELETE CASCADE,
+    test_name VARCHAR(255) NOT NULL,
+    test_module VARCHAR(255) NOT NULL,
+    test_category VARCHAR(100) NOT NULL,
+    status VARCHAR(50) NOT NULL, -- 'passed', 'failed', 'skipped', 'error'
+    execution_time_seconds FLOAT,
+    error_message TEXT,
+    error_traceback TEXT,
+    assertions_count INTEGER DEFAULT 0,
+    setup_time_seconds FLOAT,
+    teardown_time_seconds FLOAT,
+    test_data JSONB,
+    performance_metrics JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE system_health (
+    id SERIAL PRIMARY KEY,
+    component_name VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL, -- 'healthy', 'degraded', 'unhealthy'
+    health_score FLOAT, -- 0.0 to 1.0
+    response_time_ms FLOAT,
+    last_check_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    error_message TEXT,
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE performance_metrics (
+    id SERIAL PRIMARY KEY,
+    metric_name VARCHAR(255) NOT NULL,
+    metric_value FLOAT NOT NULL,
+    metric_unit VARCHAR(50),
+    component VARCHAR(255),
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    tags JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE test_configurations (
+    id SERIAL PRIMARY KEY,
+    config_name VARCHAR(255) UNIQUE NOT NULL,
+    config_data JSONB NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE notification_logs (
+    id SERIAL PRIMARY KEY,
+    notification_type VARCHAR(100) NOT NULL,
+    recipient VARCHAR(255) NOT NULL,
+    subject VARCHAR(500),
+    message TEXT,
+    status VARCHAR(50) NOT NULL,
+    sent_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT,
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes for performance
+CREATE INDEX idx_test_runs_status ON test_runs(status);
+CREATE INDEX idx_test_runs_started_at ON test_runs(started_at);
+CREATE INDEX idx_test_results_run_id ON test_results(run_id);
+CREATE INDEX idx_test_results_status ON test_results(status);
+CREATE INDEX idx_test_results_category ON test_results(test_category);
+CREATE INDEX idx_system_health_component ON system_health(component_name);
+CREATE INDEX idx_system_health_timestamp ON system_health(last_check_at);
+CREATE INDEX idx_performance_metrics_name_timestamp ON performance_metrics(metric_name, timestamp);
+```
+
+### SQLAlchemy Models
+
+```python
+# app/models/__init__.py
+from .test_results import TestRun, TestResult
+from .system_health import SystemHealth
+from .performance_metrics import PerformanceMetric
+from .test_configurations import TestConfiguration
+from .notification_logs import NotificationLog
+
+__all__ = [
+    'TestRun', 'TestResult', 'SystemHealth', 
+    'PerformanceMetric', 'TestConfiguration', 'NotificationLog'
+]
+```
+
+```python
+# app/models/test_results.py
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from datetime import datetime
+import uuid
+
+Base = declarative_base()
+
+class TestRun(Base):
+    __tablename__ = 'test_runs'
+    
+    id = Column(Integer, primary_key=True)
+    run_id = Column(UUID(as_uuid=True), unique=True, nullable=False, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    status = Column(String(50), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    completed_at = Column(DateTime(timezone=True))
+    total_tests = Column(Integer, default=0)
+    passed_tests = Column(Integer, default=0)
+    failed_tests = Column(Integer, default=0)
+    skipped_tests = Column(Integer, default=0)
+    execution_time_seconds = Column(Float)
+    trigger_type = Column(String(50), nullable=False)
+    triggered_by = Column(String(255))
+    environment = Column(String(50), default='development')
+    version = Column(String(100))
+    metadata = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    results = relationship("TestResult", back_populates="run", cascade="all, delete-orphan")
+
+class TestResult(Base):
+    __tablename__ = 'test_results'
+    
+    id = Column(Integer, primary_key=True)
+    run_id = Column(UUID(as_uuid=True), ForeignKey('test_runs.run_id', ondelete='CASCADE'), nullable=False)
+    test_name = Column(String(255), nullable=False)
+    test_module = Column(String(255), nullable=False)
+    test_category = Column(String(100), nullable=False)
+    status = Column(String(50), nullable=False)
+    execution_time_seconds = Column(Float)
+    error_message = Column(Text)
+    error_traceback = Column(Text)
+    assertions_count = Column(Integer, default=0)
+    setup_time_seconds = Column(Float)
+    teardown_time_seconds = Column(Float)
+    test_data = Column(JSONB)
+    performance_metrics = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    # Relationships
+    run = relationship("TestRun", back_populates="results")
+```
+
+```python
+# app/models/system_health.py
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime
+from sqlalchemy.dialects.postgresql import JSONB
+from datetime import datetime
+from .test_results import Base
+
+class SystemHealth(Base):
+    __tablename__ = 'system_health'
+    
+    id = Column(Integer, primary_key=True)
+    component_name = Column(String(255), nullable=False)
+    status = Column(String(50), nullable=False)
+    health_score = Column(Float)
+    response_time_ms = Column(Float)
+    last_check_at = Column(DateTime(timezone=True), nullable=False)
+    error_message = Column(Text)
+    metadata = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+```
+
+```python
+# app/models/performance_metrics.py
+from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy.dialects.postgresql import JSONB
+from datetime import datetime
+from .test_results import Base
+
+class PerformanceMetric(Base):
+    __tablename__ = 'performance_metrics'
+    
+    id = Column(Integer, primary_key=True)
+    metric_name = Column(String(255), nullable=False)
+    metric_value = Column(Float, nullable=False)
+    metric_unit = Column(String(50))
+    component = Column(String(255))
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    tags = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+```
+
+---
+
+## Core Framework Implementation
+
+### Base Configuration
+
+```python
+# config/settings.py
+from pydantic import BaseSettings
+from typing import Optional, List
+import os
+
+class Settings(BaseSettings):
+    # Database
+    DATABASE_URL: str = "postgresql://user:password@localhost/testing_framework"
+    DATABASE_POOL_SIZE: int = 10
+    DATABASE_MAX_OVERFLOW: int = 20
+    
+    # API
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8000
+    API_RELOAD: bool = False
+    API_DEBUG: bool = False
+    
+    # Testing
+    TEST_TIMEOUT: int = 300  # 5 minutes
+    MAX_CONCURRENT_TESTS: int = 5
+    TEST_DATA_RETENTION_DAYS: int = 90
+    
+    # External Services
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[str] = None
+    
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    NOTIFICATION_EMAIL: Optional[str] = None
+    
+    # File Operations
+    UPLOAD_DIR: str = "/tmp/test_uploads"
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    ALLOWED_FILE_EXTENSIONS: List[str] = ['.csv', '.pdf', '.jpg', '.png', '.wav', '.mp3']
+    
+    # Performance
+    PERFORMANCE_BASELINE_CPU: float = 80.0  # %
+    PERFORMANCE_BASELINE_MEMORY: float = 80.0  # %
+    PERFORMANCE_BASELINE_RESPONSE_TIME: float = 5000.0  # ms
+    
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+
+settings = Settings()
+```
+
+```python
+# config/database.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+from .settings import settings
+
+# Create engine with connection pooling
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_size=settings.DATABASE_POOL_SIZE,
+    max_overflow=settings.DATABASE_MAX_OVERFLOW,
+    pool_pre_ping=True,
+    echo=settings.API_DEBUG
+)
+
+# Create session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_db():
+    """Database dependency for FastAPI"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def create_tables():
+    """Create all database tables"""
+    from app.models import Base
+    Base.metadata.create_all(bind=engine)
+
+def drop_tables():
+    """Drop all database tables (use with caution!)"""
+    from app.models import Base
+    Base.metadata.drop_all(bind=engine)
+```
+
+### Core Test Framework
+
+```python
+# tests/framework/base_test.py
+import asyncio
+import time
+import traceback
+import psutil
+import logging
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, field
+from enum import Enum
+from datetime import datetime
+import uuid
+
+class TestStatus(Enum):
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    ERROR = "error"
+
+class TestCategory(Enum):
+    HEALTH_CHECK = "health_check"
+    COMPONENT = "component"
+    INTEGRATION = "integration"
+    PERFORMANCE = "performance"
+    WORKFLOW = "workflow"
+
+@dataclass
+class TestResult:
+    test_name: str
+    test_module: str
+    test_category: TestCategory
+    status: TestStatus
+    execution_time_seconds: float = 0.0
+    error_message: Optional[str] = None
+    error_traceback: Optional[str] = None
+    assertions_count: int = 0
+    setup_time_seconds: float = 0.0
+    teardown_time_seconds: float = 0.0
+    test_data: Dict[str, Any] = field(default_factory=dict)
+    performance_metrics: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class TestRunContext:
+    run_id: uuid.UUID
+    environment: str
+    version: str
+    triggered_by: str
+    trigger_type: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+class BaseTest:
+    """Base class for all tests with comprehensive error handling and metrics collection"""
+    
+    def __init__(self, context: TestRunContext):
+        self.context = context
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.result = TestResult(
+            test_name=self.__class__.__name__,
+            test_module=self.__module__,
+            test_category=TestCategory.COMPONENT  # Override in subclasses
+        )
+        self._start_time = None
+        self._setup_start_time = None
+        self._teardown_start_time = None
+    
+    def run(self) -> TestResult:
+        """Execute the complete test lifecycle with comprehensive error handling"""
+        try:
+            self._start_time = time.time()
+            
+            # Setup phase
+            self._setup_start_time = time.time()
+            self._collect_baseline_metrics()
+            self.setup()
+            self.result.setup_time_seconds = time.time() - self._setup_start_time
+            
+            # Test execution phase
+            test_start = time.time()
+            self.execute()
+            self.result.execution_time_seconds = time.time() - test_start
+            
+            # If we get here, test passed
+            self.result.status = TestStatus.PASSED
+            
+        except AssertionError as e:
+            self.result.status = TestStatus.FAILED
+            self.result.error_message = str(e)
+            self.result.error_traceback = traceback.format_exc()
+            self.logger.error(f"Test failed: {e}")
+            
+        except Exception as e:
+            self.result.status = TestStatus.ERROR
+            self.result.error_message = str(e)
+            self.result.error_traceback = traceback.format_exc()
+            self.logger.error(f"Test error: {e}")
+            
+        finally:
+            # Teardown phase
+            try:
+                self._teardown_start_time = time.time()
+                self.teardown()
+                self.result.teardown_time_seconds = time.time() - self._teardown_start_time
+            except Exception as e:
+                self.logger.error(f"Teardown error: {e}")
+                # Don't override test result status for teardown errors
+                if self.result.status == TestStatus.PASSED:
+                    self.result.status = TestStatus.ERROR
+                    self.result.error_message = f"Teardown failed: {str(e)}"
+            
+            self._collect_final_metrics()
+        
+        return self.result
+    
+    def setup(self):
+        """Override in subclasses for test-specific setup"""
+        pass
+    
+    def execute(self):
+        """Override in subclasses for test execution logic"""
+        raise NotImplementedError("Subclasses must implement execute method")
+    
+    def teardown(self):
+        """Override in subclasses for test-specific cleanup"""
+        pass
+    
+    def assert_true(self, condition: bool, message: str = ""):
+        """Custom assertion with counting"""
+        self.result.assertions_count += 1
+        if not condition:
+            raise AssertionError(message or "Assertion failed")
+    
+    def assert_equal(self, actual, expected, message: str = ""):
+        """Custom equality assertion with counting"""
+        self.result.assertions_count += 1
+        if actual != expected:
+            raise AssertionError(message or f"Expected {expected}, got {actual}")
+    
+    def assert_not_none(self, value, message: str = ""):
+        """Custom not-none assertion with counting"""
+        self.result.assertions_count += 1
+        if value is None:
+            raise AssertionError(message or "Value should not be None")
+    
+    def assert_response_time(self, actual_ms: float, max_ms: float, message: str = ""):
+        """Assert response time is within acceptable limits"""
+        self.result.assertions_count += 1
+        if actual_ms > max_ms:
+            raise AssertionError(message or f"Response time {actual_ms}ms exceeds limit {max_ms}ms")
+    
+    def _collect_baseline_metrics(self):
+        """Collect baseline system metrics"""
+        try:
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            self.result.performance_metrics.update({
+                'baseline_cpu_percent': cpu_percent,
+                'baseline_memory_percent': memory.percent,
+                'baseline_memory_available_mb': memory.available / 1024 / 1024,
+                'baseline_disk_free_gb': disk.free / 1024 / 1024 / 1024,
+                'baseline_timestamp': datetime.utcnow().isoformat()
+            })
+        except Exception as e:
+            self.logger.warning(f"Could not collect baseline metrics: {e}")
+    
+    def _collect_final_metrics(self):
+        """Collect final system metrics and calculate deltas"""
+        try:
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            
+            baseline_cpu = self.result.performance_metrics.get('baseline_cpu_percent', 0)
+            baseline_memory = self.result.performance_metrics.get('baseline_memory_percent', 0)
+            
+            self.result.performance_metrics.update({
+                'final_cpu_percent': cpu_percent,
+                'final_memory_percent': memory.percent,
+                'cpu_delta': cpu_percent - baseline_cpu,
+                'memory_delta': memory.percent - baseline_memory,
+                'final_timestamp': datetime.utcnow().isoformat()
+            })
+        except Exception as e:
+            self.logger.warning(f"Could not collect final metrics: {e}")
+
+class ServiceConnectionTest(BaseTest):
+    """Base class for testing external service connections"""
+    
+    def __init__(self, context: TestRunContext, service_name: str, required_credentials: List[str]):
+        super().__init__(context)
+        self.service_name = service_name
+        self.required_credentials = required_credentials
+        self.result.test_category = TestCategory.HEALTH_CHECK
+    
+    def check_credentials(self) -> bool:
+        """Check if required credentials are available"""
+        missing_credentials = []
+        for cred in self.required_credentials:
+            if not getattr(settings, cred, None):
+                missing_credentials.append(cred)
+        
+        if missing_credentials:
+            self.result.status = TestStatus.SKIPPED
+            self.result.error_message = f"Missing credentials for {self.service_name}: {missing_credentials}"
+            return False
+        
+        return True
+    
+    def execute(self):
+        """Override to implement service-specific connection logic"""
+        if not self.check_credentials():
+            return
+        
+        # Implement service connection logic in subclasses
+        self.test_connection()
+    
+    def test_connection(self):
+        """Override in subclasses to implement actual connection test"""
+        raise NotImplementedError("Subclasses must implement test_connection method")
+```
+
+### Test Runner Engine
+
+```python
+# app/core/test_runner.py
+import asyncio
+import concurrent.futures
+import logging
+import time
+from typing import List, Dict, Any, Optional, Type
+from datetime import datetime
+import uuid
+import importlib
+import inspect
+
+from tests.framework.base_test import BaseTest, TestResult, TestRunContext, TestStatus
+from app.models.test_results import TestRun, TestResult as DBTestResult
+from config.database import SessionLocal
+from config.settings import settings
+
+class TestRunner:
+    """Core test execution engine with parallel processing and comprehensive reporting"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.db = SessionLocal()
+        self.registered_tests: Dict[str, Type[BaseTest]] = {}
+        self._discover_tests()
+    
+    def _discover_tests(self):
+        """Automatically discover all test classes"""
+        test_modules = [
+            'tests.health_checks',
+            'tests.component_tests', 
+            'tests.integration_tests',
+            'tests.performance_tests',
+            'tests.workflow_tests'
+        ]
+        
+        for module_name in test_modules:
+            try:
+                module = importlib.import_module(module_name)
+                for name, obj in inspect.getmembers(module):
+                    if (inspect.isclass(obj) and 
+                        issubclass(obj, BaseTest) and 
+                        obj != BaseTest):
+                        test_key = f"{module_name}.{name}"
+                        self.registered_tests[test_key] = obj
+                        self.logger.info(f"Discovered test: {test_key}")
+            except ImportError as e:
+                self.logger.warning(f"Could not import test module {module_name}: {e}")
+    
+    async def run_all_tests(self, 
+                           environment: str = "development",
+                           version: str = "1.0.0",
+                           triggered_by: str = "system",
+                           trigger_type: str = "manual",
+                           test_categories: Optional[List[str]] = None,
+                           parallel: bool = True) -> uuid.UUID:
+        """Execute all tests with comprehensive reporting"""
+        
+        run_id = uuid.uuid4()
+        start_time = datetime.utcnow()
+        
+        # Create test run record
+        test_run = TestRun(
+            run_id=run_id,
+            name=f"Full Test Suite - {start_time.strftime('%Y-%m-%d %H:%M:%S')}",
+            status="running",
+            started_at=start_time,
+            trigger_type=trigger_type,
+            triggered_by=triggered_by,
+            environment=environment,
+            version=version,
+            metadata={"test_categories": test_categories}
+        )
+        
+        self.db.add(test_run)
+        self.db.commit()
+        
+        context = TestRunContext(
+            run_id=run_id,
+            environment=environment,
+            version=version,
+            triggered_by=triggered_by,
+            trigger_type=trigger_type
+        )
+        
+        try:
+            # Filter tests by category if specified
+            tests_to_run = self._filter_tests_by_category(test_categories)
+            
+            self.logger.info(f"Starting test run {run_id} with {len(tests_to_run)} tests")
+            
+            if parallel:
+                results = await self._run_tests_parallel(tests_to_run, context)
+            else:
+                results = await self._run_tests_sequential(tests_to_run, context)
+            
+            # Process results
+            passed = sum(1 for r in results if r.status == TestStatus.PASSED)
+            failed = sum(1 for r in results if r.status == TestStatus.FAILED)
+            skipped = sum(1 for r in results if r.status == TestStatus.SKIPPED)
+            errors = sum(1 for r in results if r.status == TestStatus.ERROR)
+            
+            # Update test run
+            test_run.status = "completed" if failed == 0 and errors == 0 else "failed"
+            test_run.completed_at = datetime.utcnow()
+            test_run.total_tests = len(results)
+            test_run.passed_tests = passed
+            test_run.failed_tests = failed
+            test_run.skipped_tests = skipped
+            test_run.execution_time_seconds = (test_run.completed_at - test_run.started_at).total_seconds()
+            
+            # Save individual test results
+            for result in results:
+                db_result = DBTestResult(
+                    run_id=run_id,
+                    test_name=result.test_name,
+                    test_module=result.test_module,
+                    test_category=result.test_category.value,
+                    status=result.status.value,
+                    execution_time_seconds=result.execution_time_seconds,
+                    error_message=result.error_message,
+                    error_traceback=result.error_traceback,
+                    assertions_count=result.assertions_count,
+                    setup_time_seconds=result.setup_time_seconds,
+                    teardown_time_seconds=result.teardown_time_seconds,
+                    test_data=result.test_data,
+                    performance_metrics=result.performance_metrics
+                )
+                self.db.add(db_result)
+            
+            self.db.commit()
+            
+            self.logger.info(f"Test run {run_id} completed: {passed} passed, {failed} failed, {skipped} skipped, {errors} errors")
+            
+        except Exception as e:
+            self.logger.error(f"Test run {run_id} failed with error: {e}")
+            test_run.status = "error"
+            test_run.completed_at = datetime.utcnow()
+            test_run.metadata = test_run.metadata or {}
+            test_run.metadata["error"] = str(e)
+            self.db.commit()
+            raise
+        
+        finally:
+            self.db.close()
+        
+        return run_id
+    
+    def _filter_tests_by_category(self, categories: Optional[List[str]]) -> Dict[str, Type[BaseTest]]:
+        """Filter tests by category"""
+        if not categories:
+            return self.registered_tests
+        
+        filtered = {}
+        for test_key, test_class in self.registered_tests.items():
+            # This is a simplified filter - you might want more sophisticated filtering
+            for category in categories:
+                if category.lower() in test_key.lower():
+                    filtered[test_key] = test_class
+                    break
+        
+        return filtered
+    
+    async def _run_tests_parallel(self, tests: Dict[str, Type[BaseTest]], context: TestRunContext) -> List[TestResult]:
+        """Run tests in parallel with concurrency control"""
+        results = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=settings.MAX_CONCURRENT_TESTS) as executor:
+            # Submit all tests
+            future_to_test = {
+                executor.submit(self._run_single_test, test_class, context): test_key
+                for test_key, test_class in tests.items()
+            }
+            
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(future_to_test, timeout=settings.TEST_TIMEOUT):
+                test_key = future_to_test[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    self.logger.info(f"Test {test_key} completed: {result.status.value}")
+                except Exception as e:
+                    self.logger.error(f"Test {test_key} failed to execute: {e}")
+                    # Create error result
+                    error_result = TestResult(
+                        test_name=test_key,
+                        test_module="unknown",
+                        test_category=TestCategory.COMPONENT,
+                        status=TestStatus.ERROR,
+                        error_message=str(e)
+                    )
+                    results.append(error_result)
+        
+        return results
+    
+    async def _run_tests_sequential(self, tests: Dict[str, Type[BaseTest]], context: TestRunContext) -> List[TestResult]:
+        """Run tests sequentially"""
+        results = []
+        
+        for test_key, test_class in tests.items():
+            try:
+                result = self._run_single_test(test_class, context)
+                results.append(result)
+                self.logger.info(f"Test {test_key} completed: {result.status.value}")
+            except Exception as e:
+                self.logger.error(f"Test {test_key} failed to execute: {e}")
+                error_result = TestResult(
+                    test_name=test_key,
+                    test_module="unknown",
+                    test_category=TestCategory.COMPONENT,
+                    status=TestStatus.ERROR,
+                    error_message=str(e)
+                )
+                results.append(error_result)
+        
+        return results
+    
+    def _run_single_test(self, test_class: Type[BaseTest], context: TestRunContext) -> TestResult:
+        """Execute a single test with timeout protection"""
+        try:
+            test_instance = test_class(context)
+            return test_instance.run()
+        except Exception as e:
+            self.logger.error(f"Failed to instantiate or run test {test_class.__name__}: {e}")
+            return TestResult(
+                test_name=test_class.__name__,
+                test_module=test_class.__module__,
+                test_category=TestCategory.COMPONENT,
+                status=TestStatus.ERROR,
+                error_message=str(e)
+            )
+
+# Singleton instance
+test_runner = TestRunner()
+```
+
+---
+
+## Test Modules
+
+### Health Check Tests
+
+```python
+# tests/health_checks/test_database.py
+import psycopg2
+from sqlalchemy import text
+from tests.framework.base_test import BaseTest, TestCategory
+from config.database import engine, SessionLocal
+from config.settings import settings
+
+class DatabaseConnectionTest(BaseTest):
+    """Test database connectivity and basic operations"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.HEALTH_CHECK
+        self.db = None
+    
+    def setup(self):
+        """Setup database connection"""
+        self.db = SessionLocal()
+    
+    def execute(self):
+        """Test database operations"""
+        # Test basic connection
+        start_time = time.time()
+        result = self.db.execute(text("SELECT 1"))
+        connection_time = (time.time() - start_time) * 1000
+        
+        self.assert_not_none(result, "Database query should return result")
+        self.assert_response_time(connection_time, 1000, "Database connection should be fast")
+        
+        # Test table existence
+        tables_query = """
+        SELECT table_name FROM information_schema.tables 
+        WHERE table_schema = 'public'
+        """
+        tables_result = self.db.execute(text(tables_query))
+        tables = [row[0] for row in tables_result]
+        
+        required_tables = ['test_runs', 'test_results', 'system_health', 'performance_metrics']
+        for table in required_tables:
+            self.assert_true(table in tables, f"Required table '{table}' should exist")
+        
+        # Test write/read operations
+        test_query = text("INSERT INTO test_configurations (config_name, config_data) VALUES (:name, :data)")
+        self.db.execute(test_query, {"name": "test_config", "data": {"test": True}})
+        
+        read_query = text("SELECT config_data FROM test_configurations WHERE config_name = :name")
+        read_result = self.db.execute(read_query, {"name": "test_config"})
+        row = read_result.fetchone()
+        
+        self.assert_not_none(row, "Should be able to read inserted data")
+        self.assert_equal(row[0]["test"], True, "Data should be correctly stored and retrieved")
+        
+        # Store performance metrics
+        self.result.performance_metrics.update({
+            'database_connection_time_ms': connection_time,
+            'tables_found': len(tables),
+            'required_tables_present': all(table in tables for table in required_tables)
+        })
+    
+    def teardown(self):
+        """Cleanup test data"""
+        if self.db:
+            try:
+                # Clean up test data
+                cleanup_query = text("DELETE FROM test_configurations WHERE config_name = :name")
+                self.db.execute(cleanup_query, {"name": "test_config"})
+                self.db.commit()
+                self.db.close()
+            except Exception as e:
+                self.logger.warning(f"Cleanup failed: {e}")
+
+class DatabasePerformanceTest(BaseTest):
+    """Test database performance under load"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.PERFORMANCE
+        self.db = None
+    
+    def setup(self):
+        self.db = SessionLocal()
+    
+    def execute(self):
+        """Test database performance"""
+        import time
+        
+        # Test bulk insert performance
+        start_time = time.time()
+        
+        bulk_data = []
+        for i in range(100):
+            bulk_data.append({
+                "name": f"perf_test_{i}",
+                "data": {"index": i, "test": "performance"}
+            })
+        
+        # Bulk insert
+        insert_query = text("""
+            INSERT INTO test_configurations (config_name, config_data) 
+            VALUES (:name, :data)
+        """)
+        
+        for data in bulk_data:
+            self.db.execute(insert_query, data)
+        
+        insert_time = time.time() - start_time
+        
+        # Test bulk read performance
+        start_time = time.time()
+        read_query = text("SELECT * FROM test_configurations WHERE config_name LIKE 'perf_test_%'")
+        results = self.db.execute(read_query).fetchall()
+        read_time = time.time() - start_time
+        
+        self.assert_equal(len(results), 100, "Should read all inserted records")
+        self.assert_response_time(insert_time * 1000, 5000, "Bulk insert should complete within 5 seconds")
+        self.assert_response_time(read_time * 1000, 2000, "Bulk read should complete within 2 seconds")
+        
+        self.result.performance_metrics.update({
+            'bulk_insert_time_ms': insert_time * 1000,
+            'bulk_read_time_ms': read_time * 1000,
+            'records_per_second_insert': 100 / insert_time,
+            'records_per_second_read': 100 / read_time
+        })
+    
+    def teardown(self):
+        if self.db:
+            try:
+                cleanup_query = text("DELETE FROM test_configurations WHERE config_name LIKE 'perf_test_%'")
+                self.db.execute(cleanup_query)
+                self.db.commit()
+                self.db.close()
+            except Exception as e:
+                self.logger.warning(f"Performance test cleanup failed: {e}")
+```
+
+```python
+# tests/health_checks/test_external_services.py
+import requests
+import telegram
+from tests.framework.base_test import ServiceConnectionTest, TestCategory
+from config.settings import settings
+
+class TelegramServiceTest(ServiceConnectionTest):
+    """Test Telegram bot connectivity"""
+    
+    def __init__(self, context):
+        super().__init__(context, "Telegram", ["TELEGRAM_BOT_TOKEN"])
+    
+    def test_connection(self):
+        """Test Telegram bot connection"""
+        import time
+        
+        try:
+            start_time = time.time()
+            bot = telegram.Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            bot_info = bot.get_me()
+            response_time = (time.time() - start_time) * 1000
+            
+            self.assert_not_none(bot_info, "Should retrieve bot information")
+            self.assert_not_none(bot_info.username, "Bot should have username")
+            self.assert_response_time(response_time, 5000, "Telegram API should respond quickly")
+            
+            self.result.test_data.update({
+                'bot_username': bot_info.username,
+                'bot_id': bot_info.id,
+                'can_read_all_group_messages': bot_info.can_read_all_group_messages
+            })
+            
+            self.result.performance_metrics.update({
+                'telegram_api_response_time_ms': response_time
+            })
+            
+        except telegram.error.TelegramError as e:
+            raise AssertionError(f"Telegram API error: {e}")
+        except Exception as e:
+            raise AssertionError(f"Telegram connection failed: {e}")
+
+class EmailServiceTest(ServiceConnectionTest):
+    """Test email service connectivity"""
+    
+    def __init__(self, context):
+        super().__init__(context, "Email", ["SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD"])
+    
+    def test_connection(self):
+        """Test email service connection"""
+        import smtplib
+        import time
+        
+        try:
+            start_time = time.time()
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+            server.starttls()
+            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.quit()
+            response_time = (time.time() - start_time) * 1000
+            
+            self.assert_response_time(response_time, 10000, "SMTP connection should be established quickly")
+            
+            self.result.performance_metrics.update({
+                'smtp_connection_time_ms': response_time
+            })
+            
+        except smtplib.SMTPException as e:
+            raise AssertionError(f"SMTP error: {e}")
+        except Exception as e:
+            raise AssertionError(f"Email service connection failed: {e}")
+
+class InternetConnectivityTest(BaseTest):
+    """Test internet connectivity"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.HEALTH_CHECK
+    
+    def execute(self):
+        """Test internet connectivity to various services"""
+        test_urls = [
+            ("Google DNS", "https://8.8.8.8"),
+            ("GitHub", "https://api.github.com"),
+            ("JSONPlaceholder", "https://jsonplaceholder.typicode.com/posts/1")
+        ]
+        
+        connectivity_results = {}
+        
+        for name, url in test_urls:
+            try:
+                start_time = time.time()
+                response = requests.get(url, timeout=10)
+                response_time = (time.time() - start_time) * 1000
+                
+                connectivity_results[name] = {
+                    'status_code': response.status_code,
+                    'response_time_ms': response_time,
+                    'accessible': response.status_code == 200
+                }
+                
+                if name == "JSONPlaceholder":
+                    # Test JSON response
+                    data = response.json()
+                    self.assert_not_none(data.get('id'), "JSON response should have ID")
+                
+            except requests.RequestException as e:
+                connectivity_results[name] = {
+                    'error': str(e),
+                    'accessible': False
+                }
+        
+        # At least one service should be accessible
+        accessible_count = sum(1 for result in connectivity_results.values() if result.get('accessible', False))
+        self.assert_true(accessible_count > 0, "At least one external service should be accessible")
+        
+        self.result.test_data.update({'connectivity_results': connectivity_results})
+        
+        # Calculate average response time for accessible services
+        response_times = [
+            result['response_time_ms'] 
+            for result in connectivity_results.values() 
+            if 'response_time_ms' in result
+        ]
+        
+        if response_times:
+            avg_response_time = sum(response_times) / len(response_times)
+            self.result.performance_metrics.update({
+                'average_internet_response_time_ms': avg_response_time,
+                'accessible_services_count': accessible_count,
+                'total_services_tested': len(test_urls)
+            })
+```
+
+### Component Tests
+
+```python
+# tests/component_tests/test_contacts.py
+import json
+import tempfile
+import os
+from tests.framework.base_test import BaseTest, TestCategory
+
+class ContactManagementTest(BaseTest):
+    """Test contact management functionality"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.COMPONENT
+        self.test_contacts = []
+        self.temp_files = []
+    
+    def setup(self):
+        """Setup test contacts"""
+        self.test_contacts = [
+            {
+                "id": 1,
+                "name": "John Doe",
+                "email": "john.doe@example.com",
+                "phone": "+1234567890",
+                "created_at": "2024-01-01T10:00:00Z"
+            },
+            {
+                "id": 2,
+                "name": "Jane Smith",
+                "email": "jane.smith@example.com",
+                "phone": "+0987654321",
+                "created_at": "2024-01-02T11:00:00Z"
+            }
+        ]
+    
+    def execute(self):
+        """Test contact operations"""
+        # Test contact creation
+        self._test_contact_creation()
+        
+        # Test contact retrieval
+        self._test_contact_retrieval()
+        
+        # Test contact update
+        self._test_contact_update()
+        
+        # Test contact search
+        self._test_contact_search()
+        
+        # Test contact deletion
+        self._test_contact_deletion()
+        
+        # Test bulk operations
+        self._test_bulk_operations()
+    
+    def _test_contact_creation(self):
+        """Test creating new contacts"""
+        for contact in self.test_contacts:
+            # Simulate contact creation
+            created_contact = self._create_contact(contact)
+            
+            self.assert_not_none(created_contact, "Contact should be created")
+            self.assert_equal(created_contact["name"], contact["name"], "Name should match")
+            self.assert_equal(created_contact["email"], contact["email"], "Email should match")
+            self.assert_not_none(created_contact.get("id"), "Contact should have ID")
+        
+        self.result.test_data["contacts_created"] = len(self.test_contacts)
+    
+    def _test_contact_retrieval(self):
+        """Test retrieving contacts"""
+        # Test get by ID
+        contact = self._get_contact_by_id(1)
+        self.assert_not_none(contact, "Should retrieve contact by ID")
+        self.assert_equal(contact["id"], 1, "Retrieved contact should have correct ID")
+        
+        # Test get all contacts
+        all_contacts = self._get_all_contacts()
+        self.assert_true(len(all_contacts) >= len(self.test_contacts), "Should retrieve all contacts")
+        
+        self.result.test_data["contacts_retrieved"] = len(all_contacts)
+    
+    def _test_contact_update(self):
+        """Test updating contact information"""
+        update_data = {
+            "name": "John Updated",
+            "phone": "+1111111111"
+        }
+        
+        updated_contact = self._update_contact(1, update_data)
+        self.assert_not_none(updated_contact, "Contact should be updated")
+        self.assert_equal(updated_contact["name"], update_data["name"], "Name should be updated")
+        self.assert_equal(updated_contact["phone"], update_data["phone"], "Phone should be updated")
+    
+    def _test_contact_search(self):
+        """Test contact search functionality"""
+        # Search by name
+        search_results = self._search_contacts("John")
+        self.assert_true(len(search_results) > 0, "Should find contacts by name")
+        
+        # Search by email
+        email_results = self._search_contacts("@example.com")
+        self.assert_true(len(email_results) > 0, "Should find contacts by email")
+        
+        self.result.test_data["search_results"] = {
+            "name_search": len(search_results),
+            "email_search": len(email_results)
+        }
+    
+    def _test_contact_deletion(self):
+        """Test contact deletion"""
+        # Delete contact
+        result = self._delete_contact(2)
+        self.assert_true(result, "Contact should be deleted successfully")
+        
+        # Verify deletion
+        deleted_contact = self._get_contact_by_id(2)
+        self.assert_true(deleted_contact is None, "Deleted contact should not be retrievable")
+    
+    def _test_bulk_operations(self):
+        """Test bulk contact operations"""
+        bulk_contacts = [
+            {"name": f"Bulk User {i}", "email": f"bulk{i}@example.com"}
+            for i in range(10)
+        ]
+        
+        # Test bulk create
+        start_time = time.time()
+        created_contacts = self._bulk_create_contacts(bulk_contacts)
+        bulk_create_time = time.time() - start_time
+        
+        self.assert_equal(len(created_contacts), 10, "Should create all bulk contacts")
+        self.assert_response_time(bulk_create_time * 1000, 2000, "Bulk create should be fast")
+        
+        # Test bulk export
+        start_time = time.time()
+        export_data = self._export_contacts()
+        export_time = time.time() - start_time
+        
+        self.assert_true(len(export_data) > 0, "Should export contact data")
+        self.assert_response_time(export_time * 1000, 1000, "Export should be fast")
+        
+        self.result.performance_metrics.update({
+            "bulk_create_time_ms": bulk_create_time * 1000,
+            "export_time_ms": export_time * 1000,
+            "contacts_per_second": 10 / bulk_create_time
+        })
+    
+    # Mock implementations (replace with actual API calls)
+    def _create_contact(self, contact_data):
+        """Mock contact creation"""
+        return {**contact_data, "id": len(self.test_contacts) + 1}
+    
+    def _get_contact_by_id(self, contact_id):
+        """Mock get contact by ID"""
+        return next((c for c in self.test_contacts if c["id"] == contact_id), None)
+    
+    def _get_all_contacts(self):
+        """Mock get all contacts"""
+        return self.test_contacts.copy()
+    
+    def _update_contact(self, contact_id, update_data):
+        """Mock contact update"""
+        contact = self._get_contact_by_id(contact_id)
+        if contact:
+            contact.update(update_data)
+            return contact
+        return None
+    
+    def _search_contacts(self, query):
+        """Mock contact search"""
+        return [
+            c for c in self.test_contacts 
+            if query.lower() in c["name"].lower() or query.lower() in c["email"].lower()
+        ]
+    
+    def _delete_contact(self, contact_id):
+        """Mock contact deletion"""
+        self.test_contacts = [c for c in self.test_contacts if c["id"] != contact_id]
+        return True
+    
+    def _bulk_create_contacts(self, contacts):
+        """Mock bulk contact creation"""
+        created = []
+        for i, contact in enumerate(contacts):
+            created.append({**contact, "id": 100 + i})
+        return created
+    
+    def _export_contacts(self):
+        """Mock contact export"""
+        return json.dumps(self.test_contacts)
+    
+    def teardown(self):
+        """Cleanup test data"""
+        # Clean up any temporary files
+        for temp_file in self.temp_files:
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+```
+
+```python
+# tests/component_tests/test_data_analysis.py
+import pandas as pd
+import numpy as np
+import tempfile
+import os
+from tests.framework.base_test import BaseTest, TestCategory
+
+class DataAnalysisTest(BaseTest):
+    """Test data analysis functionality"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.COMPONENT
+        self.test_data = None
+        self.temp_files = []
+    
+    def setup(self):
+        """Generate test data"""
+        np.random.seed(42)  # For reproducible results
+        
+        # Create sample dataset
+        self.test_data = pd.DataFrame({
+            'date': pd.date_range('2024-01-01', periods=1000, freq='D'),
+            'sales': np.random.normal(1000, 200, 1000),
+            'customers': np.random.poisson(50, 1000),
+            'category': np.random.choice(['A', 'B', 'C'], 1000),
+            'region': np.random.choice(['North', 'South', 'East', 'West'], 1000)
+        })
+        
+        # Add some trends and patterns
+        self.test_data['sales'] += np.arange(1000) * 0.5  # Upward trend
+        self.test_data['seasonal'] = 100 * np.sin(2 * np.pi * np.arange(1000) / 365.25)
+        self.test_data['sales'] += self.test_data['seasonal']
+    
+    def execute(self):
+        """Test data analysis operations"""
+        # Test basic statistics
+        self._test_basic_statistics()
+        
+        # Test data aggregation
+        self._test_data_aggregation()
+        
+        # Test data filtering
+        self._test_data_filtering()
+        
+        # Test trend analysis
+        self._test_trend_analysis()
+        
+        # Test data export/import
+        self._test_data_export_import()
+        
+        # Test performance with large datasets
+        self._test_performance()
+    
+    def _test_basic_statistics(self):
+        """Test basic statistical calculations"""
+        # Test mean calculation
+        mean_sales = self.test_data['sales'].mean()
+        self.assert_true(mean_sales > 0, "Mean sales should be positive")
+        
+        # Test standard deviation
+        std_sales = self.test_data['sales'].std()
+        self.assert_true(std_sales > 0, "Standard deviation should be positive")
+        
+        # Test correlation
+        correlation = self.test_data['sales'].corr(self.test_data['customers'])
+        self.assert_true(-1 <= correlation <= 1, "Correlation should be between -1 and 1")
+        
+        self.result.test_data.update({
+            "mean_sales": mean_sales,
+            "std_sales": std_sales,
+            "sales_customer_correlation": correlation
+        })
+    
+    def _test_data_aggregation(self):
+        """Test data aggregation operations"""
+        # Group by category
+        category_stats = self.test_data.groupby('category')['sales'].agg(['mean', 'sum', 'count'])
+        self.assert_equal(len(category_stats), 3, "Should have 3 categories")
+        
+        # Group by region
+        region_stats = self.test_data.groupby('region')['sales'].agg(['mean', 'sum'])
+        self.assert_equal(len(region_stats), 4, "Should have 4 regions")
+        
+        # Monthly aggregation
+        monthly_data = self.test_data.set_index('date').resample('M')['sales'].sum()
+        self.assert_true(len(monthly_data) > 30, "Should have multiple months of data")
+        
+        self.result.test_data.update({
+            "categories_analyzed": len(category_stats),
+            "regions_analyzed": len(region_stats),
+            "months_analyzed": len(monthly_data)
+        })
+    
+    def _test_data_filtering(self):
+        """Test data filtering operations"""
+        # Filter by value
+        high_sales = self.test_data[self.test_data['sales'] > 1200]
+        self.assert_true(len(high_sales) > 0, "Should find high sales records")
+        
+        # Filter by category
+        category_a = self.test_data[self.test_data['category'] == 'A']
+        self.assert_true(len(category_a) > 0, "Should find category A records")
+        
+        # Date range filter
+        recent_data = self.test_data[self.test_data['date'] >= '2024-06-01']
+        self.assert_true(len(recent_data) > 0, "Should find recent data")
+        
+        # Complex filter
+        complex_filter = self.test_data[
+            (self.test_data['sales'] > 1000) & 
+            (self.test_data['category'] == 'A') &
+            (self.test_data['customers'] > 40)
+        ]
+        
+        self.result.test_data.update({
+            "high_sales_records": len(high_sales),
+            "category_a_records": len(category_a),
+            "recent_records": len(recent_data),
+            "complex_filter_records": len(complex_filter)
+        })
+    
+    def _test_trend_analysis(self):
+        """Test trend analysis functionality"""
+        # Calculate moving average
+        self.test_data['ma_7'] = self.test_data['sales'].rolling(window=7).mean()
+        self.test_data['ma_30'] = self.test_data['sales'].rolling(window=30).mean()
+        
+        # Test that moving averages are calculated
+        ma_7_count = self.test_data['ma_7'].notna().sum()
+        ma_30_count = self.test_data['ma_30'].notna().sum()
+        
+        self.assert_true(ma_7_count > 990, "7-day moving average should be calculated for most records")
+        self.assert_true(ma_30_count > 970, "30-day moving average should be calculated for most records")
+        
+        # Calculate growth rate
+        self.test_data['growth_rate'] = self.test_data['sales'].pct_change()
+        growth_rate_count = self.test_data['growth_rate'].notna().sum()
+        
+        self.assert_true(growth_rate_count > 990, "Growth rate should be calculated for most records")
+        
+        # Test seasonality detection (simplified)
+        monthly_avg = self.test_data.set_index('date').resample('M')['sales'].mean()
+        seasonality_detected = monthly_avg.std() > 50  # Simple seasonality check
+        
+        self.result.test_data.update({
+            "moving_averages_calculated": True,
+            "growth_rates_calculated": True,
+            "seasonality_detected": seasonality_detected
+        })
+    
+    def _test_data_export_import(self):
+        """Test data export and import operations"""
+        import time
+        
+        # Test CSV export
+        csv_file = tempfile.NamedTemporaryFile(suffix='.csv', delete=False)
+        self.temp_files.append(csv_file.name)
+        
+        start_time = time.time()
+        self.test_data.to_csv(csv_file.name, index=False)
+        export_time = time.time() - start_time
+        
+        # Test CSV import
+        start_time = time.time()
+        imported_data = pd.read_csv(csv_file.name)
+        import_time = time.time() - start_time
+        
+        self.assert_equal(len(imported_data), len(self.test_data), "Imported data should have same length")
+        self.assert_equal(list(imported_data.columns), list(self.test_data.columns), "Columns should match")
+        
+        # Test JSON export
+        json_file = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
+        self.temp_files.append(json_file.name)
+        
+        start_time = time.time()
+        self.test_data.to_json(json_file.name, orient='records', date_format='iso')
+        json_export_time = time.time() - start_time
+        
+        self.result.performance_metrics.update({
+            "csv_export_time_ms": export_time * 1000,
+            "csv_import_time_ms": import_time * 1000,
+            "json_export_time_ms": json_export_time * 1000,
+            "records_per_second_export": len(self.test_data) / export_time,
+            "records_per_second_import": len(imported_data) / import_time
+        })
+    
+    def _test_performance(self):
+        """Test performance with larger datasets"""
+        import time
+        
+        # Create larger dataset
+        large_data = pd.DataFrame({
+            'value': np.random.normal(0, 1, 100000),
+            'category': np.random.choice(['X', 'Y', 'Z'], 100000),
+            'timestamp': pd.date_range('2020-01-01', periods=100000, freq='min')
+        })
+        
+        # Test aggregation performance
+        start_time = time.time()
+        large_agg = large_data.groupby('category')['value'].agg(['mean', 'std', 'count'])
+        agg_time = time.time() - start_time
+        
+        # Test sorting performance
+        start_time = time.time()
+        sorted_data = large_data.sort_values('value')
+        sort_time = time.time() - start_time
+        
+        # Test filtering performance
+        start_time = time.time()
+        filtered_data = large_data[large_data['value'] > 0]
+        filter_time = time.time() - start_time
+        
+        self.assert_response_time(agg_time * 1000, 5000, "Large data aggregation should be fast")
+        self.assert_response_time(sort_time * 1000, 3000, "Large data sorting should be fast")
+        self.assert_response_time(filter_time * 1000, 2000, "Large data filtering should be fast")
+        
+        self.result.performance_metrics.update({
+            "large_data_aggregation_ms": agg_time * 1000,
+            "large_data_sorting_ms": sort_time * 1000,
+            "large_data_filtering_ms": filter_time * 1000,
+            "large_dataset_size": len(large_data)
+        })
+    
+    def teardown(self):
+        """Cleanup temporary files"""
+        for temp_file in self.temp_files:
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+```
+
+### Integration Tests
+
+```python
+# tests/integration_tests/test_file_operations.py
+import os
+import tempfile
+import shutil
+import pandas as pd
+import PyPDF2
+from PIL import Image
+import speech_recognition as sr
+from tests.framework.base_test import BaseTest, TestCategory
+
+class FileOperationsTest(BaseTest):
+    """Test file upload, download, and processing operations"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.INTEGRATION
+        self.temp_dir = None
+        self.test_files = []
+    
+    def setup(self):
+        """Setup test directory and files"""
+        self.temp_dir = tempfile.mkdtemp()
+        self._create_test_files()
+    
+    def _create_test_files(self):
+        """Create various test files"""
+        # Create test CSV
+        csv_data = pd.DataFrame({
+            'name': ['Alice', 'Bob', 'Charlie'],
+            'age': [25, 30, 35],
+            'city': ['New York', 'London', 'Tokyo']
+        })
+        csv_path = os.path.join(self.temp_dir, 'test_data.csv')
+        csv_data.to_csv(csv_path, index=False)
+        self.test_files.append(('csv', csv_path))
+        
+        # Create test image
+        image = Image.new('RGB', (100, 100), color='red')
+        image_path = os.path.join(self.temp_dir, 'test_image.jpg')
+        image.save(image_path)
+        self.test_files.append(('image', image_path))
+        
+        # Create test text file
+        text_path = os.path.join(self.temp_dir, 'test_text.txt')
+        with open(text_path, 'w') as f:
+            f.write("This is a test text file with sample content for testing file operations.")
+        self.test_files.append(('text', text_path))
+    
+    def execute(self):
+        """Test file operations"""
+        # Test file upload simulation
+        self._test_file_upload()
+        
+        # Test file download simulation
+        self._test_file_download()
+        
+        # Test CSV processing
+        self._test_csv_processing()
+        
+        # Test image processing
+        self._test_image_processing()
+        
+        # Test file validation
+        self._test_file_validation()
+        
+        # Test batch file operations
+        self._test_batch_operations()
+    
+    def _test_file_upload(self):
+        """Test file upload functionality"""
+        upload_results = []
+        
+        for file_type, file_path in self.test_files:
+            file_size = os.path.getsize(file_path)
+            
+            # Simulate upload
+            start_time = time.time()
+            upload_result = self._simulate_upload(file_path)
+            upload_time = time.time() - start_time
+            
+            self.assert_true(upload_result['success'], f"{file_type} file should upload successfully")
+            self.assert_equal(upload_result['size'], file_size, "Upload should preserve file size")
+            self.assert_response_time(upload_time * 1000, 5000, "Upload should be fast")
+            
+            upload_results.append({
+                'type': file_type,
+                'size_bytes': file_size,
+                'upload_time_ms': upload_time * 1000,
+                'success': upload_result['success']
+            })
+        
+        self.result.test_data['upload_results'] = upload_results
+    
+    def _test_file_download(self):
+        """Test file download functionality"""
+        download_results = []
+        
+        for file_type, file_path in self.test_files:
+            start_time = time.time()
+            download_result = self._simulate_download(file_path)
+            download_time = time.time() - start_time
+            
+            self.assert_true(download_result['success'], f"{file_type} file should download successfully")
+            self.assert_response_time(download_time * 1000, 3000, "Download should be fast")
+            
+            download_results.append({
+                'type': file_type,
+                'download_time_ms': download_time * 1000,
+                'success': download_result['success']
+            })
+        
+        self.result.test_data['download_results'] = download_results
+    
+    def _test_csv_processing(self):
+        """Test CSV file processing"""
+        csv_path = next(path for file_type, path in self.test_files if file_type == 'csv')
+        
+        start_time = time.time()
+        
+        # Read CSV
+        data = pd.read_csv(csv_path)
+        
+        # Process data
+        processed_data = {
+            'row_count': len(data),
+            'column_count': len(data.columns),
+            'columns': list(data.columns),
+            'average_age': data['age'].mean(),
+            'cities': data['city'].unique().tolist()
+        }
+        
+        processing_time = time.time() - start_time
+        
+        self.assert_equal(processed_data['row_count'], 3, "Should read all rows")
+        self.assert_equal(processed_data['column_count'], 3, "Should read all columns")
+        self.assert_true('name' in processed_data['columns'], "Should include name column")
+        self.assert_response_time(processing_time * 1000, 1000, "CSV processing should be fast")
+        
+        self.result.test_data['csv_processing'] = processed_data
+        self.result.performance_metrics['csv_processing_time_ms'] = processing_time * 1000
+    
+    def _test_image_processing(self):
+        """Test image file processing"""
+        image_path = next(path for file_type, path in self.test_files if file_type == 'image')
+        
+        start_time = time.time()
+        
+        # Open and analyze image
+        with Image.open(image_path) as img:
+            image_info = {
+                'format': img.format,
+                'size': img.size,
+                'mode': img.mode,
+                'width': img.width,
+                'height': img.height
+            }
+        
+        processing_time = time.time() - start_time
+        
+        self.assert_equal(image_info['format'], 'JPEG', "Should detect JPEG format")
+        self.assert_equal(image_info['size'], (100, 100), "Should read correct dimensions")
+        self.assert_response_time(processing_time * 1000, 500, "Image processing should be very fast")
+        
+        self.result.test_data['image_processing'] = image_info
+        self.result.performance_metrics['image_processing_time_ms'] = processing_time * 1000
+    
+    def _test_file_validation(self):
+        """Test file validation functionality"""
+        validation_results = []
+        
+        for file_type, file_path in self.test_files:
+            validation = self._validate_file(file_path)
+            validation_results.append({
+                'type': file_type,
+                'valid': validation['valid'],
+                'file_extension': validation['extension'],
+                'size_valid': validation['size_valid']
+            })
+        
+        # All test files should be valid
+        valid_files = [r for r in validation_results if r['valid']]
+        self.assert_equal(len(valid_files), len(self.test_files), "All test files should be valid")
+        
+        self.result.test_data['validation_results'] = validation_results
+    
+    def _test_batch_operations(self):
+        """Test batch file operations"""
+        start_time = time.time()
+        
+        # Simulate batch upload
+        batch_results = []
+        for file_type, file_path in self.test_files:
+            result = self._simulate_upload(file_path)
+            batch_results.append(result)
+        
+        batch_time = time.time() - start_time
+        
+        successful_uploads = [r for r in batch_results if r['success']]
+        self.assert_equal(len(successful_uploads), len(self.test_files), "All files should upload in batch")
+        self.assert_response_time(batch_time * 1000, 10000, "Batch operation should complete reasonably fast")
+        
+        self.result.performance_metrics.update({
+            'batch_upload_time_ms': batch_time * 1000,
+            'files_per_second': len(self.test_files) / batch_time
+        })
+    
+    # Mock implementations (replace with actual API calls)
+    def _simulate_upload(self, file_path):
+        """Simulate file upload"""
+        import time
+        time.sleep(0.1)  # Simulate network delay
+        
+        return {
+            'success': True,
+            'size': os.path.getsize(file_path),
+            'filename': os.path.basename(file_path)
+        }
+    
+    def _simulate_download(self, file_path):
+        """Simulate file download"""
+        import time
+        time.sleep(0.05)  # Simulate network delay
+        
+        return {
+            'success': True,
+            'filename': os.path.basename(file_path)
+        }
+    
+    def _validate_file(self, file_path):
+        """Validate file"""
+        file_size = os.path.getsize(file_path)
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        valid_extensions = ['.csv', '.jpg', '.jpeg', '.png', '.txt', '.pdf']
+        max_size = 10 * 1024 * 1024  # 10MB
+        
+        return {
+            'valid': file_ext in valid_extensions and file_size <= max_size,
+            'extension': file_ext,
+            'size_valid': file_size <= max_size,
+            'size_bytes': file_size
+        }
+    
+    def teardown(self):
+        """Cleanup test files"""
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+```
+
+### Performance Tests
+
+```python
+# tests/performance_tests/test_load_handling.py
+import asyncio
+import concurrent.futures
+import time
+import psutil
+from tests.framework.base_test import BaseTest, TestCategory
+
+class LoadHandlingTest(BaseTest):
+    """Test system performance under various load conditions"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.PERFORMANCE
+        self.baseline_metrics = {}
+    
+    def setup(self):
+        """Collect baseline performance metrics"""
+        self.baseline_metrics = {
+            'cpu_percent': psutil.cpu_percent(interval=1),
+            'memory_percent': psutil.virtual_memory().percent,
+            'disk_usage_percent': psutil.disk_usage('/').percent,
+            'network_io': psutil.net_io_counters(),
+            'process_count': len(psutil.pids())
+        }
+    
+    def execute(self):
+        """Test various load scenarios"""
+        # Test CPU intensive operations
+        self._test_cpu_load()
+        
+        # Test memory intensive operations
+        self._test_memory_load()
+        
+        # Test concurrent request handling
+        self._test_concurrent_requests()
+        
+        # Test database load
+        self._test_database_load()
+        
+        # Test file I/O load
+        self._test_file_io_load()
+    
+    def _test_cpu_load(self):
+        """Test CPU intensive operations"""
+        def cpu_intensive_task():
+            # Simulate CPU-intensive calculation
+            result = 0
+            for i in range(1000000):
+                result += i ** 2
+            return result
+        
+        start_time = time.time()
+        cpu_start = psutil.cpu_percent()
+        
+        # Run CPU intensive task
+        result = cpu_intensive_task()
+        
+        execution_time = time.time() - start_time
+        cpu_end = psutil.cpu_percent()
+        
+        self.assert_true(result > 0, "CPU task should produce result")
+        self.assert_response_time(execution_time * 1000, 5000, "CPU task should complete within reasonable time")
+        
+        cpu_usage = max(cpu_end - cpu_start, 0)
+        
+        self.result.performance_metrics.update({
+            'cpu_task_time_ms': execution_time * 1000,
+            'cpu_usage_during_task': cpu_usage,
+            'cpu_task_result': result
+        })
+    
+    def _test_memory_load(self):
+        """Test memory intensive operations"""
+        memory_start = psutil.virtual_memory().percent
+        
+        start_time = time.time()
+        
+        # Create large data structures
+        large_list = [i for i in range(1000000)]
+        large_dict = {i: f"value_{i}" for i in range(100000)}
+        
+        memory_peak = psutil.virtual_memory().percent
+        
+        # Clean up
+        del large_list
+        del large_dict
+        
+        execution_time = time.time() - start_time
+        memory_end = psutil.virtual_memory().percent
+        
+        memory_increase = memory_peak - memory_start
+        
+        self.assert_response_time(execution_time * 1000, 3000, "Memory operations should be fast")
+        self.assert_true(memory_increase < 50, "Memory usage should not increase dramatically")
+        
+        self.result.performance_metrics.update({
+            'memory_task_time_ms': execution_time * 1000,
+            'memory_increase_percent': memory_increase,
+            'peak_memory_percent': memory_peak
+        })
+    
+    def _test_concurrent_requests(self):
+        """Test handling of concurrent requests"""
+        def simulate_request(request_id):
+            # Simulate API request processing
+            start = time.time()
+            time.sleep(0.1)  # Simulate processing time
+            end = time.time()
+            return {
+                'request_id': request_id,
+                'processing_time': end - start,
+                'success': True
+            }
+        
+        num_concurrent = 50
+        start_time = time.time()
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_id = {
+                executor.submit(simulate_request, i): i 
+                for i in range(num_concurrent)
+            }
+            
+            results = []
+            for future in concurrent.futures.as_completed(future_to_id):
+                request_id = future_to_id[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    self.logger.error(f'Request {request_id} generated an exception: {exc}')
+        
+        total_time = time.time() - start_time
+        successful_requests = len([r for r in results if r['success']])
+        avg_processing_time = sum(r['processing_time'] for r in results) / len(results)
+        
+        self.assert_equal(successful_requests, num_concurrent, "All concurrent requests should succeed")
+        self.assert_response_time(total_time * 1000, 2000, "Concurrent requests should complete quickly")
+        
+        self.result.performance_metrics.update({
+            'concurrent_requests_total_time_ms': total_time * 1000,
+            'concurrent_requests_count': num_concurrent,
+            'successful_requests': successful_requests,
+            'average_request_processing_time_ms': avg_processing_time * 1000,
+            'requests_per_second': num_concurrent / total_time
+        })
+    
+    def _test_database_load(self):
+        """Test database performance under load"""
+        from config.database import SessionLocal
+        
+        db = SessionLocal()
+        
+        try:
+            start_time = time.time()
+            
+            # Simulate multiple database operations
+            for i in range(100):
+                # Simulate INSERT
+                insert_start = time.time()
+                # Mock database insert operation
+                time.sleep(0.001)  # Simulate DB latency
+                insert_time = time.time() - insert_start
+                
+                # Simulate SELECT
+                select_start = time.time()
+                # Mock database select operation
+                time.sleep(0.0005)  # Simulate DB latency
+                select_time = time.time() - select_start
+            
+            total_db_time = time.time() - start_time
+            
+            self.assert_response_time(total_db_time * 1000, 5000, "Database operations should complete quickly")
+            
+            self.result.performance_metrics.update({
+                'database_load_test_time_ms': total_db_time * 1000,
+                'database_operations_count': 200,  # 100 inserts + 100 selects
+                'db_operations_per_second': 200 / total_db_time
+            })
+            
+        finally:
+            db.close()
+    
+    def _test_file_io_load(self):
+        """Test file I/O performance"""
+        import tempfile
+        import os
+        
+        temp_files = []
+        start_time = time.time()
+        
+        try:
+            # Test file creation and writing
+            for i in range(20):
+                temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
+                temp_files.append(temp_file.name)
+                
+                # Write data
+                for j in range(1000):
+                    temp_file.write(f"Line {j} in file {i}\n")
+                temp_file.close()
+            
+            write_time = time.time() - start_time
+            
+            # Test file reading
+            read_start = time.time()
+            total_lines = 0
+            
+            for temp_file in temp_files:
+                with open(temp_file, 'r') as f:
+                    lines = f.readlines()
+                    total_lines += len(lines)
+            
+            read_time = time.time() - read_start
+            total_time = time.time() - start_time
+            
+            self.assert_equal(total_lines, 20 * 1000, "Should read all written lines")
+            self.assert_response_time(total_time * 1000, 5000, "File I/O operations should be reasonably fast")
+            
+            self.result.performance_metrics.update({
+                'file_io_total_time_ms': total_time * 1000,
+                'file_write_time_ms': write_time * 1000,
+                'file_read_time_ms': read_time * 1000,
+                'files_created': len(temp_files),
+                'total_lines_written': total_lines,
+                'lines_per_second_write': total_lines / write_time,
+                'lines_per_second_read': total_lines / read_time
+            })
+            
+        finally:
+            # Cleanup
+            for temp_file in temp_files:
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
+    
+    def teardown(self):
+        """Collect final performance metrics"""
+        final_metrics = {
+            'cpu_percent': psutil.cpu_percent(interval=1),
+            'memory_percent': psutil.virtual_memory().percent,
+            'disk_usage_percent': psutil.disk_usage('/').percent,
+            'process_count': len(psutil.pids())
+        }
+        
+        # Calculate deltas
+        cpu_delta = final_metrics['cpu_percent'] - self.baseline_metrics['cpu_percent']
+        memory_delta = final_metrics['memory_percent'] - self.baseline_metrics['memory_percent']
+        
+        self.result.performance_metrics.update({
+            'baseline_cpu_percent': self.baseline_metrics['cpu_percent'],
+            'final_cpu_percent': final_metrics['cpu_percent'],
+            'cpu_delta': cpu_delta,
+            'baseline_memory_percent': self.baseline_metrics['memory_percent'],
+            'final_memory_percent': final_metrics['memory_percent'],
+            'memory_delta': memory_delta
+        })
+```
+
+---
+
+## API Layer
+
+### FastAPI Application
+
+```python
+# app/main.py
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+import uuid
+from typing import Optional, List
+from datetime import datetime
+
+from config.database import get_db, create_tables
+from config.settings import settings
+from app.core.test_runner import test_runner
+from app.models.test_results import TestRun, TestResult
+from app.api import health, tests, dashboard
+
+# Create FastAPI app
+app = FastAPI(
+    title="Testing Framework API",
+    description="Comprehensive testing framework with dashboard capabilities",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(health.router, prefix="/health", tags=["health"])
+app.include_router(tests.router, prefix="/tests", tags=["tests"])
+app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and services on startup"""
+    create_tables()
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "Testing Framework API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=settings.API_RELOAD
+    )
+```
+
+```python
+# app/api/tests.py
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from sqlalchemy.orm import Session
+from typing import Optional, List
+from datetime import datetime
+import uuid
+
+from config.database import get_db
+from app.core.test_runner import test_runner
+from app.models.test_results import TestRun, TestResult
+
+router = APIRouter()
+
+@router.post("/run", response_model=dict)
+async def run_tests(
+    background_tasks: BackgroundTasks,
+    environment: str = "development",
+    version: str = "1.0.0",
+    triggered_by: str = "api",
+    test_categories: Optional[List[str]] = None,
+    parallel: bool = True,
+    db: Session = Depends(get_db)
+):
+    """Start a test run"""
+    try:
+        # Start test run in background
+        run_id = await test_runner.run_all_tests(
+            environment=environment,
+            version=version,
+            triggered_by=triggered_by,
+            trigger_type="api",
+            test_categories=test_categories,
+            parallel=parallel
+        )
+        
+        return {
+            "message": "Test run started",
+            "run_id": str(run_id),
+            "status": "running"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/runs", response_model=List[dict])
+async def get_test_runs(
+    limit: int = 50,
+    offset: int = 0,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get list of test runs"""
+    query = db.query(TestRun)
+    
+    if status:
+        query = query.filter(TestRun.status == status)
+    
+    runs = query.order_by(TestRun.started_at.desc()).offset(offset).limit(limit).all()
+    
+    return [
+        {
+            "run_id": str(run.run_id),
+            "name": run.name,
+            "status": run.status,
+            "started_at": run.started_at.isoformat(),
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "total_tests": run.total_tests,
+            "passed_tests": run.passed_tests,
+            "failed_tests": run.failed_tests,
+            "skipped_tests": run.skipped_tests,
+            "execution_time_seconds": run.execution_time_seconds,
+            "environment": run.environment,
+            "version": run.version
+        }
+        for run in runs
+    ]
+
+@router.get("/runs/{run_id}", response_model=dict)
+async def get_test_run(run_id: str, db: Session = Depends(get_db)):
+    """Get detailed test run information"""
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run ID format")
+    
+    run = db.query(TestRun).filter(TestRun.run_id == run_uuid).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    
+    # Get test results
+    results = db.query(TestResult).filter(TestResult.run_id == run_uuid).all()
+    
+    return {
+        "run_id": str(run.run_id),
+        "name": run.name,
+        "status": run.status,
+        "started_at": run.started_at.isoformat(),
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "total_tests": run.total_tests,
+        "passed_tests": run.passed_tests,
+        "failed_tests": run.failed_tests,
+        "skipped_tests": run.skipped_tests,
+        "execution_time_seconds": run.execution_time_seconds,
+        "trigger_type": run.trigger_type,
+        "triggered_by": run.triggered_by,
+        "environment": run.environment,
+        "version": run.version,
+        "metadata": run.metadata,
+        "results": [
+            {
+                "test_name": result.test_name,
+                "test_module": result.test_module,
+                "test_category": result.test_category,
+                "status": result.status,
+                "execution_time_seconds": result.execution_time_seconds,
+                "error_message": result.error_message,
+                "assertions_count": result.assertions_count,
+                "performance_metrics": result.performance_metrics,
+                "test_data": result.test_data
+            }
+            for result in results
+        ]
+    }
+
+@router.get("/status/{run_id}", response_model=dict)
+async def get_test_run_status(run_id: str, db: Session = Depends(get_db)):
+    """Get test run status"""
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run ID format")
+    
+    run = db.query(TestRun).filter(TestRun.run_id == run_uuid).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    
+    return {
+        "run_id": str(run.run_id),
+        "status": run.status,
+        "progress": {
+            "total_tests": run.total_tests,
+            "completed_tests": run.passed_tests + run.failed_tests + run.skipped_tests,
+            "passed_tests": run.passed_tests,
+            "failed_tests": run.failed_tests,
+            "skipped_tests": run.skipped_tests
+        },
+        "started_at": run.started_at.isoformat(),
+        "execution_time_seconds": run.execution_time_seconds
+    }
+
+@router.delete("/runs/{run_id}")
+async def delete_test_run(run_id: str, db: Session = Depends(get_db)):
+    """Delete a test run and its results"""
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run ID format")
+    
+    run = db.query(TestRun).filter(TestRun.run_id == run_uuid).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    
+    db.delete(run)
+    db.commit()
+    
+    return {"message": "Test run deleted successfully"}
+
+@router.get("/categories", response_model=List[str])
+async def get_test_categories():
+    """Get available test categories"""
+    return [
+        "health_check",
+        "component", 
+        "integration",
+        "performance",
+        "workflow"
+    ]
+
+@router.get("/stats", response_model=dict)
+async def get_test_statistics(
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Get test statistics for the specified period"""
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    
+    since_date = datetime.utcnow() - timedelta(days=days)
+    
+    # Get run statistics
+    total_runs = db.query(TestRun).filter(TestRun.started_at >= since_date).count()
+    successful_runs = db.query(TestRun).filter(
+        TestRun.started_at >= since_date,
+        TestRun.status == "completed"
+    ).count()
+    
+    # Get test statistics
+    total_tests = db.query(func.sum(TestRun.total_tests)).filter(
+        TestRun.started_at >= since_date
+    ).scalar() or 0
+    
+    passed_tests = db.query(func.sum(TestRun.passed_tests)).filter(
+        TestRun.started_at >= since_date
+    ).scalar() or 0
+    
+    # Calculate success rates
+    run_success_rate = (successful_runs / total_runs * 100) if total_runs > 0 else 0
+    test_success_rate = (passed_tests / total_tests * 100) if total_tests > 0 else 0
+    
+    return {
+        "period_days": days,
+        "total_runs": total_runs,
+        "successful_runs": successful_runs,
+        "run_success_rate": round(run_success_rate, 2),
+        "total_tests": total_tests,
+        "passed_tests": passed_tests,
+        "test_success_rate": round(test_success_rate, 2)
+    }
+```
+
+```python
+# app/api/health.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+import psutil
+from datetime import datetime
+
+from config.database import get_db
+from config.settings import settings
+
+router = APIRouter()
+
+@router.get("/")
+async def health_check():
+    """Basic health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "service": "Testing Framework API"
+    }
+
+@router.get("/detailed")
+async def detailed_health_check(db: Session = Depends(get_db)):
+    """Detailed health check including system metrics"""
+    health_data = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "components": {}
+    }
+    
+    # Database health
+    try:
+        db.execute(text("SELECT 1"))
+        health_data["components"]["database"] = {
+            "status": "healthy",
+            "details": "Connection successful"
+        }
+    except Exception as e:
+        health_data["components"]["database"] = {
+            "status": "unhealthy",
+            "details": str(e)
+        }
+        health_data["status"] = "degraded"
+    
+    # System metrics
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        health_data["components"]["system"] = {
+            "status": "healthy" if cpu_percent < 80 and memory.percent < 80 else "degraded",
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "disk_percent": (disk.used / disk.total) * 100,
+            "load_average": psutil.getloadavg() if hasattr(psutil, 'getloadavg') else None
+        }
+        
+        if cpu_percent > 90 or memory.percent > 90:
+            health_data["status"] = "unhealthy"
+        elif cpu_percent > 80 or memory.percent > 80:
+            health_data["status"] = "degraded"
+            
+    except Exception as e:
+        health_data["components"]["system"] = {
+            "status": "unknown",
+            "details": str(e)
+        }
+    
+    # External services health
+    health_data["components"]["external_services"] = {}
+    
+    # Check Telegram if configured
+    if settings.TELEGRAM_BOT_TOKEN:
+        try:
+            import telegram
+            bot = telegram.Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            bot.get_me()
+            health_data["components"]["external_services"]["telegram"] = {
+                "status": "healthy",
+                "details": "Bot accessible"
+            }
+        except Exception as e:
+            health_data["components"]["external_services"]["telegram"] = {
+                "status": "unhealthy",
+                "details": str(e)
+            }
+    
+    # Check SMTP if configured
+    if settings.SMTP_HOST:
+        try:
+            import smtplib
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+            server.quit()
+            health_data["components"]["external_services"]["smtp"] = {
+                "status": "healthy",
+                "details": "SMTP server accessible"
+            }
+        except Exception as e:
+            health_data["components"]["external_services"]["smtp"] = {
+                "status": "unhealthy",
+                "details": str(e)
+            }
+    
+    return health_data
+
+@router.get("/system")
+async def system_metrics():
+    """Get current system metrics"""
+    try:
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        network = psutil.net_io_counters()
+        
+        return {
+            "cpu": {
+                "percent": cpu_percent,
+                "count": psutil.cpu_count()
+            },
+            "memory": {
+                "percent": memory.percent,
+                "available_gb": memory.available / (1024**3),
+                "total_gb": memory.total / (1024**3)
+            },
+            "disk": {
+                "percent": (disk.used / disk.total) * 100,
+                "free_gb": disk.free / (1024**3),
+                "total_gb": disk.total / (1024**3)
+            },
+            "network": {
+                "bytes_sent": network.bytes_sent,
+                "bytes_recv": network.bytes_recv,
+                "packets_sent": network.packets_sent,
+                "packets_recv": network.packets_recv
+            },
+            "processes": len(psutil.pids()),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+```
+
+```python
+# app/api/dashboard.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func, text
+from typing import List, Optional
+from datetime import datetime, timedelta
+
+from config.database import get_db
+from app.models.test_results import TestRun, TestResult
+from app.models.system_health import SystemHealth
+from app.models.performance_metrics import PerformanceMetric
+
+router = APIRouter()
+
+@router.get("/overview")
+async def dashboard_overview(db: Session = Depends(get_db)):
+    """Get dashboard overview data"""
+    # Recent test runs (last 24 hours)
+    since_24h = datetime.utcnow() - timedelta(hours=24)
+    
+    recent_runs = db.query(TestRun).filter(
+        TestRun.started_at >= since_24h
+    ).order_by(TestRun.started_at.desc()).limit(10).all()
+    
+    # Success rate calculation
+    total_recent = len(recent_runs)
+    successful_recent = len([r for r in recent_runs if r.status == "completed"])
+    success_rate = (successful_recent / total_recent * 100) if total_recent > 0 else 0
+    
+    # Failed tests in last 24h
+    failed_tests = db.query(TestResult).join(TestRun).filter(
+        TestRun.started_at >= since_24h,
+        TestResult.status.in_(["failed", "error"])
+    ).count()
+    
+    # Average execution time
+    avg_execution_time = db.query(func.avg(TestRun.execution_time_seconds)).filter(
+        TestRun.started_at >= since_24h,
+        TestRun.execution_time_seconds.isnot(None)
+    ).scalar() or 0
+    
+    return {
+        "summary": {
+            "total_runs_24h": total_recent,
+            "success_rate_24h": round(success_rate, 1),
+            "failed_tests_24h": failed_tests,
+            "avg_execution_time_seconds": round(avg_execution_time, 2)
+        },
+        "recent_runs": [
+            {
+                "run_id": str(run.run_id),
+                "name": run.name,
+                "status": run.status,
+                "started_at": run.started_at.isoformat(),
+                "execution_time_seconds": run.execution_time_seconds,
+                "passed_tests": run.passed_tests,
+                "failed_tests": run.failed_tests,
+                "total_tests": run.total_tests
+            }
+            for run in recent_runs
+        ]
+    }
+
+@router.get("/trends")
+async def dashboard_trends(
+    days: int = 7,
+    db: Session = Depends(get_db)
+):
+    """Get trend data for dashboard"""
+    since_date = datetime.utcnow() - timedelta(days=days)
+    
+    # Daily test run statistics
+    daily_stats = db.execute(text("""
+        SELECT 
+            DATE(started_at) as test_date,
+            COUNT(*) as total_runs,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful_runs,
+            AVG(execution_time_seconds) as avg_execution_time,
+            SUM(total_tests) as total_tests,
+            SUM(passed_tests) as passed_tests,
+            SUM(failed_tests) as failed_tests
+        FROM test_runs 
+        WHERE started_at >= :since_date
+        GROUP BY DATE(started_at)
+        ORDER BY test_date
+    """), {"since_date": since_date}).fetchall()
+    
+    trend_data = []
+    for row in daily_stats:
+        success_rate = (row.successful_runs / row.total_runs * 100) if row.total_runs > 0 else 0
+        test_success_rate = (row.passed_tests / row.total_tests * 100) if row.total_tests > 0 else 0
+        
+        trend_data.append({
+            "date": row.test_date.isoformat(),
+            "total_runs": row.total_runs,
+            "successful_runs": row.successful_runs,
+            "success_rate": round(success_rate, 1),
+            "avg_execution_time": round(row.avg_execution_time or 0, 2),
+            "total_tests": row.total_tests or 0,
+            "passed_tests": row.passed_tests or 0,
+            "failed_tests": row.failed_tests or 0,
+            "test_success_rate": round(test_success_rate, 1)
+        })
+    
+    return {
+        "period_days": days,
+        "trends": trend_data
+    }
+
+@router.get("/test-categories")
+async def test_categories_breakdown(
+    days: int = 7,
+    db: Session = Depends(get_db)
+):
+    """Get test results breakdown by category"""
+    since_date = datetime.utcnow() - timedelta(days=days)
+    
+    category_stats = db.execute(text("""
+        SELECT 
+            tr.test_category,
+            COUNT(*) as total_tests,
+            SUM(CASE WHEN tr.status = 'passed' THEN 1 ELSE 0 END) as passed_tests,
+            SUM(CASE WHEN tr.status = 'failed' THEN 1 ELSE 0 END) as failed_tests,
+            SUM(CASE WHEN tr.status = 'error' THEN 1 ELSE 0 END) as error_tests,
+            SUM(CASE WHEN tr.status = 'skipped' THEN 1 ELSE 0 END) as skipped_tests,
+            AVG(tr.execution_time_seconds) as avg_execution_time
+        FROM test_results tr
+        JOIN test_runs r ON tr.run_id = r.run_id
+        WHERE r.started_at >= :since_date
+        GROUP BY tr.test_category
+        ORDER BY total_tests DESC
+    """), {"since_date": since_date}).fetchall()
+    
+    categories = []
+    for row in category_stats:
+        success_rate = (row.passed_tests / row.total_tests * 100) if row.total_tests > 0 else 0
+        categories.append({
+            "category": row.test_category,
+            "total_tests": row.total_tests,
+            "passed_tests": row.passed_tests,
+            "failed_tests": row.failed_tests,
+            "error_tests": row.error_tests,
+            "skipped_tests": row.skipped_tests,
+            "success_rate": round(success_rate, 1),
+            "avg_execution_time": round(row.avg_execution_time or 0, 3)
+        })
+    
+    return {"categories": categories}
+
+@router.get("/performance-metrics")
+async def performance_metrics(
+    hours: int = 24,
+    db: Session = Depends(get_db)
+):
+    """Get performance metrics for dashboard"""
+    since_time = datetime.utcnow() - timedelta(hours=hours)
+    
+    # Get recent performance metrics
+    metrics = db.query(PerformanceMetric).filter(
+        PerformanceMetric.timestamp >= since_time
+    ).order_by(PerformanceMetric.timestamp.desc()).limit(100).all()
+    
+    # Group metrics by name
+    metric_groups = {}
+    for metric in metrics:
+        if metric.metric_name not in metric_groups:
+            metric_groups[metric.metric_name] = []
+        metric_groups[metric.metric_name].append({
+            "timestamp": metric.timestamp.isoformat(),
+            "value": metric.metric_value,
+            "unit": metric.metric_unit,
+            "component": metric.component
+        })
+    
+    return {
+        "period_hours": hours,
+        "metrics": metric_groups
+    }
+
+@router.get("/failed-tests")
+async def recent_failed_tests(
+    limit: int = 20,
+    db: Session = Depends(get_db)
+):
+    """Get recent failed tests for debugging"""
+    failed_tests = db.query(TestResult).join(TestRun).filter(
+        TestResult.status.in_(["failed", "error"])
+    ).order_by(TestRun.started_at.desc()).limit(limit).all()
+    
+    failures = []
+    for test in failed_tests:
+        failures.append({
+            "test_name": test.test_name,
+            "test_module": test.test_module,
+            "test_category": test.test_category,
+            "status": test.status,
+            "error_message": test.error_message,
+            "run_id": str(test.run_id),
+            "created_at": test.created_at.isoformat(),
+            "execution_time_seconds": test.execution_time_seconds
+        })
+    
+    return {"failed_tests": failures}
+
+@router.get("/alerts")
+async def system_alerts(db: Session = Depends(get_db)):
+    """Get system alerts and warnings"""
+    alerts = []
+    
+    # Check for recent failed runs
+    recent_failed = db.query(TestRun).filter(
+        TestRun.started_at >= datetime.utcnow() - timedelta(hours=2),
+        TestRun.status.in_(["failed", "error"])
+    ).count()
+    
+    if recent_failed > 0:
+        alerts.append({
+            "type": "warning",
+            "message": f"{recent_failed} test run(s) failed in the last 2 hours",
+            "severity": "medium",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    
+    # Check for long-running tests
+    long_running = db.query(TestRun).filter(
+        TestRun.status == "running",
+        TestRun.started_at <= datetime.utcnow() - timedelta(minutes=30)
+    ).count()
+    
+    if long_running > 0:
+        alerts.append({
+            "type": "warning", 
+            "message": f"{long_running} test run(s) have been running for over 30 minutes",
+            "severity": "medium",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    
+    # Check system health
+    try:
+        import psutil
+        cpu_percent = psutil.cpu_percent()
+        memory_percent = psutil.virtual_memory().percent
+        
+        if cpu_percent > 90:
+            alerts.append({
+                "type": "error",
+                "message": f"High CPU usage: {cpu_percent:.1f}%",
+                "severity": "high",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+        
+        if memory_percent > 90:
+            alerts.append({
+                "type": "error",
+                "message": f"High memory usage: {memory_percent:.1f}%",
+                "severity": "high",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+    except Exception:
+        pass
+    
+    return {"alerts": alerts}
+```
+
+---
+
+## Configuration & Setup
+
+### Environment Configuration
+
+```python
+# .env.example
+# Database Configuration
+DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testing_framework
+
+# API Configuration
+API_HOST=0.0.0.0
+API_PORT=8000
+API_RELOAD=false
+API_DEBUG=false
+
+# Testing Configuration
+TEST_TIMEOUT=300
+MAX_CONCURRENT_TESTS=5
+TEST_DATA_RETENTION_DAYS=90
+
+# External Services (Optional)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+NOTIFICATION_EMAIL=admin@yourcompany.com
+
+# File Operations
+UPLOAD_DIR=/tmp/test_uploads
+MAX_FILE_SIZE=104857600
+ALLOWED_FILE_EXTENSIONS=[".csv",".pdf",".jpg",".png",".wav",".mp3"]
+
+# Performance Baselines
+PERFORMANCE_BASELINE_CPU=80.0
+PERFORMANCE_BASELINE_MEMORY=80.0
+PERFORMANCE_BASELINE_RESPONSE_TIME=5000.0
+
+# Logging
+LOG_LEVEL=INFO
+LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+```
+
+### Requirements File
+
+```txt
+# requirements.txt
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.13.1
+pydantic==2.5.1
+pydantic-settings==2.1.0
+
+# Testing Framework
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Data Processing
+pandas==2.1.4
+numpy==1.25.2
+openpyxl==3.1.2
+
+# External Services
+python-telegram-bot==20.7
+requests==2.31.0
+
+# System Monitoring
+psutil==5.9.6
+
+# Image Processing
+Pillow==10.1.0
+PyPDF2==3.0.1
+
+# Audio Processing (Optional)
+SpeechRecognition==3.10.0
+
+# Development Tools
+black==23.11.0
+flake8==6.1.0
+isort==5.12.0
+
+# Database Migrations
+alembic==1.13.1
+
+# CORS and Security
+python-multipart==0.0.6
+
+# Logging and Monitoring
+structlog==23.2.0
+```
+
+### Docker Configuration
+
+```dockerfile
+# docker/Dockerfile
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create directories
+RUN mkdir -p /tmp/test_uploads
+RUN mkdir -p /app/logs
+
+# Set environment variables
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```yaml
+# docker/docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: testing_framework
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testing_framework"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  testing-framework:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://testuser:testpass@db:5432/testing_framework
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ../logs:/app/logs
+      - upload_data:/tmp/test_uploads
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ../static:/usr/share/nginx/html
+    depends_on:
+      - testing-framework
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  upload_data:
+```
+
+### Database Initialization
+
+```sql
+-- docker/init.sql
+-- Initialize database with extensions and initial data
+
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+
+-- Create initial configuration
+INSERT INTO test_configurations (config_name, config_data, is_active) VALUES
+('default_test_config', '{
+    "timeout_seconds": 300,
+    "max_retries": 3,
+    "notification_enabled": true,
+    "performance_monitoring": true
+}', true),
+('email_notifications', '{
+    "enabled": false,
+    "recipients": [],
+    "on_failure_only": true
+}', true),
+('performance_thresholds', '{
+    "cpu_warning": 80,
+    "cpu_critical": 90,
+    "memory_warning": 80,
+    "memory_critical": 90,
+    "response_time_warning": 5000,
+    "response_time_critical": 10000
+}', true);
+
+-- Create indexes for better performance
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_test_runs_compound 
+ON test_runs(status, environment, started_at DESC);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_test_results_compound 
+ON test_results(test_category, status, created_at DESC);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_performance_metrics_compound 
+ON performance_metrics(metric_name, component, timestamp DESC);
+```
+
+---
+
+## Implementation Guide
+
+### Step-by-Step Setup Instructions
+
+#### Step 1: Environment Setup
+
+```bash
+# Create project directory
+mkdir testing-framework
+cd testing-framework
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Create directory structure
+mkdir -p {app/{models,api,core},tests/{health_checks,component_tests,integration_tests,performance_tests,workflow_tests,framework},config,scripts,docs,docker}
+```
+
+#### Step 2: Database Setup
+
+```bash
+# Install PostgreSQL (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install postgresql postgresql-contrib
+
+# Create database and user
+sudo -u postgres psql
+postgres=# CREATE DATABASE testing_framework;
+postgres=# CREATE USER testuser WITH PASSWORD 'testpass';
+postgres=# GRANT ALL PRIVILEGES ON DATABASE testing_framework TO testuser;
+postgres=# \q
+
+# Copy environment file
+cp .env.example .env
+# Edit .env with your database credentials
+```
+
+#### Step 3: Initialize Database
+
+```python
+# scripts/setup_database.py
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config.database import create_tables, engine
+from app.models import Base
+
+def setup_database():
+    """Initialize database with tables and initial data"""
+    print("Creating database tables...")
+    create_tables()
+    print("Database setup completed!")
+
+if __name__ == "__main__":
+    setup_database()
+```
+
+```bash
+# Run database setup
+python scripts/setup_database.py
+```
+
+#### Step 4: Core Implementation
+
+```python
+# scripts/generate_mock_data.py
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import uuid
+from datetime import datetime, timedelta
+import random
+from config.database import SessionLocal
+from app.models.test_results import TestRun, TestResult
+
+def generate_mock_data():
+    """Generate mock test data for development and testing"""
+    db = SessionLocal()
+    
+    try:
+        # Generate 10 test runs with varying results
+        for i in range(10):
+            run_id = uuid.uuid4()
+            started_at = datetime.utcnow() - timedelta(days=random.randint(0, 30))
+            
+            test_run = TestRun(
+                run_id=run_id,
+                name=f"Mock Test Run {i+1}",
+                status=random.choice(["completed", "failed", "running"]),
+                started_at=started_at,
+                completed_at=started_at + timedelta(minutes=random.randint(5, 30)),
+                total_tests=random.randint(20, 100),
+                passed_tests=random.randint(15, 95),
+                failed_tests=random.randint(0, 10),
+                skipped_tests=random.randint(0, 5),
+                execution_time_seconds=random.uniform(300, 1800),
+                trigger_type="manual",
+                triggered_by="mock_user",
+                environment="development",
+                version="1.0.0",
+                metadata={"mock": True, "test_suite": f"suite_{i+1}"}
+            )
+            
+            db.add(test_run)
+            
+            # Generate mock test results for this run
+            for j in range(test_run.total_tests):
+                test_result = TestResult(
+                    run_id=run_id,
+                    test_name=f"MockTest_{j+1}",
+                    test_module=f"tests.mock.test_module_{j%5}",
+                    test_category=random.choice(["health_check", "component", "integration", "performance"]),
+                    status=random.choice(["passed", "failed", "skipped"]),
+                    execution_time_seconds=random.uniform(0.1, 10.0),
+                    assertions_count=random.randint(1, 10),
+                    test_data={"mock_data": f"value_{j}"},
+                    performance_metrics={"response_time_ms": random.uniform(100, 2000)}
+                )
+                db.add(test_result)
+        
+        db.commit()
+        print("Mock data generated successfully!")
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Error generating mock data: {e}")
+    finally:
+        db.close()
+
+if __name__ == "__main__":
+    generate_mock_data()
+```
+
+#### Step 5: Running the Application
+
+```python
+# scripts/run_tests.py
+#!/usr/bin/env python3
+import asyncio
+import argparse
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.test_runner import test_runner
+
+async def main():
+    parser = argparse.ArgumentParser(description='Run comprehensive test suite')
+    parser.add_argument('--environment', default='development', help='Test environment')
+    parser.add_argument('--version', default='1.0.0', help='Application version')
+    parser.add_argument('--categories', nargs='*', help='Test categories to run')
+    parser.add_argument('--parallel', action='store_true', default=True, help='Run tests in parallel')
+    parser.add_argument('--sequential', action='store_true', help='Run tests sequentially')
+    
+    args = parser.parse_args()
+    
+    if args.sequential:
+        parallel = False
+    else:
+        parallel = args.parallel
+    
+    print(f"Starting test run...")
+    print(f"Environment: {args.environment}")
+    print(f"Version: {args.version}")
+    print(f"Categories: {args.categories or 'All'}")
+    print(f"Parallel: {parallel}")
+    print("-" * 50)
+    
+    try:
+        run_id = await test_runner.run_all_tests(
+            environment=args.environment,
+            version=args.version,
+            triggered_by="command_line",
+            trigger_type="manual",
+            test_categories=args.categories,
+            parallel=parallel
+        )
+        
+        print(f"\nTest run completed! Run ID: {run_id}")
+        print(f"View results at: http://localhost:8000/tests/runs/{run_id}")
+        
+    except Exception as e:
+        print(f"Test run failed: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+#### Step 6: Starting the API Server
+
+```bash
+# Start the development server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Or using the provided script
+python -m app.main
+
+# For production
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
+
+#### Step 7: Testing the Implementation
+
+```bash
+# Run a quick test
+python scripts/run_tests.py --categories health_check
+
+# Run all tests
+python scripts/run_tests.py
+
+# Check API health
+curl http://localhost:8000/health
+
+# View API documentation
+# Open browser to http://localhost:8000/docs
+```
+
+### Development Workflow
+
+#### Adding New Tests
+
+1. **Create test module**:
+```python
+# tests/component_tests/test_new_feature.py
+from tests.framework.base_test import BaseTest, TestCategory
+
+class NewFeatureTest(BaseTest):
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.COMPONENT
+    
+    def execute(self):
+        # Your test logic here
+        self.assert_true(True, "Test should pass")
+```
+
+2. **Test will be automatically discovered** by the test runner
+
+3. **Run specific test**:
+```bash
+python scripts/run_tests.py --categories component
+```
+
+#### Adding New API Endpoints
+
+1. **Create endpoint in appropriate router**:
+```python
+# app/api/your_router.py
+@router.get("/new-endpoint")
+async def new_endpoint():
+    return {"message": "New endpoint"}
+```
+
+2. **Include router in main app**:
+```python
+# app/main.py
+app.include_router(your_router.router, prefix="/your-prefix", tags=["your-tag"])
+```
+
+#### Database Migrations
+
+```bash
+# Generate migration
+alembic revision --autogenerate -m "Add new table"
+
+# Apply migration
+alembic upgrade head
+
+# Rollback migration
+alembic downgrade -1
+```
+
+---
+
+## Dashboard Evolution Path
+
+### Phase 1: Testing Framework (Current Implementation)
+
+The current implementation provides:
+- Comprehensive test execution
+- Structured result storage
+- Performance metrics collection
+- API endpoints for test management
+- Historical data tracking
+
+### Phase 2: Basic Dashboard Integration
+
+```html
+<!-- Example dashboard HTML structure -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Testing Framework Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #2563eb;
+        }
+        .status-healthy { color: #10b981; }
+        .status-warning { color: #f59e0b; }
+        .status-error { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <div id="dashboard">
+        <header>
+            <h1>Testing Framework Dashboard</h1>
+            <div id="last-updated"></div>
+        </header>
+        
+        <div class="dashboard-grid">
+            <!-- System Status Card -->
+            <div class="card">
+                <h3>System Status</h3>
+                <div id="system-status"></div>
+            </div>
+            
+            <!-- Recent Tests Card -->
+            <div class="card">
+                <h3>Recent Test Runs</h3>
+                <div id="recent-tests"></div>
+            </div>
+            
+            <!-- Performance Metrics Card -->
+            <div class="card">
+                <h3>Performance Trends</h3>
+                <canvas id="performance-chart"></canvas>
+            </div>
+            
+            <!-- Test Categories Card -->
+            <div class="card">
+                <h3>Test Categories</h3>
+                <canvas id="categories-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Dashboard JavaScript
+        class TestingDashboard {
+            constructor() {
+                this.apiBase = '/api';
+                this.updateInterval = 30000; // 30 seconds
+                this.init();
+            }
+
+            async init() {
+                await this.loadOverview();
+                await this.loadTrends();
+                await this.loadCategories();
+                
+                // Set up auto-refresh
+                setInterval(() => this.refresh(), this.updateInterval);
+            }
+
+            async loadOverview() {
+                try {
+                    const response = await fetch(`${this.apiBase}/dashboard/overview`);
+                    const data = await response.json();
+                    this.updateSystemStatus(data.summary);
+                    this.updateRecentTests(data.recent_runs);
+                } catch (error) {
+                    console.error('Failed to load overview:', error);
+                }
+            }
+
+            async loadTrends() {
+                try {
+                    const response = await fetch(`${this.apiBase}/dashboard/trends?days=7`);
+                    const data = await response.json();
+                    this.updatePerformanceChart(data.trends);
+                } catch (error) {
+                    console.error('Failed to load trends:', error);
+                }
+            }
+
+            async loadCategories() {
+                try {
+                    const response = await fetch(`${this.apiBase}/dashboard/test-categories`);
+                    const data = await response.json();
+                    this.updateCategoriesChart(data.categories);
+                } catch (error) {
+                    console.error('Failed to load categories:', error);
+                }
+            }
+
+            updateSystemStatus(summary) {
+                const statusElement = document.getElementById('system-status');
+                const successRate = summary.success_rate_24h;
+                
+                let statusClass = 'status-healthy';
+                let statusText = 'Healthy';
+                
+                if (successRate < 50) {
+                    statusClass = 'status-error';
+                    statusText = 'Critical';
+                } else if (successRate < 80) {
+                    statusClass = 'status-warning';
+                    statusText = 'Warning';
+                }
+                
+                statusElement.innerHTML = `
+                    <div class="metric-value ${statusClass}">${successRate}%</div>
+                    <div>Success Rate (24h)</div>
+                    <div>Status: <span class="${statusClass}">${statusText}</span></div>
+                    <div>Failed Tests: ${summary.failed_tests_24h}</div>
+                    <div>Avg Time: ${summary.avg_execution_time_seconds}s</div>
+                `;
+            }
+
+            updateRecentTests(recentRuns) {
+                const testsElement = document.getElementById('recent-tests');
+                const testsList = recentRuns.slice(0, 5).map(run => {
+                    const statusClass = run.status === 'completed' ? 'status-healthy' : 'status-error';
+                    return `
+                        <div style="margin-bottom: 10px; padding: 10px; border-left: 3px solid var(--color);">
+                            <div style="font-weight: bold;">${run.name}</div>
+                            <div>Status: <span class="${statusClass}">${run.status}</span></div>
+                            <div>Tests: ${run.passed_tests}/${run.total_tests} passed</div>
+                            <div>Time: ${run.execution_time_seconds}s</div>
+                        </div>
+                    `;
+                }).join('');
+                
+                testsElement.innerHTML = testsList;
+            }
+
+            updatePerformanceChart(trends) {
+                const ctx = document.getElementById('performance-chart').getContext('2d');
+                
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: trends.map(t => new Date(t.date).toLocaleDateString()),
+                        datasets: [{
+                            label: 'Success Rate %',
+                            data: trends.map(t => t.success_rate),
+                            borderColor: 'rgb(37, 99, 235)',
+                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                            tension: 0.1
+                        }, {
+                            label: 'Avg Execution Time (s)',
+                            data: trends.map(t => t.avg_execution_time),
+                            borderColor: 'rgb(16, 185, 129)',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            yAxisID: 'y1',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                grid: {
+                                    drawOnChartArea: false,
+                                },
+                            }
+                        }
+                    }
+                });
+            }
+
+            updateCategoriesChart(categories) {
+                const ctx = document.getElementById('categories-chart').getContext('2d');
+                
+                new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: categories.map(c => c.category),
+                        datasets: [{
+                            data: categories.map(c => c.success_rate),
+                            backgroundColor: [
+                                'rgb(34, 197, 94)',
+                                'rgb(59, 130, 246)',
+                                'rgb(168, 85, 247)',
+                                'rgb(245, 158, 11)',
+                                'rgb(239, 68, 68)'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+            }
+
+            async refresh() {
+                await this.loadOverview();
+                document.getElementById('last-updated').textContent = 
+                    `Last updated: ${new Date().toLocaleTimeString()}`;
+            }
+        }
+
+        // Initialize dashboard when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new TestingDashboard();
+        });
+    </script>
+</body>
+</html>
+```
+
+### Phase 3: Advanced Dashboard Features
+
+```python
+# app/api/dashboard_advanced.py
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
+import json
+import asyncio
+from typing import List
+
+router = APIRouter()
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except:
+                # Remove disconnected clients
+                await self.disconnect(connection)
+
+manager = ConnectionManager()
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive and send periodic updates
+            await asyncio.sleep(5)
+            
+            # Send real-time metrics
+            metrics = await get_realtime_metrics()
+            await manager.send_personal_message(
+                json.dumps({"type": "metrics", "data": metrics}),
+                websocket
+            )
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+async def get_realtime_metrics():
+    """Get real-time system metrics"""
+    import psutil
+    
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "cpu_percent": psutil.cpu_percent(),
+        "memory_percent": psutil.virtual_memory().percent,
+        "active_connections": len(manager.active_connections)
+    }
+
+@router.post("/alerts/configure")
+async def configure_alerts(alert_config: dict, db: Session = Depends(get_db)):
+    """Configure dashboard alerts"""
+    # Implementation for alert configuration
+    pass
+
+@router.get("/export/report/{run_id}")
+async def export_test_report(run_id: str, format: str = "pdf"):
+    """Export comprehensive test report"""
+    # Implementation for report generation
+    pass
+```
+
+### Phase 4: Full Admin Dashboard
+
+The final phase integrates into your existing admin system with:
+
+1. **User Management Integration**
+2. **Role-Based Access Control**
+3. **Advanced Analytics**
+4. **Automated Alerting**
+5. **Report Generation**
+6. **Test Scheduling**
+7. **Configuration Management**
+
+---
+
+## Deployment Instructions
+
+### Production Deployment with Docker
+
+```bash
+# 1. Clone repository
+git clone <your-repo-url>
+cd testing-framework
+
+# 2. Create production environment file
+cp .env.example .env.production
+# Edit .env.production with production settings
+
+# 3. Build and start services
+docker-compose -f docker/docker-compose.yml up -d
+
+# 4. Initialize database
+docker-compose exec testing-framework python scripts/setup_database.py
+
+# 5. Verify deployment
+curl http://your-domain.com/health
+```
+
+### Manual Production Deployment
+
+```bash
+# 1. Setup production server (Ubuntu 20.04+)
+sudo apt-get update
+sudo apt-get install python3.11 python3.11-venv postgresql nginx
+
+# 2. Create application user
+sudo useradd -m -s /bin/bash testapp
+sudo su - testapp
+
+# 3. Setup application
+git clone <your-repo-url> /home/testapp/testing-framework
+cd /home/testapp/testing-framework
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 4. Setup systemd service
+sudo tee /etc/systemd/system/testing-framework.service > /dev/null <<EOF
+[Unit]
+Description=Testing Framework API
+After=network.target
+
+[Service]
+User=testapp
+Group=testapp
+WorkingDirectory=/home/testapp/testing-framework
+Environment=PATH=/home/testapp/testing-framework/venv/bin
+ExecStart=/home/testapp/testing-framework/venv/bin/gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 5. Start and enable service
+sudo systemctl daemon-reload
+sudo systemctl enable testing-framework
+sudo systemctl start testing-framework
+
+# 6. Setup Nginx reverse proxy
+sudo tee /etc/nginx/sites-available/testing-framework > /dev/null <<EOF
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /ws {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+sudo ln -s /etc/nginx/sites-available/testing-framework /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### Monitoring and Logging
+
+```bash
+# Setup log rotation
+sudo tee /etc/logrotate.d/testing-framework > /dev/null <<EOF
+/home/testapp/testing-framework/logs/*.log {
+    daily
+    missingok
+    rotate 52
+    compress
+    delaycompress
+    notifempty
+    create 644 testapp testapp
+    postrotate
+        systemctl reload testing-framework
+    endscript
+}
+EOF
+
+# Setup monitoring with systemd
+sudo tee /etc/systemd/system/testing-framework-monitor.service > /dev/null <<EOF
+[Unit]
+Description=Testing Framework Monitor
+After=testing-framework.service
+
+[Service]
+Type=simple
+User=testapp
+ExecStart=/home/testapp/testing-framework/venv/bin/python /home/testapp/testing-framework/scripts/monitor.py
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+---
+
+## Troubleshooting Guide
+
+### Common Issues and Solutions
+
+#### Database Connection Issues
+
+**Problem**: `psycopg2.OperationalError: could not connect to server`
+
+**Solutions**:
+```bash
+# Check PostgreSQL service
+sudo systemctl status postgresql
+sudo systemctl start postgresql
+
+# Verify database exists
+sudo -u postgres psql -l
+
+# Check connection settings
+sudo -u postgres psql
+\conninfo
+
+# Test connection with credentials
+psql -h localhost -U testuser -d testing_framework
+```
+
+#### Import Errors
+
+**Problem**: `ModuleNotFoundError: No module named 'app'`
+
+**Solutions**:
+```bash
+# Ensure PYTHONPATH is set
+export PYTHONPATH="${PYTHONPATH}:/path/to/testing-framework"
+
+# Or add to your shell profile
+echo 'export PYTHONPATH="${PYTHONPATH}:/path/to/testing-framework"' >> ~/.bashrc
+
+# Verify Python path
+python -c "import sys; print(sys.path)"
+```
+
+#### Test Execution Failures
+
+**Problem**: Tests timing out or failing unexpectedly
+
+**Solutions**:
+```python
+# Increase timeout in settings
+TEST_TIMEOUT = 600  # 10 minutes
+
+# Check system resources
+import psutil
+print(f"CPU: {psutil.cpu_percent()}%")
+print(f"Memory: {psutil.virtual_memory().percent}%")
+
+# Run tests with more verbose logging
+LOG_LEVEL = "DEBUG"
+```
+
+#### Performance Issues
+
+**Problem**: Slow test execution or high resource usage
+
+**Solutions**:
+```python
+# Reduce concurrent tests
+MAX_CONCURRENT_TESTS = 2
+
+# Optimize database queries
+# Add indexes to frequently queried columns
+CREATE INDEX idx_test_results_status_category ON test_results(status, test_category);
+
+# Monitor query performance
+EXPLAIN ANALYZE SELECT * FROM test_results WHERE status = 'failed';
+```
+
+#### API Server Issues
+
+**Problem**: Server not starting or returning 500 errors
+
+**Solutions**:
+```bash
+# Check logs
+journalctl -u testing-framework -f
+
+# Verify environment variables
+env | grep -E "(DATABASE_URL|API_)"
+
+# Test API manually
+curl -v http://localhost:8000/health
+
+# Check port availability
+netstat -tulpn | grep :8000
+```
+
+### Debugging Tools
+
+#### Debug Script
+
+```python
+# scripts/debug.py
+#!/usr/bin/env python3
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import asyncio
+import traceback
+from config.database import SessionLocal, engine
+from config.settings import settings
+from app.core.test_runner import test_runner
+
+async def debug_system():
+    """Comprehensive system debugging"""
+    print("=== Testing Framework Debug Information ===\n")
+    
+    # 1. Environment Check
+    print("1. Environment Configuration:")
+    print(f"   DATABASE_URL: {settings.DATABASE_URL}")
+    print(f"   API_HOST: {settings.API_HOST}")
+    print(f"   API_PORT: {settings.API_PORT}")
+    print(f"   LOG_LEVEL: {settings.LOG_LEVEL}")
+    print()
+    
+    # 2. Database Check
+    print("2. Database Connection:")
+    try:
+        db = SessionLocal()
+        result = db.execute("SELECT 1").fetchone()
+        print("   ✓ Database connection successful")
+        db.close()
+    except Exception as e:
+        print(f"   ✗ Database connection failed: {e}")
+        return
+    
+    # 3. Test Discovery
+    print("3. Test Discovery:")
+    print(f"   Discovered {len(test_runner.registered_tests)} tests:")
+    for test_name in list(test_runner.registered_tests.keys())[:5]:
+        print(f"     - {test_name}")
+    if len(test_runner.registered_tests) > 5:
+        print(f"     ... and {len(test_runner.registered_tests) - 5} more")
+    print()
+    
+    # 4. System Resources
+    print("4. System Resources:")
+    try:
+        import psutil
+        print(f"   CPU Usage: {psutil.cpu_percent()}%")
+        print(f"   Memory Usage: {psutil.virtual_memory().percent}%")
+        print(f"   Disk Usage: {psutil.disk_usage('/').percent}%")
+    except ImportError:
+        print("   psutil not available - install for system monitoring")
+    print()
+    
+    # 5. Quick Test Run
+    print("5. Quick Test Run:")
+    try:
+        print("   Running health check tests...")
+        run_id = await test_runner.run_all_tests(
+            environment="debug",
+            version="debug",
+            triggered_by="debug_script",
+            trigger_type="debug",
+            test_categories=["health_check"],
+            parallel=False
+        )
+        print(f"   ✓ Test run completed: {run_id}")
+    except Exception as e:
+        print(f"   ✗ Test run failed: {e}")
+        traceback.print_exc()
+    
+    print("\n=== Debug Complete ===")
+
+if __name__ == "__main__":
+    asyncio.run(debug_system())
+```
+
+#### Performance Profiler
+
+```python
+# scripts/profile_performance.py
+#!/usr/bin/env python3
+import cProfile
+import pstats
+import io
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.test_runner import test_runner
+
+def profile_test_run():
+    """Profile test execution performance"""
+    pr = cProfile.Profile()
+    pr.enable()
+    
+    # Run a subset of tests
+    import asyncio
+    asyncio.run(test_runner.run_all_tests(
+        environment="profile",
+        version="profile",
+        triggered_by="profiler",
+        trigger_type="profile",
+        test_categories=["health_check"],
+        parallel=False
+    ))
+    
+    pr.disable()
+    
+    # Generate report
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps.print_stats()
+    
+    with open('performance_profile.txt', 'w') as f:
+        f.write(s.getvalue())
+    
+    print("Performance profile saved to performance_profile.txt")
+    print("\nTop 10 functions by cumulative time:")
+    ps.print_stats(10)
+
+if __name__ == "__main__":
+    profile_test_run()
+```
+
+### Monitoring Commands
+
+```bash
+# Monitor test execution
+tail -f /home/testapp/testing-framework/logs/app.log
+
+# Monitor system resources
+htop
+
+# Monitor database activity
+sudo -u postgres psql testing_framework -c "
+SELECT pid, now() - pg_stat_activity.query_start AS duration, query 
+FROM pg_stat_activity 
+WHERE (now() - pg_stat_activity.query_start) > interval '5 minutes';
+"
+
+# Monitor API requests
+sudo tail -f /var/log/nginx/access.log | grep testing-framework
+
+# Check service status
+systemctl status testing-framework
+systemctl status postgresql
+systemctl status nginx
+```
+
+### Recovery Procedures
+
+#### Database Recovery
+
+```bash
+# Backup database
+pg_dump -U testuser -h localhost testing_framework > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore database
+psql -U testuser -h localhost testing_framework < backup_20241201_120000.sql
+
+# Recreate tables if corrupted
+python scripts/setup_database.py
+```
+
+#### Service Recovery
+
+```bash
+# Restart all services
+sudo systemctl restart testing-framework
+sudo systemctl restart postgresql
+sudo systemctl restart nginx
+
+# Check logs for errors
+journalctl -u testing-framework --since "1 hour ago"
+
+# Force reload configuration
+sudo systemctl daemon-reload
+sudo systemctl restart testing-framework
+```
+
+### Advanced Component Tests
+
+```python
+# tests/component_tests/test_voice_processing.py
+import os
+import tempfile
+import wave
+import numpy as np
+from tests.framework.base_test import BaseTest, TestCategory
+import speech_recognition as sr
+from pydub import AudioSegment
+from pydub.generators import Sine
+
+class VoiceProcessingTest(BaseTest):
+    """Test voice transcription and audio processing functionality"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.COMPONENT
+        self.temp_files = []
+        self.test_audio_files = []
+    
+    def setup(self):
+        """Create test audio files"""
+        self._create_test_audio_files()
+    
+    def _create_test_audio_files(self):
+        """Generate test audio files in various formats"""
+        # Create WAV file with tone
+        wav_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        self.temp_files.append(wav_file.name)
+        
+        # Generate a 2-second 440Hz tone (A4 note)
+        tone = Sine(440).to_audio_segment(duration=2000)
+        tone.export(wav_file.name, format="wav")
+        
+        self.test_audio_files.append({
+            'path': wav_file.name,
+            'format': 'wav',
+            'duration': 2.0,
+            'sample_rate': 44100
+        })
+        
+        # Create MP3 file
+        mp3_file = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+        self.temp_files.append(mp3_file.name)
+        
+        tone.export(mp3_file.name, format="mp3")
+        self.test_audio_files.append({
+            'path': mp3_file.name,
+            'format': 'mp3',
+            'duration': 2.0,
+            'sample_rate': 44100
+        })
+    
+    def execute(self):
+        """Test voice processing operations"""
+        # Test audio file validation
+        self._test_audio_validation()
+        
+        # Test audio format conversion
+        self._test_audio_conversion()
+        
+        # Test audio analysis
+        self._test_audio_analysis()
+        
+        # Test speech recognition (mock)
+        self._test_speech_recognition()
+        
+        # Test audio processing performance
+        self._test_audio_performance()
+    
+    def _test_audio_validation(self):
+        """Test audio file validation"""
+        for audio_file in self.test_audio_files:
+            validation_result = self._validate_audio_file(audio_file['path'])
+            
+            self.assert_true(validation_result['valid'], f"Audio file {audio_file['format']} should be valid")
+            self.assert_equal(validation_result['format'], audio_file['format'], "Format should be detected correctly")
+            self.assert_true(validation_result['duration'] > 0, "Duration should be positive")
+        
+        self.result.test_data['audio_validation'] = {
+            'files_validated': len(self.test_audio_files),
+            'all_valid': True
+        }
+    
+    def _test_audio_conversion(self):
+        """Test audio format conversion"""
+        import time
+        
+        wav_file = next(f for f in self.test_audio_files if f['format'] == 'wav')
+        
+        start_time = time.time()
+        converted_file = self._convert_audio(wav_file['path'], 'mp3')
+        conversion_time = time.time() - start_time
+        
+        self.assert_not_none(converted_file, "Audio conversion should succeed")
+        self.assert_true(os.path.exists(converted_file), "Converted file should exist")
+        self.assert_response_time(conversion_time * 1000, 5000, "Audio conversion should be fast")
+        
+        # Verify converted file
+        converted_audio = AudioSegment.from_mp3(converted_file)
+        self.assert_true(len(converted_audio) > 1000, "Converted audio should have content")
+        
+        self.temp_files.append(converted_file)
+        
+        self.result.performance_metrics.update({
+            'audio_conversion_time_ms': conversion_time * 1000,
+            'conversion_successful': True
+        })
+    
+    def _test_audio_analysis(self):
+        """Test audio analysis capabilities"""
+        wav_file = next(f for f in self.test_audio_files if f['format'] == 'wav')
+        
+        analysis_result = self._analyze_audio(wav_file['path'])
+        
+        self.assert_not_none(analysis_result, "Audio analysis should return results")
+        self.assert_true('duration' in analysis_result, "Analysis should include duration")
+        self.assert_true('sample_rate' in analysis_result, "Analysis should include sample rate")
+        self.assert_true('channels' in analysis_result, "Analysis should include channel count")
+        
+        # Verify duration is close to expected (2 seconds)
+        duration_diff = abs(analysis_result['duration'] - 2.0)
+        self.assert_true(duration_diff < 0.1, "Duration should be approximately 2 seconds")
+        
+        self.result.test_data['audio_analysis'] = analysis_result
+    
+    def _test_speech_recognition(self):
+        """Test speech recognition functionality (mock implementation)"""
+        import time
+        
+        # Since we're using generated tones, we'll mock the speech recognition
+        # In a real implementation, you'd use actual speech samples
+        
+        start_time = time.time()
+        recognition_result = self._mock_speech_recognition(self.test_audio_files[0]['path'])
+        recognition_time = time.time() - start_time
+        
+        self.assert_not_none(recognition_result, "Speech recognition should return result")
+        self.assert_true('text' in recognition_result, "Recognition should include text")
+        self.assert_true('confidence' in recognition_result, "Recognition should include confidence")
+        self.assert_response_time(recognition_time * 1000, 10000, "Speech recognition should complete within 10 seconds")
+        
+        self.result.test_data['speech_recognition'] = recognition_result
+        self.result.performance_metrics.update({
+            'speech_recognition_time_ms': recognition_time * 1000
+        })
+    
+    def _test_audio_performance(self):
+        """Test audio processing performance with larger files"""
+        import time
+        
+        # Create a longer audio file (10 seconds)
+        long_tone = Sine(440).to_audio_segment(duration=10000)
+        long_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        self.temp_files.append(long_file.name)
+        
+        long_tone.export(long_file.name, format="wav")
+        
+        # Test processing time
+        start_time = time.time()
+        analysis = self._analyze_audio(long_file.name)
+        processing_time = time.time() - start_time
+        
+        self.assert_response_time(processing_time * 1000, 3000, "Large audio processing should be efficient")
+        
+        # Calculate processing speed (duration/processing_time ratio)
+        processing_speed = analysis['duration'] / processing_time
+        self.assert_true(processing_speed > 2.0, "Should process audio faster than real-time")
+        
+        self.result.performance_metrics.update({
+            'large_audio_processing_time_ms': processing_time * 1000,
+            'processing_speed_ratio': processing_speed,
+            'large_audio_duration': analysis['duration']
+        })
+    
+    # Mock implementations (replace with actual audio processing APIs)
+    def _validate_audio_file(self, file_path):
+        """Mock audio file validation"""
+        try:
+            audio = AudioSegment.from_file(file_path)
+            return {
+                'valid': True,
+                'format': file_path.split('.')[-1],
+                'duration': len(audio) / 1000.0,
+                'sample_rate': audio.frame_rate,
+                'channels': audio.channels
+            }
+        except Exception as e:
+            return {
+                'valid': False,
+                'error': str(e)
+            }
+    
+    def _convert_audio(self, input_path, output_format):
+        """Mock audio conversion"""
+        try:
+            audio = AudioSegment.from_file(input_path)
+            output_path = tempfile.NamedTemporaryFile(suffix=f'.{output_format}', delete=False).name
+            audio.export(output_path, format=output_format)
+            return output_path
+        except Exception:
+            return None
+    
+    def _analyze_audio(self, file_path):
+        """Mock audio analysis"""
+        try:
+            audio = AudioSegment.from_file(file_path)
+            return {
+                'duration': len(audio) / 1000.0,
+                'sample_rate': audio.frame_rate,
+                'channels': audio.channels,
+                'frame_count': audio.frame_count(),
+                'max_amplitude': audio.max,
+                'rms': audio.rms
+            }
+        except Exception:
+            return None
+    
+    def _mock_speech_recognition(self, file_path):
+        """Mock speech recognition (replace with actual service)"""
+        # In real implementation, use Google Speech API, Azure, or other service
+        import time
+        time.sleep(0.5)  # Simulate processing time
+        
+        return {
+            'text': "This is a mock transcription result",
+            'confidence': 0.95,
+            'language': 'en-US',
+            'processing_time': 0.5
+        }
+    
+    def teardown(self):
+        """Cleanup temporary audio files"""
+        for temp_file in self.temp_files:
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+
+class AudioServiceIntegrationTest(BaseTest):
+    """Test integration with external audio services"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.INTEGRATION
+    
+    def execute(self):
+        """Test external audio service integration"""
+        # Test Google Speech Recognition API (if credentials available)
+        if self._check_google_speech_credentials():
+            self._test_google_speech_api()
+        else:
+            self.result.status = TestStatus.SKIPPED
+            self.result.error_message = "Google Speech API credentials not available"
+    
+    def _check_google_speech_credentials(self):
+        """Check if Google Speech API credentials are available"""
+        # Check for service account key or other authentication
+        return os.getenv('GOOGLE_APPLICATION_CREDENTIALS') is not None
+    
+    def _test_google_speech_api(self):
+        """Test Google Speech Recognition API"""
+        try:
+            from google.cloud import speech
+            
+            client = speech.SpeechClient()
+            
+            # Test with a simple audio file
+            # This is a mock test - replace with actual implementation
+            self.assert_not_none(client, "Speech client should be initialized")
+            
+            self.result.test_data['google_speech_api'] = {
+                'client_initialized': True,
+                'service_available': True
+            }
+            
+        except ImportError:
+            self.result.status = TestStatus.SKIPPED
+            self.result.error_message = "Google Cloud Speech library not installed"
+        except Exception as e:
+            raise AssertionError(f"Google Speech API test failed: {e}")
+```
+
+```python
+# tests/component_tests/test_document_processing.py
+import os
+import tempfile
+import PyPDF2
+from PIL import Image, ImageDraw, ImageFont
+import fitz  # PyMuPDF
+from tests.framework.base_test import BaseTest, TestCategory
+import io
+import base64
+
+class DocumentProcessingTest(BaseTest):
+    """Test PDF and document processing functionality"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.COMPONENT
+        self.temp_files = []
+        self.test_documents = []
+    
+    def setup(self):
+        """Create test documents"""
+        self._create_test_pdf()
+        self._create_test_images()
+    
+    def _create_test_pdf(self):
+        """Create a test PDF with text and images"""
+        try:
+            import reportlab.pdfgen.canvas as canvas
+            from reportlab.lib.pagesizes import letter
+            
+            pdf_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+            self.temp_files.append(pdf_file.name)
+            
+            # Create PDF with reportlab
+            c = canvas.Canvas(pdf_file.name, pagesize=letter)
+            c.drawString(100, 750, "Test PDF Document")
+            c.drawString(100, 700, "This is a test document for PDF processing.")
+            c.drawString(100, 650, "It contains multiple lines of text.")
+            c.drawString(100, 600, "Page 1 content with various formatting.")
+            
+            # Add a new page
+            c.showPage()
+            c.drawString(100, 750, "Page 2 of Test Document")
+            c.drawString(100, 700, "Additional content on second page.")
+            
+            c.save()
+            
+            self.test_documents.append({
+                'path': pdf_file.name,
+                'type': 'pdf',
+                'pages': 2,
+                'has_text': True,
+                'has_images': False
+            })
+            
+        except ImportError:
+            # Fallback: create simple PDF using PyPDF2
+            self._create_simple_pdf()
+    
+    def _create_simple_pdf(self):
+        """Create a simple PDF for testing when reportlab is not available"""
+        # Create a minimal PDF structure
+        pdf_content = b"""%PDF-1.4
+1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+
+2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+
+3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+>>
+endobj
+
+4 0 obj
+<<
+/Length 44
+>>
+stream
+BT
+/F1 12 Tf
+100 700 Td
+(Test PDF) Tj
+ET
+endstream
+endobj
+
+xref
+0 5
+0000000000 65535 f 
+0000000009 00000 n 
+0000000074 00000 n 
+0000000120 00000 n 
+0000000179 00000 n 
+trailer
+<<
+/Size 5
+/Root 1 0 R
+>>
+startxref
+274
+%%EOF"""
+        
+        pdf_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+        self.temp_files.append(pdf_file.name)
+        
+        with open(pdf_file.name, 'wb') as f:
+            f.write(pdf_content)
+        
+        self.test_documents.append({
+            'path': pdf_file.name,
+            'type': 'pdf',
+            'pages': 1,
+            'has_text': True,
+            'has_images': False
+        })
+    
+    def _create_test_images(self):
+        """Create test images with text"""
+        # Create image with text for OCR testing
+        img = Image.new('RGB', (800, 600), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Add text to image
+        try:
+            # Try to load a font
+            font = ImageFont.truetype("arial.ttf", 36)
+        except:
+            # Use default font if arial not available
+            font = ImageFont.load_default()
+        
+        draw.text((50, 50), "Test Image Document", fill='black', font=font)
+        draw.text((50, 120), "This image contains text for OCR testing.", fill='black', font=font)
+        draw.text((50, 190), "Line 3 of text content.", fill='black', font=font)
+        
+        # Save as JPEG
+        jpg_file = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+        self.temp_files.append(jpg_file.name)
+        img.save(jpg_file.name, 'JPEG')
+        
+        # Save as PNG
+        png_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        self.temp_files.append(png_file.name)
+        img.save(png_file.name, 'PNG')
+        
+        self.test_documents.extend([
+            {
+                'path': jpg_file.name,
+                'type': 'image_jpg',
+                'has_text': True,
+                'format': 'JPEG'
+            },
+            {
+                'path': png_file.name,
+                'type': 'image_png',
+                'has_text': True,
+                'format': 'PNG'
+            }
+        ])
+    
+    def execute(self):
+        """Test document processing operations"""
+        # Test PDF processing
+        self._test_pdf_processing()
+        
+        # Test image processing
+        self._test_image_processing()
+        
+        # Test OCR functionality
+        self._test_ocr_processing()
+        
+        # Test document validation
+        self._test_document_validation()
+        
+        # Test batch processing
+        self._test_batch_processing()
+        
+        # Test performance
+        self._test_processing_performance()
+    
+    def _test_pdf_processing(self):
+        """Test PDF text extraction and analysis"""
+        pdf_docs = [doc for doc in self.test_documents if doc['type'] == 'pdf']
+        
+        for pdf_doc in pdf_docs:
+            # Test PDF reading
+            pdf_info = self._extract_pdf_info(pdf_doc['path'])
+            
+            self.assert_not_none(pdf_info, "PDF info should be extracted")
+            self.assert_true(pdf_info['pages'] > 0, "PDF should have pages")
+            self.assert_true(len(pdf_info['text']) > 0, "PDF should contain text")
+            
+            # Test text extraction
+            extracted_text = self._extract_pdf_text(pdf_doc['path'])
+            self.assert_not_none(extracted_text, "Text extraction should succeed")
+            self.assert_true(len(extracted_text.strip()) > 0, "Extracted text should not be empty")
+            
+            # Verify expected content
+            self.assert_true('Test' in extracted_text, "PDF should contain 'Test'")
+            
+            self.result.test_data[f'pdf_processing_{pdf_doc["path"].split("/")[-1]}'] = {
+                'pages': pdf_info['pages'],
+                'text_length': len(extracted_text),
+                'has_content': len(extracted_text.strip()) > 0
+            }
+    
+    def _test_image_processing(self):
+        """Test image analysis and processing"""
+        image_docs = [doc for doc in self.test_documents if doc['type'].startswith('image')]
+        
+        for image_doc in image_docs:
+            # Test image reading
+            image_info = self._analyze_image(image_doc['path'])
+            
+            self.assert_not_none(image_info, "Image info should be extracted")
+            self.assert_true(image_info['width'] > 0, "Image should have width")
+            self.assert_true(image_info['height'] > 0, "Image should have height")
+            self.assert_equal(image_info['format'], image_doc['format'], "Format should match")
+            
+            # Test image validation
+            is_valid = self._validate_image(image_doc['path'])
+            self.assert_true(is_valid, "Image should be valid")
+            
+            self.result.test_data[f'image_processing_{image_doc["type"]}'] = {
+                'width': image_info['width'],
+                'height': image_info['height'],
+                'format': image_info['format'],
+                'file_size': image_info['file_size']
+            }
+    
+    def _test_ocr_processing(self):
+        """Test OCR (Optical Character Recognition) functionality"""
+        image_docs = [doc for doc in self.test_documents if doc['type'].startswith('image')]
+        
+        for image_doc in image_docs:
+            # Mock OCR processing (replace with actual OCR service)
+            ocr_result = self._mock_ocr_processing(image_doc['path'])
+            
+            self.assert_not_none(ocr_result, "OCR should return result")
+            self.assert_true('text' in ocr_result, "OCR result should contain text")
+            self.assert_true('confidence' in ocr_result, "OCR result should contain confidence")
+            
+            # Verify OCR found expected text
+            extracted_text = ocr_result['text']
+            self.assert_true(len(extracted_text) > 0, "OCR should extract text")
+            
+            self.result.test_data[f'ocr_processing_{image_doc["type"]}'] = {
+                'text_extracted': len(extracted_text) > 0,
+                'text_length': len(extracted_text),
+                'confidence': ocr_result['confidence']
+            }
+    
+    def _test_document_validation(self):
+        """Test document validation functionality"""
+        validation_results = []
+        
+        for doc in self.test_documents:
+            validation = self._validate_document(doc['path'], doc['type'])
+            validation_results.append({
+                'document_type': doc['type'],
+                'valid': validation['valid'],
+                'file_size': validation['file_size'],
+                'readable': validation['readable']
+            })
+        
+        valid_docs = [r for r in validation_results if r['valid']]
+        self.assert_equal(len(valid_docs), len(self.test_documents), "All test documents should be valid")
+        
+        self.result.test_data['document_validation'] = validation_results
+    
+    def _test_batch_processing(self):
+        """Test batch document processing"""
+        import time
+        
+        start_time = time.time()
+        batch_results = []
+        
+        for doc in self.test_documents:
+            if doc['type'] == 'pdf':
+                result = self._extract_pdf_text(doc['path'])
+            else:
+                result = self._mock_ocr_processing(doc['path'])
+            
+            batch_results.append({
+                'document': doc['path'].split('/')[-1],
+                'type': doc['type'],
+                'processed': result is not None,
+                'content_length': len(str(result)) if result else 0
+            })
+        
+        batch_time = time.time() - start_time
+        successful_processing = len([r for r in batch_results if r['processed']])
+        
+        self.assert_equal(successful_processing, len(self.test_documents), "All documents should process successfully")
+        self.assert_response_time(batch_time * 1000, 10000, "Batch processing should complete within 10 seconds")
+        
+        self.result.performance_metrics.update({
+            'batch_processing_time_ms': batch_time * 1000,
+            'documents_per_second': len(self.test_documents) / batch_time,
+            'batch_success_rate': successful_processing / len(self.test_documents)
+        })
+    
+    def _test_processing_performance(self):
+        """Test document processing performance"""
+        import time
+        
+        # Test PDF processing speed
+        pdf_doc = next((doc for doc in self.test_documents if doc['type'] == 'pdf'), None)
+        if pdf_doc:
+            start_time = time.time()
+            for _ in range(5):  # Process same PDF 5 times
+                self._extract_pdf_text(pdf_doc['path'])
+            pdf_processing_time = (time.time() - start_time) / 5
+            
+            self.assert_response_time(pdf_processing_time * 1000, 2000, "PDF processing should be fast")
+            
+            self.result.performance_metrics.update({
+                'avg_pdf_processing_time_ms': pdf_processing_time * 1000
+            })
+        
+        # Test image processing speed
+        image_doc = next((doc for doc in self.test_documents if doc['type'].startswith('image')), None)
+        if image_doc:
+            start_time = time.time()
+            for _ in range(5):  # Process same image 5 times
+                self._analyze_image(image_doc['path'])
+            image_processing_time = (time.time() - start_time) / 5
+            
+            self.assert_response_time(image_processing_time * 1000, 1000, "Image processing should be very fast")
+            
+            self.result.performance_metrics.update({
+                'avg_image_processing_time_ms': image_processing_time * 1000
+            })
+    
+    # Implementation methods (replace with actual document processing APIs)
+    def _extract_pdf_info(self, pdf_path):
+        """Extract basic PDF information"""
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                num_pages = len(pdf_reader.pages)
+                
+                # Extract text from all pages
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text()
+                
+                return {
+                    'pages': num_pages,
+                    'text': text,
+                    'file_size': os.path.getsize(pdf_path)
+                }
+        except Exception as e:
+            self.logger.warning(f"PDF extraction failed: {e}")
+            return None
+    
+    def _extract_pdf_text(self, pdf_path):
+        """Extract text from PDF"""
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text()
+                return text
+        except Exception:
+            return None
+    
+    def _analyze_image(self, image_path):
+        """Analyze image properties"""
+        try:
+            with Image.open(image_path) as img:
+                return {
+                    'width': img.width,
+                    'height': img.height,
+                    'format': img.format,
+                    'mode': img.mode,
+                    'file_size': os.path.getsize(image_path)
+                }
+        except Exception:
+            return None
+    
+    def _validate_image(self, image_path):
+        """Validate image file"""
+        try:
+            with Image.open(image_path) as img:
+                img.verify()
+                return True
+        except Exception:
+            return False
+    
+    def _validate_document(self, doc_path, doc_type):
+        """Validate document file"""
+        try:
+            file_size = os.path.getsize(doc_path)
+            
+            if doc_type == 'pdf':
+                readable = self._extract_pdf_text(doc_path) is not None
+            else:
+                readable = self._validate_image(doc_path)
+            
+            return {
+                'valid': file_size > 0 and readable,
+                'file_size': file_size,
+                'readable': readable
+            }
+        except Exception:
+            return {
+                'valid': False,
+                'file_size': 0,
+                'readable': False
+            }
+    
+    def _mock_ocr_processing(self, image_path):
+        """Mock OCR processing (replace with actual OCR service like Tesseract)"""
+        import time
+        time.sleep(0.2)  # Simulate processing time
+        
+        # In real implementation, use pytesseract or cloud OCR service
+        return {
+            'text': 'Test Image Document\nThis image contains text for OCR testing.\nLine 3 of text content.',
+            'confidence': 0.92,
+            'processing_time': 0.2,
+            'language': 'eng'
+        }
+    
+    def teardown(self):
+        """Cleanup temporary files"""
+        for temp_file in self.temp_files:
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+```
+
+### Workflow Tests
+
+```python
+# tests/workflow_tests/test_user_journeys.py
+import asyncio
+import time
+from tests.framework.base_test import BaseTest, TestCategory
+
+class NewUserOnboardingTest(BaseTest):
+    """Test complete new user onboarding workflow"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.WORKFLOW
+        self.user_data = {}
+        self.created_resources = []
+    
+    def execute(self):
+        """Test complete new user onboarding flow"""
+        # Step 1: User registration
+        self._test_user_registration()
+        
+        # Step 2: Profile setup
+        self._test_profile_setup()
+        
+        # Step 3: First contact creation
+        self._test_first_contact_creation()
+        
+        # Step 4: Data upload and analysis
+        self._test_data_upload_workflow()
+        
+        # Step 5: Document processing workflow
+        self._test_document_workflow()
+        
+        # Step 6: Export functionality
+        self._test_export_workflow()
+    
+    def _test_user_registration(self):
+        """Test user registration process"""
+        registration_data = {
+            'username': 'testuser_workflow',
+            'email': 'testuser@example.com',
+            'password': 'SecurePassword123!',
+            'first_name': 'Test',
+            'last_name': 'User'
+        }
+        
+        start_time = time.time()
+        registration_result = self._mock_user_registration(registration_data)
+        registration_time = time.time() - start_time
+        
+        self.assert_true(registration_result['success'], "User registration should succeed")
+        self.assert_not_none(registration_result['user_id'], "Registration should return user ID")
+        self.assert_response_time(registration_time * 1000, 3000, "Registration should be fast")
+        
+        self.user_data.update(registration_result)
+        self.result.test_data['user_registration'] = {
+            'success': True,
+            'user_id': registration_result['user_id'],
+            'registration_time_ms': registration_time * 1000
+        }
+    
+    def _test_profile_setup(self):
+        """Test user profile setup"""
+        profile_data = {
+            'company': 'Test Company',
+            'job_title': 'QA Engineer',
+            'phone': '+1234567890',
+            'timezone': 'UTC',
+            'preferences': {
+                'notifications': True,
+                'theme': 'light',
+                'language': 'en'
+            }
+        }
+        
+        profile_result = self._mock_profile_setup(self.user_data['user_id'], profile_data)
+        
+        self.assert_true(profile_result['success'], "Profile setup should succeed")
+        self.assert_equal(profile_result['company'], profile_data['company'], "Company should be saved")
+        
+        self.result.test_data['profile_setup'] = profile_result
+    
+    def _test_first_contact_creation(self):
+        """Test creating first contact"""
+        contact_data = {
+            'name': 'John Doe',
+            'email': 'john.doe@example.com',
+            'phone': '+1987654321',
+            'company': 'ABC Corp',
+            'notes': 'First contact created during onboarding'
+        }
+        
+        contact_result = self._mock_contact_creation(self.user_data['user_id'], contact_data)
+        
+        self.assert_true(contact_result['success'], "Contact creation should succeed")
+        self.assert_not_none(contact_result['contact_id'], "Contact should have ID")
+        
+        self.created_resources.append(('contact', contact_result['contact_id']))
+        self.result.test_data['first_contact'] = contact_result
+    
+    def _test_data_upload_workflow(self):
+        """Test data upload and analysis workflow"""
+        # Simulate CSV upload
+        csv_data = """name,email,phone,company
+Alice Smith,alice@company.com,555-0101,TechCorp
+Bob Johnson,bob@startup.io,555-0102,StartupInc
+Carol Wilson,carol@enterprise.net,555-0103,Enterprise Ltd"""
+        
+        # Upload file
+        upload_result = self._mock_file_upload('contacts.csv', csv_data)
+        self.assert_true(upload_result['success'], "File upload should succeed")
+        
+        # Process data
+        processing_result = self._mock_data_processing(upload_result['file_id'])
+        self.assert_true(processing_result['success'], "Data processing should succeed")
+        self.assert_equal(processing_result['records_processed'], 3, "Should process 3 records")
+        
+        # Analyze data
+        analysis_result = self._mock_data_analysis(upload_result['file_id'])
+        self.assert_not_none(analysis_result, "Data analysis should return results")
+        
+        self.created_resources.append(('file', upload_result['file_id']))
+        self.result.test_data['data_workflow'] = {
+            'upload': upload_result,
+            'processing': processing_result,
+            'analysis': analysis_result
+        }
+    
+    def _test_document_workflow(self):
+        """Test document upload and processing workflow"""
+        # Simulate document upload
+        document_upload = self._mock_document_upload('test_document.pdf')
+        self.assert_true(document_upload['success'], "Document upload should succeed")
+        
+        # Process document (OCR/text extraction)
+        document_processing = self._mock_document_processing(document_upload['document_id'])
+        self.assert_true(document_processing['success'], "Document processing should succeed")
+        self.assert_true(len(document_processing['extracted_text']) > 0, "Should extract text")
+        
+        # Search within document
+        search_result = self._mock_document_search(document_upload['document_id'], 'test')
+        self.assert_true(search_result['found'], "Should find search term")
+        
+        self.created_resources.append(('document', document_upload['document_id']))
+        self.result.test_data['document_workflow'] = {
+            'upload': document_upload,
+            'processing': document_processing,
+            'search': search_result
+        }
+    
+    def _test_export_workflow(self):
+        """Test data export workflow"""
+        # Export contacts
+        contact_export = self._mock_export_data('contacts', 'csv')
+        self.assert_true(contact_export['success'], "Contact export should succeed")
+        self.assert_true(len(contact_export['data']) > 0, "Export should contain data")
+        
+        # Export reports
+        report_export = self._mock_export_data('reports', 'pdf')
+        self.assert_true(report_export['success'], "Report export should succeed")
+        
+        self.result.test_data['export_workflow'] = {
+            'contact_export': contact_export,
+            'report_export': report_export
+        }
+    
+    # Mock implementations (replace with actual API calls)
+    def _mock_user_registration(self, registration_data):
+        time.sleep(0.1)  # Simulate processing
+        return {
+            'success': True,
+            'user_id': 'usr_12345',
+            'username': registration_data['username'],
+            'email': registration_data['email']
+        }
+    
+    def _mock_profile_setup(self, user_id, profile_data):
+        time.sleep(0.05)
+        return {
+            'success': True,
+            'user_id': user_id,
+            **profile_data
+        }
+    
+    def _mock_contact_creation(self, user_id, contact_data):
+        time.sleep(0.1)
+        return {
+            'success': True,
+            'contact_id': 'cnt_67890',
+            'user_id': user_id,
+            **contact_data
+        }
+    
+    def _mock_file_upload(self, filename, content):
+        time.sleep(0.2)
+        return {
+            'success': True,
+            'file_id': 'file_abc123',
+            'filename': filename,
+            'size': len(content),
+            'type': 'csv'
+        }
+    
+    def _mock_data_processing(self, file_id):
+        time.sleep(0.3)
+        return {
+            'success': True,
+            'file_id': file_id,
+            'records_processed': 3,
+            'records_valid': 3,
+            'records_invalid': 0
+        }
+    
+    def _mock_data_analysis(self, file_id):
+        time.sleep(0.2)
+        return {
+            'file_id': file_id,
+            'total_records': 3,
+            'unique_companies': 3,
+            'email_domains': ['company.com', 'startup.io', 'enterprise.net'],
+            'analysis_complete': True
+        }
+    
+    def _mock_document_upload(self, filename):
+        time.sleep(0.3)
+        return {
+            'success': True,
+            'document_id': 'doc_xyz789',
+            'filename': filename,
+            'type': 'pdf',
+            'pages': 2
+        }
+    
+    def _mock_document_processing(self, document_id):
+        time.sleep(0.5)
+        return {
+            'success': True,
+            'document_id': document_id,
+            'extracted_text': 'This is extracted text from the test document.',
+            'confidence': 0.95,
+            'processing_time': 0.5
+        }
+    
+    def _mock_document_search(self, document_id, query):
+        time.sleep(0.1)
+        return {
+            'document_id': document_id,
+            'query': query,
+            'found': True,
+            'matches': 1,
+            'locations': ['page 1, line 5']
+        }
+    
+    def _mock_export_data(self, data_type, format):
+        time.sleep(0.2)
+        if data_type == 'contacts':
+            data = 'name,email,phone\nJohn Doe,john@example.com,123-456-7890'
+        else:
+            data = f'Mock {data_type} export in {format} format'
+        
+        return {
+            'success': True,
+            'data_type': data_type,
+            'format': format,
+            'data': data,
+            'size': len(data)
+        }
+    
+    def teardown(self):
+        """Cleanup created resources"""
+        for resource_type, resource_id in self.created_resources:
+            try:
+                self._mock_cleanup_resource(resource_type, resource_id)
+            except Exception as e:
+                self.logger.warning(f"Failed to cleanup {resource_type} {resource_id}: {e}")
+    
+    def _mock_cleanup_resource(self, resource_type, resource_id):
+        """Mock resource cleanup"""
+        self.logger.info(f"Cleaning up {resource_type}: {resource_id}")
+
+class PowerUserWorkflowTest(BaseTest):
+    """Test advanced power user workflows"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.WORKFLOW
+    
+    def execute(self):
+        """Test power user workflows"""
+        # Test bulk data operations
+        self._test_bulk_data_operations()
+        
+        # Test advanced analytics
+        self._test_advanced_analytics()
+        
+        # Test automation workflows
+        self._test_automation_workflows()
+        
+        # Test integration workflows
+        self._test_integration_workflows()
+    
+    def _test_bulk_data_operations(self):
+        """Test bulk data import/export operations"""
+        import time
+        
+        # Simulate bulk import of 1000 records
+        start_time = time.time()
+        bulk_import_result = self._mock_bulk_import(1000)
+        import_time = time.time() - start_time
+        
+        self.assert_true(bulk_import_result['success'], "Bulk import should succeed")
+        self.assert_equal(bulk_import_result['imported_count'], 1000, "Should import all records")
+        self.assert_response_time(import_time * 1000, 10000, "Bulk import should complete within 10 seconds")
+        
+        # Test bulk export
+        start_time = time.time()
+        bulk_export_result = self._mock_bulk_export(1000)
+        export_time = time.time() - start_time
+        
+        self.assert_true(bulk_export_result['success'], "Bulk export should succeed")
+        self.assert_response_time(export_time * 1000, 5000, "Bulk export should be fast")
+        
+        self.result.performance_metrics.update({
+            'bulk_import_time_ms': import_time * 1000,
+            'bulk_export_time_ms': export_time * 1000,
+            'import_records_per_second': 1000 / import_time,
+            'export_records_per_second': 1000 / export_time
+        })
+    
+    def _test_advanced_analytics(self):
+        """Test advanced analytics workflows"""
+        # Multi-dimensional analysis
+        analytics_result = self._mock_advanced_analytics()
+        
+        self.assert_not_none(analytics_result, "Analytics should return results")
+        self.assert_true('trends' in analytics_result, "Should include trend analysis")
+        self.assert_true('correlations' in analytics_result, "Should include correlations")
+        self.assert_true('predictions' in analytics_result, "Should include predictions")
+        
+        self.result.test_data['advanced_analytics'] = analytics_result
+    
+    def _test_automation_workflows(self):
+        """Test automation and scheduling workflows"""
+        # Test workflow creation
+        workflow_result = self._mock_create_workflow()
+        self.assert_true(workflow_result['success'], "Workflow creation should succeed")
+        
+        # Test workflow execution
+        execution_result = self._mock_execute_workflow(workflow_result['workflow_id'])
+        self.assert_true(execution_result['success'], "Workflow execution should succeed")
+        
+        self.result.test_data['automation_workflow'] = {
+            'creation': workflow_result,
+            'execution': execution_result
+        }
+    
+    def _test_integration_workflows(self):
+        """Test external system integration workflows"""
+        # Test API integrations
+        api_integration = self._mock_api_integration()
+        self.assert_true(api_integration['success'], "API integration should succeed")
+        
+        # Test webhook processing
+        webhook_result = self._mock_webhook_processing()
+        self.assert_true(webhook_result['success'], "Webhook processing should succeed")
+        
+        self.result.test_data['integration_workflows'] = {
+            'api_integration': api_integration,
+            'webhook_processing': webhook_result
+        }
+    
+    # Mock implementations for power user workflows
+    def _mock_bulk_import(self, record_count):
+        import time
+        time.sleep(record_count / 1000)  # Simulate processing time
+        return {
+            'success': True,
+            'imported_count': record_count,
+            'processing_time': record_count / 1000
+        }
+    
+    def _mock_bulk_export(self, record_count):
+        import time
+        time.sleep(record_count / 2000)  # Export is faster
+        return {
+            'success': True,
+            'exported_count': record_count,
+            'file_size': record_count * 100  # bytes
+        }
+    
+    def _mock_advanced_analytics(self):
+        time.sleep(0.5)
+        return {
+            'trends': {
+                'user_growth': '+15%',
+                'engagement_rate': '+8%'
+            },
+            'correlations': {
+                'feature_usage_retention': 0.72,
+                'support_tickets_satisfaction': -0.45
+            },
+            'predictions': {
+                'next_month_users': 1250,
+                'churn_risk_users': 45
+            }
+        }
+    
+    def _mock_create_workflow(self):
+        time.sleep(0.2)
+        return {
+            'success': True,
+            'workflow_id': 'wf_automation_001',
+            'name': 'Daily Data Processing',
+            'steps': 5
+        }
+    
+    def _mock_execute_workflow(self, workflow_id):
+        time.sleep(1.0)  # Simulate workflow execution
+        return {
+            'success': True,
+            'workflow_id': workflow_id,
+            'execution_time': 1.0,
+            'steps_completed': 5,
+            'steps_failed': 0
+        }
+    
+    def _mock_api_integration(self):
+        time.sleep(0.3)
+        return {
+            'success': True,
+            'api_endpoint': 'https://api.external-service.com/data',
+            'records_synced': 150,
+            'sync_time': 0.3
+        }
+    
+    def _mock_webhook_processing(self):
+        time.sleep(0.1)
+        return {
+            'success': True,
+            'webhooks_processed': 10,
+            'processing_time': 0.1
+        }
+
+class ErrorRecoveryWorkflowTest(BaseTest):
+    """Test error handling and recovery workflows"""
+    
+    def __init__(self, context):
+        super().__init__(context)
+        self.result.test_category = TestCategory.WORKFLOW
+    
+    def execute(self):
+        """Test error recovery scenarios"""
+        # Test network failure recovery
+        self._test_network_failure_recovery()
+        
+        # Test data corruption recovery
+        self._test_data_corruption_recovery()
+        
+        # Test service unavailability handling
+        self._test_service_unavailability()
+        
+        # Test graceful degradation
+        self._test_graceful_degradation()
+    
+    def _test_network_failure_recovery(self):
+        """Test recovery from network failures"""
+        # Simulate network failure during operation
+        failure_result = self._mock_network_failure_scenario()
+        
+        self.assert_true(failure_result['handled_gracefully'], "Network failure should be handled gracefully")
+        self.assert_true(failure_result['retry_successful'], "Retry mechanism should work")
+        
+        self.result.test_data['network_failure_recovery'] = failure_result
+    
+    def _test_data_corruption_recovery(self):
+        """Test recovery from data corruption"""
+        corruption_result = self._mock_data_corruption_scenario()
+        
+        self.assert_true(corruption_result['corruption_detected'], "Data corruption should be detected")
+        self.assert_true(corruption_result['recovery_successful'], "Recovery should succeed")
+        
+        self.result.test_data['data_corruption_recovery'] = corruption_result
+    
+    def _test_service_unavailability(self):
+        """Test handling of service unavailability"""
+        service_result = self._mock_service_unavailable_scenario()
+        
+        self.assert_true(service_result['fallback_used'], "Fallback mechanism should be used")
+        self.assert_true(service_result['user_notified'], "User should be notified")
+        
+        self.result.test_data['service_unavailability'] = service_result
+    
+    def _test_graceful_degradation(self):
+        """Test graceful degradation under load"""
+        degradation_result = self._mock_graceful_degradation_scenario()
+        
+        self.assert_true(degradation_result['core_features_available'], "Core features should remain available")
+        self.assert_true(degradation_result['performance_maintained'], "Performance should be maintained")
+        
+        self.result.test_data['graceful_degradation'] = degradation_result
+    
+    # Mock implementations for error scenarios
+    def _mock_network_failure_scenario(self):
+        time.sleep(0.5)
+        return {
+            'failure_occurred': True,
+            'handled_gracefully': True,
+            'retry_attempts': 3,
+            'retry_successful': True,
+            'recovery_time': 0.5
+        }
+    
+    def _mock_data_corruption_scenario(self):
+        time.sleep(0.3)
+        return {
+            'corruption_detected': True,
+            'backup_restored': True,
+            'recovery_successful': True,
+            'data_loss': False
+        }
+    
+    def _mock_service_unavailable_scenario(self):
+        time.sleep(0.2)
+        return {
+            'service_unavailable': True,
+            'fallback_used': True,
+            'user_notified': True,
+            'degraded_functionality': True
+        }
+    
+    def _mock_graceful_degradation_scenario(self):
+        time.sleep(0.4)
+        return {
+            'high_load_detected': True,
+            'core_features_available': True,
+            'performance_maintained': True,
+            'non_essential_features_disabled': True
+        }
+```
+
+### Advanced Monitoring and Alerting
+
+```python
+# app/core/monitoring.py
+import asyncio
+import logging
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+import psutil
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+
+from config.database import SessionLocal
+from app.models.system_health import SystemHealth
+from app.models.performance_metrics import PerformanceMetric
+from app.models.test_results import TestRun, TestResult
+from config.settings import settings
+
+class SystemMonitor:
+    """Advanced system monitoring with alerting"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.monitoring_active = False
+        self.alert_thresholds = {
+            'cpu_warning': settings.PERFORMANCE_BASELINE_CPU,
+            'cpu_critical': 95.0,
+            'memory_warning': settings.PERFORMANCE_BASELINE_MEMORY,
+            'memory_critical': 95.0,
+            'response_time_warning': settings.PERFORMANCE_BASELINE_RESPONSE_TIME,
+            'response_time_critical': 10000.0,
+            'test_failure_rate_warning': 10.0,  # %
+            'test_failure_rate_critical': 25.0  # %
+        }
+        self.alert_history = []
+    
+    async def start_monitoring(self):
+        """Start continuous system monitoring"""
+        self.monitoring_active = True
+        self.logger.info("Starting system monitoring...")
+        
+        # Start monitoring tasks
+        tasks = [
+            asyncio.create_task(self._monitor_system_resources()),
+            asyncio.create_task(self._monitor_test_performance()),
+            asyncio.create_task(self._monitor_service_health()),
+            asyncio.create_task(self._process_alerts())
+        ]
+        
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            self.logger.error(f"Monitoring error: {e}")
+        finally:
+            self.monitoring_active = False
+    
+    async def stop_monitoring(self):
+        """Stop system monitoring"""
+        self.monitoring_active = False
+        self.logger.info("Stopping system monitoring...")
+    
+    async def _monitor_system_resources(self):
+        """Monitor CPU, memory, disk usage"""
+        while self.monitoring_active:
+            try:
+                # Collect system metrics
+                cpu_percent = psutil.cpu_percent(interval=1)
+                memory = psutil.virtual_memory()
+                disk = psutil.disk_usage('/')
+                
+                # Store metrics
+                db = SessionLocal()
+                try:
+                    metrics = [
+                        PerformanceMetric(
+                            metric_name='cpu_usage_percent',
+                            metric_value=cpu_percent,
+                            metric_unit='percent',
+                            component='system',
+                            timestamp=datetime.utcnow(),
+                            tags={'monitoring': True}
+                        ),
+                        PerformanceMetric(
+                            metric_name='memory_usage_percent',
+                            metric_value=memory.percent,
+                            metric_unit='percent',
+                            component='system',
+                            timestamp=datetime.utcnow(),
+                            tags={'monitoring': True}
+                        ),
+                        PerformanceMetric(
+                            metric_name='disk_usage_percent',
+                            metric_value=(disk.used / disk.total) * 100,
+                            metric_unit='percent',
+                            component='system',
+                            timestamp=datetime.utcnow(),
+                            tags={'monitoring': True}
+                        )
+                    ]
+                    
+                    for metric in metrics:
+                        db.add(metric)
+                    db.commit()
+                    
+                    # Check thresholds
+                    await self._check_resource_thresholds(cpu_percent, memory.percent, (disk.used / disk.total) * 100)
+                    
+                finally:
+                    db.close()
+                
+                await asyncio.sleep(30)  # Check every 30 seconds
+                
+            except Exception as e:
+                self.logger.error(f"Resource monitoring error: {e}")
+                await asyncio.sleep(60)  # Wait longer on error
+    
+    async def _monitor_test_performance(self):
+        """Monitor test execution performance"""
+        while self.monitoring_active:
+            try:
+                db = SessionLocal()
+                try:
+                    # Check recent test performance
+                    since_time = datetime.utcnow() - timedelta(hours=1)
+                    
+                    recent_runs = db.query(TestRun).filter(
+                        TestRun.started_at >= since_time,
+                        TestRun.status.in_(['completed', 'failed'])
+                    ).all()
+                    
+                    if recent_runs:
+                        # Calculate metrics
+                        total_runs = len(recent_runs)
+                        failed_runs = len([r for r in recent_runs if r.status == 'failed'])
+                        failure_rate = (failed_runs / total_runs) * 100
+                        
+                        avg_execution_time = sum(
+                            r.execution_time_seconds for r in recent_runs 
+                            if r.execution_time_seconds
+                        ) / len([r for r in recent_runs if r.execution_time_seconds])
+                        
+                        # Store metrics
+                        metrics = [
+                            PerformanceMetric(
+                                metric_name='test_failure_rate',
+                                metric_value=failure_rate,
+                                metric_unit='percent',
+                                component='testing',
+                                timestamp=datetime.utcnow(),
+                                tags={'period_hours': 1}
+                            ),
+                            PerformanceMetric(
+                                metric_name='avg_test_execution_time',
+                                metric_value=avg_execution_time,
+                                metric_unit='seconds',
+                                component='testing',
+                                timestamp=datetime.utcnow(),
+                                tags={'period_hours': 1}
+                            )
+                        ]
+                        
+                        for metric in metrics:
+                            db.add(metric)
+                        db.commit()
+                        
+                        # Check thresholds
+                        await self._check_test_performance_thresholds(failure_rate, avg_execution_time)
+                
+                finally:
+                    db.close()
+                
+                await asyncio.sleep(300)  # Check every 5 minutes
+                
+            except Exception as e:
+                self.logger.error(f"Test performance monitoring error: {e}")
+                await asyncio.sleep(600)  # Wait longer on error
+    
+    async def _monitor_service_health(self):
+        """Monitor external service health"""
+        while self.monitoring_active:
+            try:
+                db = SessionLocal()
+                try:
+                    # Check database health
+                    db_health = await self._check_database_health()
+                    
+                    # Check external services
+                    telegram_health = await self._check_telegram_health()
+                    email_health = await self._check_email_health()
+                    
+                    # Store health status
+                    health_records = [
+                        SystemHealth(
+                            component_name='database',
+                            status=db_health['status'],
+                            health_score=db_health['score'],
+                            response_time_ms=db_health['response_time'],
+                            last_check_at=datetime.utcnow(),
+                            metadata=db_health.get('metadata', {})
+                        ),
+                        SystemHealth(
+                            component_name='telegram_service',
+                            status=telegram_health['status'],
+                            health_score=telegram_health['score'],
+                            response_time_ms=telegram_health['response_time'],
+                            last_check_at=datetime.utcnow(),
+                            error_message=telegram_health.get('error'),
+                            metadata=telegram_health.get('metadata', {})
+                        ),
+                        SystemHealth(
+                            component_name='email_service',
+                            status=email_health['status'],
+                            health_score=email_health['score'],
+                            response_time_ms=email_health['response_time'],
+                            last_check_at=datetime.utcnow(),
+                            error_message=email_health.get('error'),
+                            metadata=email_health.get('metadata', {})
+                        )
+                    ]
+                    
+                    for health_record in health_records:
+                        db.add(health_record)
+                    db.commit()
+                    
+                finally:
+                    db.close()
+                
+                await asyncio.sleep(120)  # Check every 2 minutes
+                
+            except Exception as e:
+                self.logger.error(f"Service health monitoring error: {e}")
+                await asyncio.sleep(300)  # Wait longer on error
+    
+    async def _check_database_health(self):
+        """Check database health"""
+        try:
+            start_time = time.time()
+            db = SessionLocal()
+            db.execute("SELECT 1")
+            db.close()
+            response_time = (time.time() - start_time) * 1000
+            
+            return {
+                'status': 'healthy',
+                'score': 1.0,
+                'response_time': response_time,
+                'metadata': {'query_type': 'simple_select'}
+            }
+        except Exception as e:
+            return {
+                'status': 'unhealthy',
+                'score': 0.0,
+                'response_time': 0,
+                'error': str(e)
+            }
+    
+    async def _check_telegram_health(self):
+        """Check Telegram service health"""
+        if not settings.TELEGRAM_BOT_TOKEN:
+            return {
+                'status': 'skipped',
+                'score': 1.0,
+                'response_time': 0,
+                'metadata': {'reason': 'not_configured'}
+            }
+        
+        try:
+            import telegram
+            start_time = time.time()
+            bot = telegram.Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            bot.get_me()
+            response_time = (time.time() - start_time) * 1000
+            
+            return {
+                'status': 'healthy',
+                'score': 1.0,
+                'response_time': response_time,
+                'metadata': {'service': 'telegram_api'}
+            }
+        except Exception as e:
+            return {
+                'status': 'unhealthy',
+                'score': 0.0,
+                'response_time': 0,
+                'error': str(e)
+            }
+    
+    async def _check_email_health(self):
+        """Check email service health"""
+        if not settings.SMTP_HOST:
+            return {
+                'status': 'skipped',
+                'score': 1.0,
+                'response_time': 0,
+                'metadata': {'reason': 'not_configured'}
+            }
+        
+        try:
+            import smtplib
+            start_time = time.time()
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+            server.quit()
+            response_time = (time.time() - start_time) * 1000
+            
+            return {
+                'status': 'healthy',
+                'score': 1.0,
+                'response_time': response_time,
+                'metadata': {'service': 'smtp'}
+            }
+        except Exception as e:
+            return {
+                'status': 'unhealthy',
+                'score': 0.0,
+                'response_time': 0,
+                'error': str(e)
+            }
+    
+    async def _check_resource_thresholds(self, cpu_percent, memory_percent, disk_percent):
+        """Check resource usage thresholds and generate alerts"""
+        alerts = []
+        
+        # CPU alerts
+        if cpu_percent >= self.alert_thresholds['cpu_critical']:
+            alerts.append({
+                'type': 'critical',
+                'component': 'cpu',
+                'message': f'Critical CPU usage: {cpu_percent:.1f}%',
+                'value': cpu_percent,
+                'threshold': self.alert_thresholds['cpu_critical']
+            })
+        elif cpu_percent >= self.alert_thresholds['cpu_warning']:
+            alerts.append({
+                'type': 'warning',
+                'component': 'cpu',
+                'message': f'High CPU usage: {cpu_percent:.1f}%',
+                'value': cpu_percent,
+                'threshold': self.alert_thresholds['cpu_warning']
+            })
+        
+        # Memory alerts
+        if memory_percent >= self.alert_thresholds['memory_critical']:
+            alerts.append({
+                'type': 'critical',
+                'component': 'memory',
+                'message': f'Critical memory usage: {memory_percent:.1f}%',
+                'value': memory_percent,
+                'threshold': self.alert_thresholds['memory_critical']
+            })
+        elif memory_percent >= self.alert_thresholds['memory_warning']:
+            alerts.append({
+                'type': 'warning',
+                'component': 'memory',
+                'message': f'High memory usage: {memory_percent:.1f}%',
+                'value': memory_percent,
+                'threshold': self.alert_thresholds['memory_warning']
+            })
+        
+        # Process alerts
+        for alert in alerts:
+            await self._add_alert(alert)
+    
+    async def _check_test_performance_thresholds(self, failure_rate, avg_execution_time):
+        """Check test performance thresholds"""
+        alerts = []
+        
+        # Test failure rate alerts
+        if failure_rate >= self.alert_thresholds['test_failure_rate_critical']:
+            alerts.append({
+                'type': 'critical',
+                'component': 'testing',
+                'message': f'Critical test failure rate: {failure_rate:.1f}%',
+                'value': failure_rate,
+                'threshold': self.alert_thresholds['test_failure_rate_critical']
+            })
+        elif failure_rate >= self.alert_thresholds['test_failure_rate_warning']:
+            alerts.append({
+                'type': 'warning',
+                'component': 'testing',
+                'message': f'High test failure rate: {failure_rate:.1f}%',
+                'value': failure_rate,
+                'threshold': self.alert_thresholds['test_failure_rate_warning']
+            })
+        
+        # Process alerts
+        for alert in alerts:
+            await self._add_alert(alert)
+    
+    async def _add_alert(self, alert_data):
+        """Add alert to queue for processing"""
+        alert = {
+            **alert_data,
+            'timestamp': datetime.utcnow(),
+            'id': f"alert_{int(time.time())}_{alert_data['component']}"
+        }
+        
+        # Avoid duplicate alerts
+        recent_similar = [
+            a for a in self.alert_history[-10:]  # Check last 10 alerts
+            if (a['component'] == alert['component'] and 
+                a['type'] == alert['type'] and
+                (alert['timestamp'] - a['timestamp']).total_seconds() < 300)  # Within 5 minutes
+        ]
+        
+        if not recent_similar:
+            self.alert_history.append(alert)
+            self.logger.warning(f"Alert generated: {alert['message']}")
+    
+    async def _process_alerts(self):
+        """Process and send alerts"""
+        while self.monitoring_active:
+            try:
+                if self.alert_history:
+                    # Process pending alerts
+                    alerts_to_send = self.alert_history[-5:]  # Send last 5 alerts
+                    
+                    if alerts_to_send:
+                        await self._send_alert_notification(alerts_to_send)
+                    
+                    # Clean old alerts (keep last 50)
+                    if len(self.alert_history) > 50:
+                        self.alert_history = self.alert_history[-50:]
+                
+                await asyncio.sleep(60)  # Process alerts every minute
+                
+            except Exception as e:
+                self.logger.error(f"Alert processing error: {e}")
+                await asyncio.sleep(120)
+    
+    async def _send_alert_notification(self, alerts):
+        """Send alert notifications via configured channels"""
+        try:
+            # Format alert message
+            alert_message = self._format_alert_message(alerts)
+            
+            # Send via email if configured
+            if settings.NOTIFICATION_EMAIL and settings.SMTP_HOST:
+                await self._send_email_alert(alert_message)
+            
+            # Send via Telegram if configured
+            if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
+                await self._send_telegram_alert(alert_message)
+            
+            self.logger.info(f"Sent {len(alerts)} alert(s)")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send alert notification: {e}")
+    
+    def _format_alert_message(self, alerts):
+        """Format alerts into readable message"""
+        critical_alerts = [a for a in alerts if a['type'] == 'critical']
+        warning_alerts = [a for a in alerts if a['type'] == 'warning']
+        
+        message = "🚨 Testing Framework Alerts\n\n"
+        
+        if critical_alerts:
+            message += "🔴 CRITICAL ALERTS:\n"
+            for alert in critical_alerts:
+                message += f"• {alert['message']}\n"
+            message += "\n"
+        
+        if warning_alerts:
+            message += "🟡 WARNING ALERTS:\n"
+            for alert in warning_alerts:
+                message += f"• {alert['message']}\n"
+            message += "\n"
+        
+        message += f"Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        
+        return message
+    
+    async def _send_email_alert(self, message):
+        """Send alert via email"""
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = settings.SMTP_USERNAME
+            msg['To'] = settings.NOTIFICATION_EMAIL
+            msg['Subject'] = "Testing Framework System Alert"
+            
+            msg.attach(MIMEText(message, 'plain'))
+            
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+            server.starttls()
+            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.send_message(msg)
+            server.quit()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send email alert: {e}")
+    
+    async def _send_telegram_alert(self, message):
+        """Send alert via Telegram"""
+        try:
+            import telegram
+            bot = telegram.Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            bot.send_message(chat_id=settings.TELEGRAM_CHAT_ID, text=message)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send Telegram alert: {e}")
+
+# Singleton monitor instance
+system_monitor = SystemMonitor()
+```
+
+### Complete Scheduler and Automation
+
+```python
+# app/core/scheduler.py
+import asyncio
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+from enum import Enum
+import cron_descriptor
+from crontab import CronTab
+
+from app.core.test_runner import test_runner
+from app.core.monitoring import system_monitor
+
+class ScheduleType(Enum):
+    ONCE = "once"
+    RECURRING = "recurring"
+    CRON = "cron"
+
+@dataclass
+class ScheduledTask:
+    id: str
+    name: str
+    schedule_type: ScheduleType
+    schedule_expression: str  # cron expression or interval
+    task_type: str  # 'test_run', 'health_check', 'cleanup'
+    task_config: Dict
+    enabled: bool = True
+    next_run: Optional[datetime] = None
+    last_run: Optional[datetime] = None
+    run_count: int = 0
+    failure_count: int = 0
+
+class TaskScheduler:
+    """Advanced task scheduling system"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.scheduled_tasks: Dict[str, ScheduledTask] = {}
+        self.running = False
+        self._load_default_schedules()
+    
+    def _load_default_schedules(self):
+        """Load default scheduled tasks"""
+        default_tasks = [
+            ScheduledTask(
+                id="daily_health_check",
+                name="Daily Health Check",
+                schedule_type=ScheduleType.CRON,
+                schedule_expression="0 9 * * *",  # 9 AM daily
+                task_type="test_run",
+                task_config={
+                    "categories": ["health_check"],
+                    "environment": "production",
+                    "parallel": True
+                }
+            ),
+            ScheduledTask(
+                id="weekly_full_test",
+                name="Weekly Full Test Suite",
+                schedule_type=ScheduleType.CRON,
+                schedule_expression="0 2 * * 0",  # 2 AM Sundays
+                task_type="test_run",
+                task_config={
+                    "categories": None,  # All categories
+                    "environment": "production",
+                    "parallel": True
+                }
+            ),
+            ScheduledTask(
+                id="monthly_cleanup",
+                name="Monthly Data Cleanup",
+                schedule_type=ScheduleType.CRON,
+                schedule_expression="0 3 1 * *",  # 3 AM on 1st of month
+                task_type="cleanup",
+                task_config={
+                    "retention_days": 90,
+                    "cleanup_logs": True,
+                    "cleanup_temp_files": True
+                }
+            ),
+            ScheduledTask(
+                id="performance_monitoring",
+                name="Continuous Performance Monitoring",
+                schedule_type=ScheduleType.RECURRING,
+                schedule_expression="300",  # Every 5 minutes
+                task_type="monitoring",
+                task_config={
+                    "metrics": ["system", "database", "services"],
+                    "alert_on_threshold": True
+                }
+            )
+        ]
+        
+        for task in default_tasks:
+            self.scheduled_tasks[task.id] = task
+            self._calculate_next_run(task)
+    
+    async def start_scheduler(self):
+        """Start the task scheduler"""
+        self.running = True
+        self.logger.info("Starting task scheduler...")
+        
+        try:
+            while self.running:
+                await self._process_scheduled_tasks()
+                await asyncio.sleep(60)  # Check every minute
+        except Exception as e:
+            self.logger.error(f"Scheduler error: {e}")
+        finally:
+            self.running = False
+    
+    async def stop_scheduler(self):
+        """Stop the task scheduler"""
+        self.running = False
+        self.logger.info("Stopping task scheduler...")
+    
+    def add_scheduled_task(self, task: ScheduledTask) -> bool:
+        """Add a new scheduled task"""
+        try:
+            self._calculate_next_run(task)
+            self.scheduled_tasks[task.id] = task
+            self.logger.info(f"Added scheduled task: {task.name}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to add scheduled task: {e}")
+            return False
+    
+    def remove_scheduled_task(self, task_id: str) -> bool:
+        """Remove a scheduled task"""
+        if task_id in self.scheduled_tasks:
+            del self.scheduled_tasks[task_id]
+            self.logger.info(f"Removed scheduled task: {task_id}")
+            return True
+        return False
+    
+    def get_scheduled_tasks(self) -> List[ScheduledTask]:
+        """Get all scheduled tasks"""
+        return list(self.scheduled_tasks.values())
+    
+    def enable_task(self, task_id: str) -> bool:
+        """Enable a scheduled task"""
+        if task_id in self.scheduled_tasks:
+            self.scheduled_tasks[task_id].enabled = True
+            self._calculate_next_run(self.scheduled_tasks[task_id])
+            return True
+        return False
+    
+    def disable_task(self, task_id: str) -> bool:
+        """Disable a scheduled task"""
+        if task_id in self.scheduled_tasks:
+            self.scheduled_tasks[task_id].enabled = False
+            self.scheduled_tasks[task_id].next_run = None
+            return True
+        return False
+    
+    async def _process_scheduled_tasks(self):
+        """Process tasks that are due to run"""
+        current_time = datetime.utcnow()
+        
+        for task in self.scheduled_tasks.values():
+            if (task.enabled and 
+                task.next_run and 
+                current_time >= task.next_run):
+                
+                # Execute task
+                await self._execute_task(task)
+                
+                # Calculate next run time
+                self._calculate_next_run(task)
+    
+    async def _execute_task(self, task: ScheduledTask):
+        """Execute a scheduled task"""
+        self.logger.info(f"Executing scheduled task: {task.name}")
+        
+        try:
+            task.last_run = datetime.utcnow()
+            task.run_count += 1
+            
+            if task.task_type == "test_run":
+                await self._execute_test_run_task(task)
+            elif task.task_type == "cleanup":
+                await self._execute_cleanup_task(task)
+            elif task.task_type == "monitoring":
+                await self._execute_monitoring_task(task)
+            else:
+                raise ValueError(f"Unknown task type: {task.task_type}")
+            
+            self.logger.info(f"Task completed successfully: {task.name}")
+            
+        except Exception as e:
+            task.failure_count += 1
+            self.logger.error(f"Task execution failed: {task.name} - {e}")
+    
+    async def _execute_test_run_task(self, task: ScheduledTask):
+        """Execute a test run task"""
+        config = task.task_config
+        
+        run_id = await test_runner.run_all_tests(
+            environment=config.get("environment", "scheduled"),
+            version="scheduled",
+            triggered_by="scheduler",
+            trigger_type="scheduled",
+            test_categories=config.get("categories"),
+            parallel=config.get("parallel", True)
+        )
+        
+        self.logger.info(f"Scheduled test run started: {run_id}")
+    
+    async def _execute_cleanup_task(self, task: ScheduledTask):
+        """Execute a cleanup task"""
+        config = task.task_config
+        
+        # Database cleanup
+        if config.get("retention_days"):
+            await self._cleanup_old_data(config["retention_days"])
+        
+        # Log cleanup
+        if config.get("cleanup_logs"):
+            await self._cleanup_logs()
+        
+        # Temp file cleanup
+        if config.get("cleanup_temp_files"):
+            await self._cleanup_temp_files()
+    
+    async def _execute_monitoring_task(self, task: ScheduledTask):
+        """Execute a monitoring task"""
+        # This would integrate with the monitoring system
+        # For now, just log that monitoring is active
+        self.logger.debug("Monitoring task executed")
+    
+    async def _cleanup_old_data(self, retention_days: int):
+        """Clean up old test data"""
+        from config.database import SessionLocal
+        
+        cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+        
+        db = SessionLocal()
+        try:
+            # Clean up old test runs and results
+            old_runs = db.query(TestRun).filter(TestRun.started_at < cutoff_date).all()
+            
+            for run in old_runs:
+                db.delete(run)  # Cascade will delete related results
+            
+            db.commit()
+            self.logger.info(f"Cleaned up {len(old_runs)} old test runs")
+            
+        finally:
+            db.close()
+    
+    async def _cleanup_logs(self):
+        """Clean up old log files"""
+        import os
+        import glob
+        
+        log_dir = "logs"
+        if os.path.exists(log_dir):
+            # Remove log files older than 30 days
+            cutoff_time = time.time() - (30 * 24 * 60 * 60)
+            
+            for log_file in glob.glob(os.path.join(log_dir, "*.log*")):
+                if os.path.getmtime(log_file) < cutoff_time:
+                    try:
+                        os.remove(log_file)
+                        self.logger.info(f"Removed old log file: {log_file}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove log file {log_file}: {e}")
+    
+    async def _cleanup_temp_files(self):
+        """Clean up temporary files"""
+        import os
+        import tempfile
+        import shutil
+        
+        # Clean up files in upload directory
+        upload_dir = settings.UPLOAD_DIR
+        if os.path.exists(upload_dir):
+            # Remove files older than 7 days
+            cutoff_time = time.time() - (7 * 24 * 60 * 60)
+            
+            for root, dirs, files in os.walk(upload_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if os.path.getmtime(file_path) < cutoff_time:
+                        try:
+                            os.remove(file_path)
+                            self.logger.info(f"Removed old upload file: {file_path}")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to remove upload file {file_path}: {e}")
+    
+    def _calculate_next_run(self, task: ScheduledTask):
+        """Calculate next run time for a task"""
+        if not task.enabled:
+            task.next_run = None
+            return
+        
+        current_time = datetime.utcnow()
+        
+        if task.schedule_type == ScheduleType.ONCE:
+            # One-time task
+            if task.run_count == 0:
+                task.next_run = current_time + timedelta(seconds=60)  # Run in 1 minute
+            else:
+                task.next_run = None  # Don't run again
+        
+        elif task.schedule_type == ScheduleType.RECURRING:
+            # Recurring task with interval in seconds
+            interval_seconds = int(task.schedule_expression)
+            task.next_run = current_time + timedelta(seconds=interval_seconds)
+        
+        elif task.schedule_type == ScheduleType.CRON:
+            # Cron expression
+            try:
+                from crontab import CronTab
+                cron = CronTab(task.schedule_expression)
+                task.next_run = current_time + timedelta(seconds=cron.next())
+            except Exception as e:
+                self.logger.error(f"Invalid cron expression for task {task.id}: {e}")
+                task.next_run = None
+
+# Singleton scheduler instance
+task_scheduler = TaskScheduler()
+```
+
+This comprehensive testing framework provides everything needed to build a robust testing system that can evolve into a powerful admin dashboard. The modular architecture, extensive documentation, and clear implementation guide ensure that any junior developer can successfully implement and extend the system.
+

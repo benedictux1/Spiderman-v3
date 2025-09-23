@@ -205,5 +205,30 @@ class TestAPIEndpoints:
     
     def test_analytics_dashboard_requires_auth(self, client):
         """Test that analytics endpoints require authentication"""
-        response = client.get('/api/analytics/dashboard')
-        assert response.status_code == 302  # Redirect to login
+        for path in [
+            '/api/analytics/dashboard/overview',
+            '/api/analytics/dashboard/trends',
+            '/api/analytics/dashboard/test-categories',
+        ]:
+            response = client.get(path)
+            assert response.status_code == 302  # Redirect to login
+
+    def test_analytics_dashboard_endpoints_success(self, client, authenticated_user):
+        """Test authenticated access to analytics dashboard endpoints"""
+        # Overview
+        r1 = client.get('/api/analytics/dashboard/overview')
+        assert r1.status_code == 200
+        data1 = r1.get_json()
+        assert 'summary' in data1 and 'recent_runs' in data1
+
+        # Trends
+        r2 = client.get('/api/analytics/dashboard/trends?days=7')
+        assert r2.status_code == 200
+        data2 = r2.get_json()
+        assert 'trends' in data2 and isinstance(data2['trends'], list)
+
+        # Categories
+        r3 = client.get('/api/analytics/dashboard/test-categories')
+        assert r3.status_code == 200
+        data3 = r3.get_json()
+        assert 'categories' in data3 and isinstance(data3['categories'], list)

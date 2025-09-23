@@ -25,7 +25,8 @@ class TestAITasks:
         mock_task.update_state = Mock()
         
         # Execute task
-        result = process_note_async(
+        # Call the underlying function to avoid Celery task binding issues in unit tests
+        result = process_note_async.func(
             mock_task, 
             contact_id=1, 
             content="test content", 
@@ -53,7 +54,7 @@ class TestAITasks:
         
         # Execute task and expect exception
         with pytest.raises(Exception, match="Processing failed"):
-            process_note_async(mock_task, contact_id=1, content="test", user_id=1)
+            process_note_async.func(mock_task, contact_id=1, content="test", user_id=1)
         
         mock_task.update_state.assert_called()
     
@@ -75,7 +76,7 @@ class TestAITasks:
         ]
         
         # Execute task
-        result = batch_process_notes(mock_task, note_data)
+        result = batch_process_notes.func(mock_task, note_data)
         
         # Verify
         assert len(result) == 2
@@ -98,7 +99,7 @@ class TestAITasks:
         
         # Execute task and expect exception
         with pytest.raises(Exception, match="Batch failed"):
-            batch_process_notes(mock_task, note_data)
+            batch_process_notes.func(mock_task, note_data)
         
         mock_task.update_state.assert_called()
     
@@ -131,7 +132,7 @@ class TestTelegramTasks:
         mock_task.update_state = Mock()
         
         # Execute task
-        result = sync_telegram_contacts(mock_task, user_id=1)
+        result = sync_telegram_contacts.func(mock_task, user_id=1)
         
         # Verify
         assert result['user_id'] == 1
@@ -154,7 +155,7 @@ class TestTelegramTasks:
         # Simulate failure
         with patch('app.tasks.telegram_tasks.logger') as mock_logger:
             # This would need to be implemented to actually fail
-            result = sync_telegram_contacts(mock_task, user_id=1)
+            result = sync_telegram_contacts.func(mock_task, user_id=1)
             assert result['user_id'] == 1
     
     def test_process_telegram_messages_success(self):
@@ -170,7 +171,7 @@ class TestTelegramTasks:
         ]
         
         # Execute task
-        result = process_telegram_messages(mock_task, user_id=1, message_data=message_data)
+        result = process_telegram_messages.func(mock_task, user_id=1, message_data=message_data)
         
         # Verify
         assert result['user_id'] == 1
@@ -187,5 +188,5 @@ class TestTelegramTasks:
         # Simulate failure
         with patch('app.tasks.telegram_tasks.logger') as mock_logger:
             # This would need to be implemented to actually fail
-            result = process_telegram_messages(mock_task, user_id=1, message_data=[])
+            result = process_telegram_messages.func(mock_task, user_id=1, message_data=[])
             assert result['user_id'] == 1

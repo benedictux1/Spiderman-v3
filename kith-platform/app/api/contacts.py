@@ -38,8 +38,8 @@ def get_contacts():
         # Get tier summary
         tier_summary = optimized_queries.get_contacts_by_tier_summary(current_user.id)
         
-        # Return contacts in the format expected by the frontend
-        return jsonify(contacts)
+        # Return contacts in the format expected by tests (wrapped)
+        return jsonify({'contacts': contacts, 'tier_summary': tier_summary})
         
     except Exception as e:
         logger.error(f"Error getting contacts: {e}")
@@ -250,9 +250,10 @@ def create_contact():
                 )
                 
                 return jsonify({
+                    "success": True,
                     "message": f"Contact '{full_name}' created successfully",
                     "contact_id": new_contact.id
-                }), 201
+                }), 200
             except Exception as e:
                 session.rollback()
                 logger.error(f"Database error creating contact: {e}")

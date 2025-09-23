@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from werkzeug.security import check_password_hash
 from app.services.auth_service import AuthService
 from models import User
@@ -24,7 +24,10 @@ class TestAuthService:
         """Test successful user authentication"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         user = auth_service.authenticate_user(sample_user.username, "test_password")
         assert user is not None
@@ -34,7 +37,10 @@ class TestAuthService:
         """Test authentication with invalid username"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         user = auth_service.authenticate_user("nonexistent", "password")
         assert user is None
@@ -43,7 +49,10 @@ class TestAuthService:
         """Test authentication with invalid password"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         user = auth_service.authenticate_user(sample_user.username, "wrong_password")
         assert user is None
@@ -52,7 +61,10 @@ class TestAuthService:
         """Test successful user creation"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         user = auth_service.create_user("newuser", "password123", "user")
         assert user is not None
@@ -64,7 +76,10 @@ class TestAuthService:
         """Test user creation with duplicate username"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         user = auth_service.create_user(sample_user.username, "password123", "user")
         assert user is None
@@ -73,7 +88,10 @@ class TestAuthService:
         """Test successful password update"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         result = auth_service.update_user_password(sample_user.id, "new_password")
         assert result is True
@@ -86,7 +104,10 @@ class TestAuthService:
         """Test password update for non-existent user"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
-        auth_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        auth_service.db_manager.get_session.return_value = cm
         
         result = auth_service.update_user_password(99999, "new_password")
         assert result is False

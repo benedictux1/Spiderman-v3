@@ -111,8 +111,40 @@ def create_app(config_class=Config):
     
     @app.route('/health')
     def health_check():
-        """Simple health check endpoint for deployment"""
-        return {'status': 'healthy', 'version': '3.0.0'}, 200
+        """Health check with basic diagnostics for monitoring and tests"""
+        try:
+            # Compute uptime
+            import time
+            started_at = getattr(app, '_started_at', None)
+            if started_at is None:
+                started_at = time.time()
+                setattr(app, '_started_at', started_at)
+            uptime_seconds = int(time.time() - started_at)
+
+            # Basic component checks (lightweight)
+            checks = {
+                'database': 'unknown',
+                'redis': 'unknown',
+                'celery': 'unknown',
+                'system': 'ok',
+            }
+            try:
+                from app.utils.database import DatabaseManager
+                dm = DatabaseManager()
+                with dm.engine.connect() as _:
+                    checks['database'] = 'ok'
+            except Exception:
+                checks['database'] = 'degraded'
+            
+            return {
+                'status': 'healthy',
+                'version': '3.0.0',
+                'timestamp': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+                'uptime_seconds': uptime_seconds,
+                'checks': checks,
+            }, 200
+        except Exception as exc:
+            return {'status': 'error', 'error': str(exc)}, 500
     
     @app.route('/metrics')
     def get_metrics():

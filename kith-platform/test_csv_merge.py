@@ -2,11 +2,16 @@ import io
 import csv
 import pytest
 
-from app import app, get_db_connection
+from app import create_app
+from app.utils.database import DatabaseManager
+from config.settings import TestingConfig
 
+
+app = create_app(TestingConfig)
+db_manager = DatabaseManager()
 
 def setup_function():
-    conn = get_db_connection()
+    conn = db_manager.engine.connect()
     try:
         # Delete in FK-safe order
         conn.execute('DELETE FROM synthesized_entries')
@@ -15,7 +20,6 @@ def setup_function():
         conn.execute('DELETE FROM import_tasks')
         conn.execute('DELETE FROM contacts')
         conn.execute('DELETE FROM file_imports')
-        conn.commit()
     finally:
         conn.close()
 

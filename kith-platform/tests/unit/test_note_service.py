@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 from app.services.note_service import NoteService
 from models import Contact, RawNote, SynthesizedEntry
@@ -12,7 +12,10 @@ class TestNoteService:
         # Setup
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        note_service.db_manager.get_session.return_value = cm
         
         # Test data
         content = "This is a test note about John Doe. He likes pizza and works at Google."
@@ -38,7 +41,10 @@ class TestNoteService:
         """Test note processing with non-existent contact"""
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        note_service.db_manager.get_session.return_value = cm
         
         with pytest.raises(ValueError, match="Contact not found"):
             note_service.process_note(99999, "test content", 1)
@@ -51,7 +57,10 @@ class TestNoteService:
         
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        note_service.db_manager.get_session.return_value = cm
         
         content = "Test content"
         user_id = sample_contact.user_id
@@ -71,7 +80,10 @@ class TestNoteService:
         """Test successful retrieval of raw notes"""
         note_service = NoteService(Mock(), Mock())
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        note_service.db_manager.get_session.return_value = cm
         
         notes = note_service.get_raw_notes(sample_contact.id, sample_contact.user_id)
         
@@ -85,7 +97,10 @@ class TestNoteService:
         """Test raw notes retrieval with non-existent contact"""
         note_service = NoteService(Mock(), Mock())
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        note_service.db_manager.get_session.return_value = cm
         
         with pytest.raises(ValueError, match="Contact not found"):
             note_service.get_raw_notes(99999, 1)
@@ -94,7 +109,10 @@ class TestNoteService:
         """Test raw notes retrieval with wrong user"""
         note_service = NoteService(Mock(), Mock())
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        cm = MagicMock()
+        cm.__enter__.return_value = db_session
+        cm.__exit__.return_value = False
+        note_service.db_manager.get_session.return_value = cm
         
         with pytest.raises(ValueError, match="Contact not found"):
             note_service.get_raw_notes(sample_contact.id, 99999)  # Wrong user ID

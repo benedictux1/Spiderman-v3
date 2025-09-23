@@ -11,6 +11,7 @@ from app.utils.database import DatabaseManager
 from app.utils.dependencies import container
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
+from werkzeug.security import generate_password_hash
 
 # Set test environment
 os.environ['FLASK_ENV'] = 'testing'
@@ -68,6 +69,11 @@ def db_session(test_db):
     """Create database session for tests"""
     Session = sessionmaker(bind=test_db)
     session = Session()
+    # Bind factory-boy SQLAlchemy session to the same session
+    UserFactory._meta.sqlalchemy_session = session
+    ContactFactory._meta.sqlalchemy_session = session
+    RawNoteFactory._meta.sqlalchemy_session = session
+    SynthesizedEntryFactory._meta.sqlalchemy_session = session
     yield session
     session.rollback()
     session.close()
@@ -85,9 +91,10 @@ class UserFactory(SQLAlchemyModelFactory):
     class Meta:
         model = User
         sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session = None
     
     username = factory.Sequence(lambda n: f"user{n}")
-    password_hash = factory.LazyFunction(lambda: "hashed_password")
+    password_hash = factory.LazyFunction(lambda: generate_password_hash("test_password", method='pbkdf2:sha256'))
     password_plaintext = "test_password"
     role = "user"
 
@@ -95,6 +102,7 @@ class ContactFactory(SQLAlchemyModelFactory):
     class Meta:
         model = Contact
         sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session = None
     
     user_id = factory.SubFactory(UserFactory)
     full_name = factory.Faker('name')
@@ -107,6 +115,7 @@ class RawNoteFactory(SQLAlchemyModelFactory):
     class Meta:
         model = RawNote
         sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session = None
     
     contact_id = factory.SubFactory(ContactFactory)
     content = factory.Faker('text', max_nb_chars=200)
@@ -116,6 +125,7 @@ class SynthesizedEntryFactory(SQLAlchemyModelFactory):
     class Meta:
         model = SynthesizedEntry
         sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session = None
     
     contact_id = factory.SubFactory(ContactFactory)
     category = factory.Faker('word')

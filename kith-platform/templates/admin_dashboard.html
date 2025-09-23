@@ -93,6 +93,10 @@
         <div id="avgTime" class="metric">–</div>
       </div>
     </div>
+    <div class="card" style="margin-bottom:16px; display:flex; align-items:center; gap:12px;">
+      <button id="runBtn" style="background:#4f6cff; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">Run Tests</button>
+      <span id="runStatus" class="muted"></span>
+    </div>
     <div class="grid">
       <div class="card">
         <div class="muted">Performance Trends (7d)</div>
@@ -103,7 +107,63 @@
         <canvas id="categories" height="160"></canvas>
       </div>
     </div>
+    <div class="card" style="margin-top:16px;">
+      <div class="muted" style="margin-bottom:8px;">Recent Test Runs</div>
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr style="color:#9fb3ff;">
+            <th style="text-align:left; padding:6px 8px;">Run ID</th>
+            <th style="text-align:left; padding:6px 8px;">Status</th>
+            <th style="text-align:left; padding:6px 8px;">Passed/Failed/Skipped</th>
+            <th style="text-align:left; padding:6px 8px;">Duration (s)</th>
+            <th style="text-align:left; padding:6px 8px;">Started</th>
+          </tr>
+        </thead>
+        <tbody id="runsBody"></tbody>
+      </table>
+    </div>
   </div>
+  <script>
+    async function startRun(){
+      const statusEl = document.getElementById('runStatus');
+      statusEl.textContent = 'Starting...';
+      try{
+        const res = await fetch('/api/analytics/test-runs', {method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({})});
+        if(res.status !== 202){
+          const err = await res.json().catch(()=>({error:'failed'}));
+          statusEl.textContent = 'Failed: '+(err.error||res.status);
+          return;
+        }
+        const data = await res.json();
+        statusEl.textContent = 'Running... task '+data.task_id;
+        // Poll list to refresh
+        setTimeout(refreshRuns, 2000);
+      }catch(e){
+        statusEl.textContent = 'Failed to start: '+e.message;
+      }
+    }
+
+    async function refreshRuns(){
+      try{
+        const res = await fetch('/api/analytics/test-runs', {credentials:'include'});
+        const data = await res.json();
+        const body = document.getElementById('runsBody');
+        body.innerHTML = (data.runs||[]).map(r => `
+          <tr>
+            <td style="padding:6px 8px;">${r.id}</td>
+            <td style="padding:6px 8px; text-transform:capitalize;">${r.status}</td>
+            <td style="padding:6px 8px;">${r.passed_tests||0}/${r.failed_tests||0}/${r.skipped_tests||0}</td>
+            <td style="padding:6px 8px;">${(r.execution_time_seconds||0).toFixed(2)}</td>
+            <td style="padding:6px 8px;">${r.started_at||''}</td>
+          </tr>
+        `).join('');
+      }catch(e){ /* ignore */ }
+    }
+
+    document.getElementById('runBtn').addEventListener('click', startRun);
+    setInterval(refreshRuns, 10000);
+    refreshRuns();
+  </script>
 </body>
 </html>
 

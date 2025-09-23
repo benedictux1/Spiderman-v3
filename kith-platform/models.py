@@ -169,3 +169,41 @@ class ContactTag(Base):
 
 # Database initialization is now handled by Alembic migrations
 # This file only contains the model definitions 
+
+class TestRun(Base):
+    __tablename__ = 'test_runs'
+
+    id = Column(Integer, primary_key=True)
+    status = Column(String(32), default='queued')  # queued, running, completed, failed
+    total_tests = Column(Integer, default=0)
+    passed_tests = Column(Integer, default=0)
+    failed_tests = Column(Integer, default=0)
+    skipped_tests = Column(Integer, default=0)
+    execution_time_seconds = Column(Float, default=0.0)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+    triggered_by = Column(String(255))
+    trigger_type = Column(String(64), default='manual')
+    environment = Column(String(64), default='production')
+    version = Column(String(64))
+    error_message = Column(Text)
+
+    results = relationship("TestResult", back_populates="run", cascade="all, delete-orphan")
+
+
+class TestResult(Base):
+    __tablename__ = 'test_results'
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey('test_runs.id', ondelete='CASCADE'), nullable=False)
+    test_name = Column(String(512), nullable=False)
+    nodeid = Column(String(1024))
+    test_module = Column(String(512))
+    test_category = Column(String(64))  # health_check/component/integration/performance/other
+    status = Column(String(32))  # passed/failed/skipped
+    execution_time_seconds = Column(Float, default=0.0)
+    failure_message = Column(Text)
+    traceback_excerpt = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    run = relationship("TestRun", back_populates="results")

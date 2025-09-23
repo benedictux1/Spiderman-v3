@@ -11,12 +11,12 @@ class DatabaseConfig:
             # Default to development PostgreSQL database
             database_url = os.getenv(
                 'DEV_DATABASE_URL',
-                'postgresql://postgres:postgres@localhost:5432/kith_dev'
+                'postgresql+psycopg://postgres:postgres@localhost:5432/kith_dev'
             )
 
         # Ensure proper PostgreSQL URI format
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        if database_url.startswith('postgresql+psycopg://'):
+            database_url = database_url.replace('postgresql+psycopg://', 'postgresql+psycopg://', 1)
 
         return database_url
     

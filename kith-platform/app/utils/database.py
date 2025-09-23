@@ -15,7 +15,11 @@ class DatabaseManager:
             
             # Fix Render's postgres:// URL format
             if database_url.startswith('postgres://'):
-                database_url = database_url.replace('postgres://', 'postgresql://', 1)
+            database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
+        elif database_url.startswith('postgresql://') and '+psycopg' not in database_url:
+                database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
+            elif database_url.startswith('postgresql://') and '+psycopg' not in database_url:
+                database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
             
             logger.info(f"Initializing database with URL pattern: {database_url[:30]}...")
             
@@ -65,7 +69,11 @@ class DatabaseConfig:
         # Mirror DatabaseManager's URL selection
         database_url = os.getenv('DATABASE_URL') or 'sqlite:///kith_platform.db'
         if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+            database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
+        elif database_url.startswith('postgresql://') and '+psycopg' not in database_url:
+                database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
+            elif database_url.startswith('postgresql://') and '+psycopg' not in database_url:
+            database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
         return database_url
 
     @staticmethod

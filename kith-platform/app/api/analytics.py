@@ -26,24 +26,35 @@ def start_test_run():
             try:
                 from app.celery_app import celery_app
                 current_app.extensions['celery_app'] = celery_app
+                logger.info("Successfully imported Celery app directly")
             except ImportError as e:
                 logger.error(f"Could not import Celery app: {e}")
                 return jsonify({
                     'error': 'celery_not_available', 
-                    'detail': 'Celery worker not configured. Please set up Redis and Celery worker.'
+                    'detail': 'Celery worker not configured. Please set up Redis and Celery worker.',
+                    'debug': str(e)
                 }), 503
 
+        # Debug: Log available tasks
+        logger.info(f"Celery app tasks: {list(celery_app.tasks.keys())}")
+        
         # Get the test runner task
         run_test_suite = celery_app.tasks.get('app.tasks.test_tasks.run_test_suite')
         if run_test_suite is None:
-            logger.error("run_test_suite task not found in Celery app")
+            # List all available tasks for debugging
+            available_tasks = [k for k in celery_app.tasks.keys() if 'test' in k.lower()]
+            logger.error(f"run_test_suite task not found. Available test tasks: {available_tasks}")
             return jsonify({
                 'error': 'task_not_found',
-                'detail': 'Test runner task not registered. Please check Celery worker setup.'
+                'detail': 'Test runner task not registered. Please check Celery worker setup.',
+                'available_tasks': list(celery_app.tasks.keys()),
+                'test_tasks': available_tasks
             }), 503
 
         # Start the real test run
+        logger.info(f"Starting test run with markers={markers}, parallel={parallel}")
         task = run_test_suite.delay(markers=markers, parallel=parallel, triggered_by='admin')
+        logger.info(f"Task started with ID: {task.id}")
         
         return jsonify({
             'task_id': task.id,
@@ -52,8 +63,15 @@ def start_test_run():
         }), 202
         
     except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
         logger.exception('Failed to start test run')
-        return jsonify({'error': 'failed_to_start', 'detail': str(exc)}), 500
+        return jsonify({
+            'error': 'failed_to_start', 
+            'detail': str(exc),
+            'type': type(exc).__name__,
+            'traceback': tb.split('\n')[-5:]  # Last 5 lines of traceback
+        }), 500
 
 
 @analytics_bp.route('/test-runs', methods=['GET'])

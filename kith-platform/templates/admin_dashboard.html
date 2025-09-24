@@ -122,14 +122,14 @@
         const runs = data.runs || [];
         const body = document.getElementById('runsBody');
         body.innerHTML = runs.length ? runs.map(r => `
-          <tr>
-            <td>${r.id}</td>
+        <tr>
+          <td>${r.id}</td>
             <td style="text-transform:capitalize;">${r.status}</td>
             <td>${r.passed_tests||0}/${r.failed_tests||0}/${r.skipped_tests||0}</td>
             <td>${safeValue(r.execution_time_seconds, 0)}</td>
             <td>${r.started_at || ''}</td>
             <td>${r.failure_reason || ''}</td>
-          </tr>
+        </tr>
         `).join('') : '<tr><td colspan="6" class="muted" style="padding:8px;">No runs yet.</td></tr>';
         hideError('runsError');
       }catch(err){
@@ -150,7 +150,21 @@
         });
         if(res.status !== 202){
           const err = await res.json().catch(()=>({error:'failed'}));
-          statusEl.textContent = 'Failed: '+(err.error||res.status);
+          console.error('Test run error response:', err);
+          
+          // Enhanced error display with debugging info
+          let errorMsg = `Failed: ${err.detail || err.error || res.status}`;
+          if(err.traceback && err.traceback.length > 0) {
+            errorMsg += '\n\nDebug info:\n' + err.traceback.join('\n');
+          }
+          if(err.available_tasks) {
+            errorMsg += '\n\nAvailable tasks: ' + err.available_tasks.join(', ');
+          }
+          if(err.test_tasks) {
+            errorMsg += '\n\nTest tasks found: ' + err.test_tasks.join(', ');
+          }
+          
+          statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">${errorMsg}</pre>`;
           return;
         }
         const data = await res.json();
@@ -185,15 +199,15 @@
       <div class="card">
         <div class="muted">Success Rate (24h)</div>
         <div id="successRate" class="metric">–</div>
-      </div>
+    </div>
       <div class="card">
         <div class="muted">Failed Tests (24h)</div>
         <div id="failedTests" class="metric">–</div>
-      </div>
+    </div>
       <div class="card">
         <div class="muted">Avg Execution Time</div>
         <div id="avgTime" class="metric">–</div>
-      </div>
+    </div>
     </div>
     <div class="card" style="margin-bottom:16px; display:flex; align-items:center; gap:12px;">
       <button id="runBtn" style="background:#2563eb; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">Run Tests</button>

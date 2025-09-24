@@ -3,8 +3,7 @@ import tempfile
 import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from celery import states
-from app.celery_app import celery_app
+from celery import states, Task
 from app.utils.database import DatabaseManager
 from app.models import Base, TestRun, TestResult
 
@@ -17,8 +16,8 @@ def _ensure_tables(dm: DatabaseManager):
         pass
 
 
-@celery_app.task(bind=True)
-def run_test_suite(self, markers: list | None = None, parallel: bool = True, triggered_by: str = "admin"):
+# Define the task function first
+def run_test_suite(self: Task, markers: list | None = None, parallel: bool = True, triggered_by: str = "admin"):
     """Execute pytest, collect JUnit XML, and persist results to DB.
 
     Args:
@@ -137,5 +136,10 @@ def run_test_suite(self, markers: list | None = None, parallel: bool = True, tri
                 session.add(r)
 
     return {"run_id": run_id, "status": "completed" if proc.returncode == 0 else "failed"}
+
+
+# Register the task with Celery after defining it
+from app.celery_app import celery_app
+run_test_suite = celery_app.task(bind=True, name='app.tasks.test_tasks.run_test_suite')(run_test_suite)
 
 

@@ -53,12 +53,13 @@ def register():
         data = request.get_json() if request.is_json else request.form
         username = data.get('username')
         password = data.get('password')
+        role = data.get('role', 'user')
         
         if not username or not password:
             return jsonify({'error': 'Username and password required'}), 400
         
         auth_service = AuthService(container.database_manager)
-        user = auth_service.create_user(username, password)
+        user = auth_service.create_user(username, password, role)
         
         if user:
             login_user(user)
@@ -84,33 +85,3 @@ def logout():
     if request.is_json:
         return jsonify({'success': True})
     return redirect(url_for('auth.login'))
-
-@auth_bp.route('/register', methods=['POST'])
-def register():
-    """Handle user registration"""
-    try:
-        data = request.get_json() if request.is_json else request.form
-        username = data.get('username')
-        password = data.get('password')
-        role = data.get('role', 'user')
-        
-        if not username or not password:
-            return jsonify({'error': 'Username and password required'}), 400
-        
-        auth_service = AuthService(container.database_manager)
-        user = auth_service.create_user(username, password, role)
-        
-        if user:
-            if request.is_json:
-                return jsonify({'success': True, 'user': {'id': user.id, 'username': user.username}})
-            return redirect(url_for('auth.login'))
-        else:
-            if request.is_json:
-                return jsonify({'error': 'Username already exists'}), 400
-            return render_template('login.html', error='Username already exists')
-            
-    except Exception as e:
-        logger.error(f"Registration error: {e}")
-        if request.is_json:
-            return jsonify({'error': 'Internal server error'}), 500
-        return render_template('login.html', error='Registration failed')

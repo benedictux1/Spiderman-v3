@@ -1,14 +1,28 @@
+import os
+import logging
 from celery import Celery
 from config.settings import Config
 
+logger = logging.getLogger(__name__)
+
 def create_celery_app():
     """Create and configure Celery application"""
+    # Get Redis URL with fallback and validation
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    logger.info(f"Initializing Celery with Redis URL pattern: {redis_url[:20]}...")
+    
+    if redis_url.startswith('${{'):
+        logger.error(f"Environment variable not resolved: {redis_url}")
+        # Fallback for development
+        redis_url = 'redis://localhost:6379/0'
+        logger.warning(f"Using fallback Redis URL: {redis_url}")
+    
     celery = Celery('kith_platform')
     
     # Configure Celery
     celery.conf.update(
-        broker_url=Config.CELERY_BROKER_URL,
-        result_backend=Config.CELERY_RESULT_BACKEND,
+        broker_url=redis_url,
+        result_backend=redis_url,
         task_serializer='json',
         accept_content=['json'],
         result_serializer='json',

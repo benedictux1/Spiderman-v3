@@ -40,23 +40,19 @@ def create_celery_app():
         result_expires=3600,
     )
     
-    # Explicitly import task modules to ensure registration on Render
-    try:
-        from importlib import import_module
-        for module_name in [
+    # Configure modules for worker to import at startup to avoid circular imports
+    celery.conf.update(
+        include=[
             'app.tasks.ai_tasks',
             'app.tasks.telegram_tasks',
             'app.tasks.test_tasks',
-        ]:
-            try:
-                import_module(module_name)
-                logger.info(f"Loaded Celery tasks from {module_name}")
-            except Exception as e:
-                logger.warning(f"Could not load tasks from {module_name}: {e}")
-        # Keep autodiscover as a fallback
-        celery.autodiscover_tasks(['app.tasks'])
+        ]
+    )
+    # As a light fallback in dev, attempt autodiscovery of 'tasks' modules under 'app'
+    try:
+        celery.autodiscover_tasks(['app'])
     except Exception as e:
-        logger.warning(f"Task module import setup failed: {e}")
+        logger.debug(f"Autodiscover skipped: {e}")
     
     return celery
 

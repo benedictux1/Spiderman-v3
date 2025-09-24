@@ -38,22 +38,20 @@ def start_test_run():
         # Debug: Log available tasks
         logger.info(f"Celery app tasks: {list(celery_app.tasks.keys())}")
         
-        # Get the test runner task
-        run_test_suite = celery_app.tasks.get('app.tasks.test_tasks.run_test_suite')
-        if run_test_suite is None:
-            # List all available tasks for debugging
-            available_tasks = [k for k in celery_app.tasks.keys() if 'test' in k.lower()]
-            logger.error(f"run_test_suite task not found. Available test tasks: {available_tasks}")
+        # Try to enqueue via send_task to avoid relying on local task registration
+        task_name = 'app.tasks.test_tasks.run_test_suite'
+        logger.info(f"Starting test run with markers={markers}, parallel={parallel} using {task_name}")
+        try:
+            task = celery_app.send_task(task_name, kwargs={'markers': markers, 'parallel': parallel, 'triggered_by': 'admin'})
+        except Exception as e:
+            available_tasks = list(celery_app.tasks.keys())
+            logger.error(f"Failed to enqueue {task_name}: {e}")
             return jsonify({
                 'error': 'task_not_found',
                 'detail': 'Test runner task not registered. Please check Celery worker setup.',
-                'available_tasks': list(celery_app.tasks.keys()),
-                'test_tasks': available_tasks
+                'available_tasks': available_tasks,
+                'test_tasks': [k for k in available_tasks if 'test' in k.lower()]
             }), 503
-
-        # Start the real test run
-        logger.info(f"Starting test run with markers={markers}, parallel={parallel}")
-        task = run_test_suite.delay(markers=markers, parallel=parallel, triggered_by='admin')
         logger.info(f"Task started with ID: {task.id}")
         
         return jsonify({

@@ -58,7 +58,8 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
             expr = " or ".join(markers)
             cmd += ["-m", expr]
 
-        proc = subprocess.run(cmd, cwd=os.path.join(os.getcwd(), "kith-platform"), env=env)
+        # Run pytest from the worker's repository root (Render sets cwd to /opt/render/project/src/kith-platform)
+        proc = subprocess.run(cmd, cwd=os.getcwd(), env=env)
 
         total = passed = failed = skipped = 0
         duration_sum = 0.0

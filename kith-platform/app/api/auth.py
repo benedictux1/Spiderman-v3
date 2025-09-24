@@ -41,7 +41,7 @@ def login():
             return render_template('login.html', error='Invalid credentials')
             
     except Exception as e:
-        logger.error(f"Login error: {e}")
+        logger.exception(f"Login error: {e}")
         if request.is_json:
             return jsonify({'error': 'Internal server error'}), 500
         return render_template('login.html', error='Login failed')

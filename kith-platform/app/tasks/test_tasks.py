@@ -6,7 +6,7 @@ from datetime import datetime
 from celery import states
 from app.celery_app import celery_app
 from app.utils.database import DatabaseManager
-from models import Base, TestRun, TestResult
+from app.models import Base, TestRun, TestResult
 
 
 def _ensure_tables(dm: DatabaseManager):

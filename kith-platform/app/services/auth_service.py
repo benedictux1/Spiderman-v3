@@ -1,7 +1,7 @@
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
 from app.utils.database import DatabaseManager
-from models import User
+from app.models import User
 import logging
 
 logger = logging.getLogger(__name__)

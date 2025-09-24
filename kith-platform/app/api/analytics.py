@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 from app.utils.database import DatabaseManager
-from models import TestRun, TestResult
+from app.models import Base, TestRun, TestResult
 
 
 @analytics_bp.route('/test-runs', methods=['POST'])
@@ -99,6 +99,11 @@ def get_dashboard_overview():
     """Return high-level overview metrics for the dashboard."""
     try:
         dm = DatabaseManager()
+        # Ensure tables exist (safe no-op if already created)
+        try:
+            Base.metadata.create_all(dm.engine)
+        except Exception:
+            pass
         since = datetime.utcnow() - timedelta(hours=24)
         with dm.get_session() as s:
             runs = s.query(TestRun).filter(TestRun.started_at >= since).order_by(TestRun.started_at.desc()).all()
@@ -157,6 +162,10 @@ def get_dashboard_trends():
         start_date = end_date - timedelta(days=days - 1)
 
         dm = DatabaseManager()
+        try:
+            Base.metadata.create_all(dm.engine)
+        except Exception:
+            pass
         trends = []
         with dm.get_session() as s:
             # Build a dict per date
@@ -190,6 +199,10 @@ def get_dashboard_test_categories():
     """Return category success rates for donut chart."""
     try:
         dm = DatabaseManager()
+        try:
+            Base.metadata.create_all(dm.engine)
+        except Exception:
+            pass
         since = datetime.utcnow() - timedelta(days=7)
         with dm.get_session() as s:
             rows = s.query(TestResult.test_category, TestResult.status).filter(

@@ -31,6 +31,14 @@ class DatabaseManager:
                 conn.execute(text('SELECT 1'))
             logger.info("Database connection successful")
             
+            # Create tables if they don't exist
+            try:
+                from app.models import Base
+                Base.metadata.create_all(self.engine)
+                logger.info("Database tables created/verified")
+            except Exception as e:
+                logger.warning(f"Table creation warning: {e}")
+            
         except Exception as e:
             logger.error(f"Database initialization error: {e}", exc_info=True)
             raise

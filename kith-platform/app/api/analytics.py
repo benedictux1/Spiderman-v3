@@ -13,78 +13,44 @@ logger = logging.getLogger(__name__)
 @analytics_bp.route('/test-runs', methods=['POST'])
 @login_required
 def start_test_run():
-    """Start a test run. For now, creates a mock test run since Celery worker is not set up."""
+    """Start a real test run using Celery background worker."""
     try:
         body = request.get_json(silent=True) or {}
         markers = body.get('markers')
         parallel = bool(body.get('parallel', True))
-        
-        # Create a mock test run for demonstration
-        dm = DatabaseManager()
-        Base.metadata.create_all(dm.engine)
-        
-        with dm.get_session() as s:
-            test_run = TestRun(
-                status='completed',
-                total_tests=12,
-                passed_tests=10,
-                failed_tests=2,
-                skipped_tests=0,
-                execution_time_seconds=15.3,
-                started_at=datetime.utcnow(),
-                completed_at=datetime.utcnow(),
-                error_message=None,
-                markers=markers,
-                parallel=parallel,
-                triggered_by='admin'
-            )
-            s.add(test_run)
-            s.commit()
-            s.refresh(test_run)
-            
-            # Add some mock test results
-            mock_results = [
-                TestResult(
-                    run_id=test_run.id,
-                    test_name='test_user_login',
-                    nodeid='tests/test_auth.py::test_user_login',
-                    test_module='tests.test_auth',
-                    test_category='auth',
-                    status='passed',
-                    execution_time_seconds=0.5
-                ),
-                TestResult(
-                    run_id=test_run.id,
-                    test_name='test_user_logout',
-                    nodeid='tests/test_auth.py::test_user_logout',
-                    test_module='tests.test_auth',
-                    test_category='auth',
-                    status='passed',
-                    execution_time_seconds=0.3
-                ),
-                TestResult(
-                    run_id=test_run.id,
-                    test_name='test_invalid_login',
-                    nodeid='tests/test_auth.py::test_invalid_login',
-                    test_module='tests.test_auth',
-                    test_category='auth',
-                    status='failed',
-                    execution_time_seconds=1.2,
-                    failure_message='AssertionError: Expected 401, got 200',
-                    traceback_excerpt='assert response.status_code == 401'
-                )
-            ]
-            
-            for result in mock_results:
-                s.add(result)
-            s.commit()
-            
+
+        # Try to get Celery app from Flask extensions
+        celery_app = current_app.extensions.get('celery_app')
+        if celery_app is None:
+            # Fallback: try to import directly
+            try:
+                from app.celery_app import celery_app
+                current_app.extensions['celery_app'] = celery_app
+            except ImportError as e:
+                logger.error(f"Could not import Celery app: {e}")
+                return jsonify({
+                    'error': 'celery_not_available', 
+                    'detail': 'Celery worker not configured. Please set up Redis and Celery worker.'
+                }), 503
+
+        # Get the test runner task
+        run_test_suite = celery_app.tasks.get('app.tasks.test_tasks.run_test_suite')
+        if run_test_suite is None:
+            logger.error("run_test_suite task not found in Celery app")
             return jsonify({
-                'task_id': f'mock-task-{test_run.id}',
-                'run_id': test_run.id,
-                'message': 'Mock test run created successfully'
-            }), 202
-            
+                'error': 'task_not_found',
+                'detail': 'Test runner task not registered. Please check Celery worker setup.'
+            }), 503
+
+        # Start the real test run
+        task = run_test_suite.delay(markers=markers, parallel=parallel, triggered_by='admin')
+        
+        return jsonify({
+            'task_id': task.id,
+            'message': 'Test run started successfully',
+            'status': 'running'
+        }), 202
+        
     except Exception as exc:
         logger.exception('Failed to start test run')
         return jsonify({'error': 'failed_to_start', 'detail': str(exc)}), 500

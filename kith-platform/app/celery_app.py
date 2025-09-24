@@ -33,6 +33,11 @@ def create_celery_app():
         task_soft_time_limit=25 * 60,  # 25 minutes
         worker_prefetch_multiplier=1,
         worker_max_tasks_per_child=1000,
+        # Keep memory small on Starter (512MB)
+        worker_concurrency=1,
+        worker_pool='solo',
+        # Reduce result backend pressure
+        result_expires=3600,
     )
     
     # Auto-discover tasks

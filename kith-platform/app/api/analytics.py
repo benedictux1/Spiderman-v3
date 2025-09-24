@@ -7,6 +7,8 @@ from typing import Dict, Any, List
 from app.utils.database import DatabaseManager
 from app.models import Base, TestRun, TestResult
 
+analytics_bp = Blueprint('analytics', __name__)
+logger = logging.getLogger(__name__)
 
 @analytics_bp.route('/test-runs', methods=['POST'])
 @login_required
@@ -50,7 +52,7 @@ def list_test_runs():
                     'execution_time_seconds': r.execution_time_seconds,
                     'started_at': r.started_at.isoformat()+'Z' if r.started_at else None,
                     'completed_at': r.completed_at.isoformat()+'Z' if r.completed_at else None,
-                    'error_message': r.error_message,
+                    'failure_reason': r.error_message,
                 })
             return jsonify({'runs': data})
     except Exception as exc:
@@ -97,9 +99,6 @@ def get_test_run(run_id: int):
     except Exception as exc:
         logger.exception('Failed to get test run')
         return jsonify({'error': 'failed_to_get', 'detail': str(exc)}), 500
-
-analytics_bp = Blueprint('analytics', __name__)
-logger = logging.getLogger(__name__)
 
 @analytics_bp.route('/dashboard/overview', methods=['GET'])
 @login_required

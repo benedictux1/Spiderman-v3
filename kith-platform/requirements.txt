@@ -1,4 +1,4 @@
-# Force deployment trigger
+# Deployment trigger v2
 annotated-types==0.7.0
 anyio==4.10.0
 attrs==25.3.0

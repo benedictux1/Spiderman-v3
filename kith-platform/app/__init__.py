@@ -2,7 +2,6 @@ from flask import Flask
 from flask_login import LoginManager
 from flask_cors import CORS
 from config.settings import Config
-from config.database import DatabaseConfig
 import logging
 
 def create_app(config_class=Config):
@@ -84,6 +83,12 @@ def create_app(config_class=Config):
         app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
     except Exception as e:
         logging.warning(f"Failed to register analytics blueprint: {e}")
+
+    try:
+        from app.celery_app import celery_app
+        app.extensions['celery_app'] = celery_app
+    except Exception as e:
+        logging.warning(f"Failed to attach celery app: {e}")
     
     @login_manager.user_loader
     def load_user(user_id):

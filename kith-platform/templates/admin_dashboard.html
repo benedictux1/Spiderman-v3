@@ -22,7 +22,11 @@
   <script>
     async function fetchJSON(url){
       const res = await fetch(url, { credentials:'include' });
-      if(!res.ok) throw new Error('Request failed: '+res.status);
+      if(!res.ok){
+        const detail = await res.json().catch(()=>null);
+        const message = detail && detail.detail ? detail.detail : 'Request failed: '+res.status;
+        throw new Error(message);
+      }
       return res.json();
     }
     function setText(id, text){ const el=document.getElementById(id); if(el) el.textContent = text; }
@@ -68,7 +72,8 @@
         renderCategoriesChart(cats.categories||[]);
       }catch(e){
         console.error(e);
-        setText('error', e.message);
+        const errEl=document.getElementById('error');
+        if(errEl) errEl.textContent='Failed to load dashboard: '+e.message;
       }
     }
     window.addEventListener('DOMContentLoaded', load);
@@ -148,9 +153,14 @@
     async function refreshRuns(){
       try{
         const res = await fetch('/api/analytics/test-runs', {credentials:'include'});
+        if(!res.ok){
+          const err=await res.json().catch(()=>({}));
+          throw new Error(err.detail || ('Request failed: '+res.status));
+        }
         const data = await res.json();
         const body = document.getElementById('runsBody');
-        body.innerHTML = (data.runs||[]).map(r => `
+        const runs = data.runs||[];
+        body.innerHTML = runs.length ? runs.map(r => `
           <tr>
             <td style="padding:6px 8px;">${r.id}</td>
             <td style="padding:6px 8px; text-transform:capitalize;">${r.status}</td>
@@ -158,8 +168,14 @@
             <td style="padding:6px 8px;">${(r.execution_time_seconds||0).toFixed(2)}</td>
             <td style="padding:6px 8px;">${r.started_at||''}</td>
           </tr>
-        `).join('');
-      }catch(e){ /* ignore */ }
+        `).join('') : '<tr><td colspan="5" style="padding:8px; color:#94a3b8;">No runs yet. Click "Run Tests" to start one.</td></tr>';
+      }catch(e){
+        console.error(e);
+        const statusEl=document.getElementById('runStatus');
+        if(statusEl && !statusEl.textContent){
+          statusEl.textContent='Failed to load runs: '+e.message;
+        }
+      }
     }
 
     document.getElementById('runBtn').addEventListener('click', startRun);

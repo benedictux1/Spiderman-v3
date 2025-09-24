@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required
 import logging
 from datetime import datetime, timedelta
@@ -15,7 +15,15 @@ def start_test_run():
         body = request.get_json(silent=True) or {}
         markers = body.get('markers')
         parallel = bool(body.get('parallel', True))
-        from app.tasks.test_tasks import run_test_suite
+
+        celery_app = current_app.extensions.get('celery_app')
+        if celery_app is None:
+            raise RuntimeError('Celery app not initialized')
+
+        run_test_suite = celery_app.tasks.get('app.tasks.test_tasks.run_test_suite')
+        if run_test_suite is None:
+            raise RuntimeError('run_test_suite task not registered')
+
         task = run_test_suite.delay(markers=markers, parallel=parallel, triggered_by='admin')
         return jsonify({'task_id': task.id}), 202
     except Exception as exc:

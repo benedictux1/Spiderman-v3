@@ -1,106 +1,65 @@
 import pytest
-from unittest.mock import Mock, patch
-from app.utils.database import DatabaseManager
-from config.database import DatabaseConfig
+from unittest.mock import patch, MagicMock
+from app.utils.database import get_database_url, create_engine, DatabaseManager
+from app.config.settings import DevConfig, TestConfig
 
-@pytest.mark.unit
-@pytest.mark.database
+class TestDatabaseUtils:
+    """Test database utility functions"""
+
+    def test_get_database_url_with_env_var(self, monkeypatch):
+        """Test DATABASE_URL is read from environment variable"""
+        test_url = "postgresql://user:pass@host/db"
+        monkeypatch.setenv("DATABASE_URL", test_url)
+        assert get_database_url(DevConfig) == test_url
+
+    def test_get_database_url_with_dev_fallback(self, monkeypatch):
+        """Test fallback to DevConfig.DATABASE_URL when env var is not set"""
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        url = get_database_url(DevConfig)
+        # In our isolated test env, it should fall back to a local sqlite
+        assert url.startswith('sqlite:///')
+
+    def test_get_database_url_with_test_config(self, monkeypatch):
+        """Test that TestConfig forces an in-memory SQLite database"""
+        monkeypatch.setenv("DATABASE_URL", "postgresql://prod-db")
+        url = get_database_url(TestConfig)
+        assert url == "sqlite:///:memory:"
+
+    def test_get_database_url_postgres_to_postgresql(self, monkeypatch):
+        """Test that 'postgres://' is correctly replaced with 'postgresql://'"""
+        test_url = "postgres://user:pass@host/db"
+        monkeypatch.setenv("DATABASE_URL", test_url)
+        expected_url = "postgresql://user:pass@host/db"
+        assert get_database_url(DevConfig) == expected_url
+
+    def test_create_engine(self, monkeypatch):
+        """Test engine creation"""
+        monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+        engine = create_engine(DevConfig)
+        assert engine is not None
+        assert str(engine.url) == "sqlite:///:memory:"
+
+    def test_create_engine_with_echo(self, monkeypatch):
+        """Test engine creation with echo enabled"""
+        monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+        engine = create_engine(TestConfig) # TestConfig should have SQLALCHEMY_ECHO = True
+        assert engine.echo is True
+
 class TestDatabaseManager:
-    
-    def test_database_manager_initialization(self):
-        """Test database manager initialization"""
-        # Initialize manager directly; ensure engine/session are set
-        manager = DatabaseManager()
-        assert manager.engine is not None
-        assert manager.SessionLocal is not None
-    
-    def test_get_session_context_manager(self, db_manager):
-        """Test database session context manager"""
+    """Test the DatabaseManager"""
+
+    def test_database_manager_initialization(self, monkeypatch):
+        """Test that the DatabaseManager initializes correctly"""
+        monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+        db_manager = DatabaseManager(config_class=TestConfig)
+        assert db_manager.engine is not None
+        assert str(db_manager.engine.url) == "sqlite:///:memory:"
+
+    def test_get_session(self, monkeypatch):
+        """Test getting a session from the manager"""
+        monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+        db_manager = DatabaseManager(config_class=TestConfig)
         with db_manager.get_session() as session:
             assert session is not None
-            # Session should be committed and closed after context
-    
-    def test_get_session_sync(self, db_manager):
-        """Test synchronous session retrieval"""
-        session = db_manager.get_session_sync()
-        assert session is not None
-        
-        # Clean up
-        db_manager.close_session(session)
-    
-    def test_close_session(self, db_manager):
-        """Test session closing"""
-        session = db_manager.get_session_sync()
-        db_manager.close_session(session)
-        # Should not raise any exceptions
-    
-    def test_session_rollback_on_exception(self, db_manager):
-        """Test that session rolls back on exception"""
-        with pytest.raises(Exception):
-            with db_manager.get_session() as session:
-                # Simulate an error
-                raise Exception("Test error")
-        
-        # Session should be rolled back and closed
-
-@pytest.mark.unit
-@pytest.mark.database
-class TestDatabaseConfig:
-    
-    def test_get_database_url_with_env_var(self):
-        """Test database URL retrieval with environment variable"""
-        with patch.dict('os.environ', {'DATABASE_URL': 'postgresql://test:test@localhost/test'}):
-            url = DatabaseConfig.get_database_url()
-            assert url == 'postgresql://test:test@localhost/test'
-    
-    def test_get_database_url_with_dev_fallback(self):
-        """Test database URL retrieval with development fallback"""
-        with patch.dict('os.environ', {}, clear=True):
-            url = DatabaseConfig.get_database_url()
-            assert url.startswith('sqlite:///') or url.startswith('postgresql://')
-    
-    def test_get_database_url_with_dev_env_var(self):
-        """Test database URL retrieval with DEV_DATABASE_URL (not used in current impl)"""
-        with patch.dict('os.environ', {'DEV_DATABASE_URL': 'postgresql://dev:dev@localhost/dev'}):
-            url = DatabaseConfig.get_database_url()
-            # Current implementation ignores DEV_DATABASE_URL; assert fallback is used
-            assert url != 'postgresql://dev:dev@localhost/dev'
-    
-    def test_get_database_url_postgres_to_postgresql(self):
-        """Test that postgres:// URLs are converted to postgresql://"""
-        with patch.dict('os.environ', {'DATABASE_URL': 'postgres://test:test@localhost/test'}):
-            url = DatabaseConfig.get_database_url()
-            assert url == 'postgresql://test:test@localhost/test'
-    
-    @patch('app.utils.database.create_engine')
-    def test_create_engine(self, mock_create_engine):
-        """Test engine creation"""
-        mock_engine = Mock()
-        mock_create_engine.return_value = mock_engine
-        
-        with patch.dict('os.environ', {'DATABASE_URL': 'postgresql://test:test@localhost/test'}):
-            engine = DatabaseConfig.create_engine()
-            
-            assert engine == mock_engine
-            mock_create_engine.assert_called_once()
-            
-            # Check that proper parameters were passed
-            call_args = mock_create_engine.call_args
-            assert call_args[0][0] == 'postgresql://test:test@localhost/test'
-            assert 'pool_pre_ping' in call_args[1]
-    
-    @patch('app.utils.database.create_engine')
-    def test_create_engine_with_echo(self, mock_create_engine):
-        """Test engine creation with SQLALCHEMY_ECHO enabled"""
-        mock_engine = Mock()
-        mock_create_engine.return_value = mock_engine
-        
-        with patch.dict('os.environ', {
-            'DATABASE_URL': 'postgresql://test:test@localhost/test',
-            'SQLALCHEMY_ECHO': 'true'
-        }):
-            engine = DatabaseConfig.create_engine()
-            
-            call_args = mock_create_engine.call_args
-            # Our simple create_engine wrapper does not propagate echo; just assert called
-            assert mock_create_engine.called
+            assert session.is_active is True
+        assert session.is_active is False

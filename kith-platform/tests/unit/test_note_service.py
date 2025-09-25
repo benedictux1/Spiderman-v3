@@ -10,9 +10,18 @@ class TestNoteService:
     def test_process_note_success(self, db_session, sample_contact, mock_ai_service):
         """Test successful note processing"""
         # Setup
+        # Configure the mock AI service to return a valid synthesis
+        mock_ai_service.synthesize_note.return_value = {
+            'contact_name': 'John Doe',
+            'summary': 'Test summary',
+            'action_items': ['- item 1'],
+            'sentiment': 'positive',
+            'tags': ['work', 'pizza']
+        }
+        
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
-        cm = MagicMock()
+        cm = Mock()
         cm.__enter__.return_value = db_session
         cm.__exit__.return_value = False
         note_service.db_manager.get_session.return_value = cm

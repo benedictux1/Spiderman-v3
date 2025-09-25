@@ -162,10 +162,6 @@ class ContactTag(Base):
     contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), primary_key=True)
     tag_id = Column(Integer, ForeignKey('tags.id', ondelete='CASCADE'), primary_key=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    contact = relationship("Contact")
-    tag = relationship("Tag")
 
 # Database initialization is now handled by Alembic migrations
 # This file only contains the model definitions 

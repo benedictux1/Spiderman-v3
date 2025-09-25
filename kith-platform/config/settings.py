@@ -30,13 +30,16 @@ class DevelopmentConfig(Config):
     DEBUG = True
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DEV_DATABASE_URL',
-        'postgresql://postgres:postgres@localhost:5432/kith_dev'
+        'sqlite:///kith_platform.db' # Default to SQLite for easy local setup
     )
 
 class ProductionConfig(Config):
     DEBUG = False
-    # Production-specific settings
+    # Ensure a secret key is set in production
+    if Config.SECRET_KEY == 'development-key-change-in-production':
+        raise ValueError("FLASK_SECRET_KEY must be set in the production environment.")
 
 class TestingConfig(Config):
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = 'postgresql://postgres:postgres@localhost:5432/kith_test'
+    # Use a separate, predictable SQLite database for tests
+    SQLALCHEMY_DATABASE_URI = os.getenv('TEST_DATABASE_URL', 'sqlite:///test_kith_platform.db')

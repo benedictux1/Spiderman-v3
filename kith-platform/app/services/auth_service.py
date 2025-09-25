@@ -27,16 +27,34 @@ class AuthService:
     
     def authenticate_user(self, username: str, password: str) -> Optional[User]:
         """Authenticate a user with username and password"""
+        logger.info(f"🔧 DEBUG: Authenticating user: {username}")
         try:
             with self.db_manager.get_session() as session:
+                logger.info(f"🔧 DEBUG: Database session created for auth")
                 user = session.query(User).filter(User.username == username).first()
-                if user and check_password_hash(user.password_hash, password):
-                    # Detach the user from the session to avoid DetachedInstanceError
-                    session.expunge(user)
-                    return user
+                logger.info(f"🔧 DEBUG: User query result: {user.username if user else 'None'}")
+                
+                if user:
+                    logger.info(f"🔧 DEBUG: User found: {user.username} (ID: {user.id})")
+                    logger.info(f"🔧 DEBUG: Checking password hash...")
+                    password_valid = check_password_hash(user.password_hash, password)
+                    logger.info(f"🔧 DEBUG: Password valid: {password_valid}")
+                    
+                    if password_valid:
+                        # Detach the user from the session to avoid DetachedInstanceError
+                        session.expunge(user)
+                        logger.info(f"✅ User authenticated successfully: {user.username}")
+                        return user
+                    else:
+                        logger.warning(f"❌ Invalid password for user: {username}")
+                else:
+                    logger.warning(f"❌ User not found: {username}")
                 return None
         except Exception as e:
-            logger.error(f"Error authenticating user {username}: {e}")
+            logger.error(f"❌ Error authenticating user {username}: {e}")
+            logger.error(f"🔧 DEBUG: Error type: {type(e).__name__}")
+            logger.error(f"🔧 DEBUG: Error details: {str(e)}")
+            logger.error("🔧 DEBUG: Full traceback:", exc_info=True)
             return None
     
     def create_user(self, username: str, password: str, role: str = 'user') -> Optional[User]:

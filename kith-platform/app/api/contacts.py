@@ -1,48 +1,78 @@
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 import logging
-from database.optimized_queries import OptimizedContactQueries
-from config.database import DatabaseConfig
-from database.connection_manager import get_session
-from models import Contact, SynthesizedEntry
+from app.utils.dependencies import container
+from app.models import Contact, SynthesizedEntry
 from constants import CATEGORY_ORDER
 
 contacts_bp = Blueprint('contacts', __name__)
 logger = logging.getLogger(__name__)
 
-# Initialize optimized queries
-optimized_queries = OptimizedContactQueries(DatabaseConfig)
+# Use container's database manager instead of direct imports
+logger.info("🔧 DEBUG: Contacts API initialized with container database manager")
 
 @contacts_bp.route('/', methods=['GET'])
 @login_required
 def get_contacts():
     """Get all contacts for the current user with optimized queries"""
     try:
+        logger.info(f"🔧 DEBUG: Getting contacts for user: {current_user.id}")
+        logger.info(f"🔧 DEBUG: Request args: {request.args}")
+        
         # Get query parameters
         tier = request.args.get('tier', type=int)
         search = request.args.get('search', type=str)
         limit = request.args.get('limit', type=int)
         page = request.args.get('page', 1, type=int)
         
+        logger.info(f"🔧 DEBUG: Query parameters - tier: {tier}, search: {search}, limit: {limit}, page: {page}")
+        
         # Calculate offset for pagination
         offset = (page - 1) * (limit or 50) if limit else None
         
-        # Use optimized query
-        contacts = optimized_queries.get_contacts_with_details(
-            user_id=current_user.id,
-            tier=tier,
-            search=search,
-            limit=limit
-        )
-        
-        # Get tier summary
-        tier_summary = optimized_queries.get_contacts_by_tier_summary(current_user.id)
-        
-        # Return contacts in the format expected by tests (wrapped)
-        return jsonify({'contacts': contacts, 'tier_summary': tier_summary})
+        # Use container's database manager instead of optimized queries
+        logger.info("🔧 DEBUG: Using container database manager for contacts query...")
+        with container.database_manager.get_session() as session:
+            logger.info("🔧 DEBUG: Database session created for contacts")
+            
+            # Simple query to get contacts for the user
+            query = session.query(Contact).filter(Contact.user_id == current_user.id)
+            
+            if tier is not None:
+                query = query.filter(Contact.tier == tier)
+                logger.info(f"🔧 DEBUG: Filtered by tier: {tier}")
+            
+            if search:
+                query = query.filter(Contact.full_name.ilike(f'%{search}%'))
+                logger.info(f"🔧 DEBUG: Filtered by search: {search}")
+            
+            if limit:
+                query = query.limit(limit)
+                logger.info(f"🔧 DEBUG: Limited to: {limit}")
+            
+            contacts = query.all()
+            logger.info(f"🔧 DEBUG: Found {len(contacts)} contacts")
+            
+            # Convert to dict format
+            contacts_data = []
+            for contact in contacts:
+                contacts_data.append({
+                    'id': contact.id,
+                    'full_name': contact.full_name,
+                    'tier': contact.tier,
+                    'telegram_username': contact.telegram_username,
+                    'is_verified': contact.is_verified,
+                    'is_premium': contact.is_premium
+                })
+            
+            logger.info(f"✅ Contacts retrieved successfully: {len(contacts_data)} contacts")
+            return jsonify({'contacts': contacts_data})
         
     except Exception as e:
-        logger.error(f"Error getting contacts: {e}")
+        logger.error(f"❌ Error getting contacts: {e}")
+        logger.error(f"🔧 DEBUG: Error type: {type(e).__name__}")
+        logger.error(f"🔧 DEBUG: Error details: {str(e)}")
+        logger.error("🔧 DEBUG: Full traceback:", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @contacts_bp.route('/<int:contact_id>', methods=['GET'])

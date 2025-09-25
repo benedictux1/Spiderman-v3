@@ -86,6 +86,28 @@ def db_manager(test_db):
     manager.SessionLocal = sessionmaker(bind=test_db)
     return manager
 
+@pytest.fixture(autouse=True)
+def override_container_db_manager(db_manager):
+    """Override the container's database manager with the test database manager"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Overriding container database manager for tests...")
+    from app.utils.dependencies import container
+    original_manager = container._database_manager
+    logger.info(f"🔧 DEBUG: Original manager: {original_manager}")
+    logger.info(f"🔧 DEBUG: Test manager: {db_manager}")
+    logger.info(f"🔧 DEBUG: Test manager engine: {db_manager.engine}")
+    
+    container._database_manager = db_manager
+    logger.info("✅ Container database manager overridden")
+    
+    yield
+    
+    logger.info("🔧 DEBUG: Restoring original database manager...")
+    container._database_manager = original_manager
+    logger.info("✅ Original database manager restored")
+
 # Factory classes for test data generation
 class UserFactory(SQLAlchemyModelFactory):
     class Meta:
@@ -135,9 +157,20 @@ class SynthesizedEntryFactory(SQLAlchemyModelFactory):
 @pytest.fixture
 def sample_user(db_session):
     """Create a sample user for testing"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Creating sample user...")
     user = UserFactory()
+    logger.info(f"🔧 DEBUG: User factory created user: {user.username} (ID: {user.id})")
+    
     db_session.add(user)
+    logger.info("🔧 DEBUG: User added to session")
+    
     db_session.commit()
+    logger.info("🔧 DEBUG: Session committed")
+    
+    logger.info(f"✅ Sample user created: {user.username} (ID: {user.id})")
     return user
 
 @pytest.fixture
@@ -159,9 +192,17 @@ def sample_note(db_session, sample_contact):
 @pytest.fixture
 def authenticated_user(client, sample_user):
     """Create an authenticated user session"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"🔧 DEBUG: Creating authenticated user session for: {sample_user.username} (ID: {sample_user.id})")
+    
     with client.session_transaction() as sess:
         sess['_user_id'] = str(sample_user.id)
         sess['_fresh'] = True
+        logger.info(f"🔧 DEBUG: Session variables set - _user_id: {sess.get('_user_id')}, _fresh: {sess.get('_fresh')}")
+    
+    logger.info(f"✅ Authenticated user session created for: {sample_user.username}")
     return sample_user
 
 @pytest.fixture

@@ -24,24 +24,42 @@ def login():
         username = data.get('username')
         password = data.get('password')
         
+        logger.info(f"🔧 DEBUG: Login attempt for username: {username}")
+        logger.info(f"🔧 DEBUG: Request is JSON: {request.is_json}")
+        logger.info(f"🔧 DEBUG: Data received: {data}")
+        
         if not username or not password:
+            logger.warning("❌ Missing username or password")
             return jsonify({'error': 'Username and password required'}), 400
         
+        logger.info(f"🔧 DEBUG: Creating auth service...")
         auth_service = AuthService(container.database_manager)
+        logger.info(f"🔧 DEBUG: Auth service created, authenticating user...")
+        
         user = auth_service.authenticate_user(username, password)
+        logger.info(f"🔧 DEBUG: Authentication result: {user.username if user else 'None'}")
         
         if user:
+            logger.info(f"🔧 DEBUG: User authenticated, logging in...")
             login_user(user)
+            logger.info(f"✅ User logged in successfully: {user.username}")
+            
             if request.is_json:
-                return jsonify({'success': True, 'user': {'id': user.id, 'username': user.username}})
+                response_data = {'success': True, 'user': {'id': user.id, 'username': user.username}}
+                logger.info(f"🔧 DEBUG: Returning JSON response: {response_data}")
+                return jsonify(response_data)
             return redirect(url_for('index'))
         else:
+            logger.warning(f"❌ Authentication failed for user: {username}")
             if request.is_json:
                 return jsonify({'error': 'Invalid credentials'}), 401
             return render_template('login.html', error='Invalid credentials')
             
     except Exception as e:
-        logger.exception(f"Login error: {e}")
+        logger.error(f"❌ Login error: {e}")
+        logger.error(f"🔧 DEBUG: Error type: {type(e).__name__}")
+        logger.error(f"🔧 DEBUG: Error details: {str(e)}")
+        logger.error("🔧 DEBUG: Full traceback:", exc_info=True)
         if request.is_json:
             return jsonify({'error': 'Internal server error'}), 500
         return render_template('login.html', error='Login failed')

@@ -80,7 +80,7 @@ pyparsing==3.2.3
 PyPika==0.48.9
 pyproject_hooks==1.2.0
 pytest==8.4.2
-pytest-asyncio==1.2.0
+pytest-asyncio>=0.21.0
 pytest-cov==4.1.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.0
@@ -131,4 +131,3 @@ Flask-Login==0.6.3  # Session auth management
 python-json-logger==3.3.0
 
 celery[redis]==5.4.0
-backports-asyncio-runner==1.2.0

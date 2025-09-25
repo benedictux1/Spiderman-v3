@@ -1,1 +1,1 @@
-# Deploy trigger Wed Sep 24 13:24:52 +08 2025
+# Deploy trigger Wed Sep 25 02:45:00 +08 2025 - Add factory-boy dependency

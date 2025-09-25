@@ -35,6 +35,18 @@ def start_test_run():
                     'debug': str(e)
                 }), 503
 
+        # CRITICAL: Import test_tasks module to ensure task registration
+        try:
+            from app.tasks import test_tasks
+            logger.info("Successfully imported test_tasks module for task registration")
+        except ImportError as e:
+            logger.error(f"Could not import test_tasks module: {e}")
+            return jsonify({
+                'error': 'test_tasks_not_available',
+                'detail': 'Test tasks module could not be imported.',
+                'debug': str(e)
+            }), 503
+
         # Debug: Log available tasks
         logger.info(f"Celery app tasks: {list(celery_app.tasks.keys())}")
         

@@ -247,9 +247,9 @@ def create_contact():
         from sqlalchemy import func
         from models import Contact
         import uuid
-        from database.connection_manager import get_session
 
-        with get_session() as session:
+        logger.info("🔧 DEBUG: Using container database manager for contact creation...")
+        with container.database_manager.get_session() as session:
             try:
                 # Duplicate check (case-insensitive)
                 existing = session.query(Contact).filter(

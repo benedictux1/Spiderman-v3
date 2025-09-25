@@ -60,6 +60,7 @@ class SmartConnectionManager:
         self.lock = threading.Lock()
         
         # Initialize engine
+        logger.info(f"🔧 DEBUG: SmartConnectionManager initializing with database_url: {database_url}")
         self._create_engine()
         self._setup_event_listeners()
         
@@ -71,6 +72,7 @@ class SmartConnectionManager:
     def _create_engine(self):
         """Create SQLAlchemy engine with optimized pooling"""
         try:
+            logger.info(f"🔧 DEBUG: Creating engine with URL: {self.database_url}")
             # Choose pool class based on database type
             if 'sqlite' in self.database_url:
                 # SQLite doesn't support connection pooling
@@ -305,12 +307,21 @@ def get_connection_manager(database_url: str = None, options: Dict[str, Any] = N
                 # Fallback to SQLite for development
                 database_url = 'sqlite:///kith_platform.db'
             
-            # Ensure proper PostgreSQL URI format for Render
+            # Ensure proper PostgreSQL URI format for Render, but fallback to SQLite if psycopg is not available
             if database_url.startswith('postgres://'):
                 database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
             elif database_url.startswith('postgresql://') and '+psycopg' not in database_url:
                 database_url = database_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+            
+            # Check if psycopg is available, if not, fallback to SQLite
+            try:
+                import psycopg
+                logger.info("psycopg driver available, using PostgreSQL")
+            except ImportError:
+                logger.warning("psycopg driver not available, falling back to SQLite")
+                database_url = 'sqlite:///kith_platform.db'
         
+        logger.info(f"🔧 DEBUG: Creating connection manager with URL: {database_url}")
         _connection_manager = SmartConnectionManager(database_url, options)
     
     return _connection_manager

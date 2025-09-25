@@ -66,7 +66,7 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
     # Build pytest command
     with tempfile.TemporaryDirectory() as td:
         junit_path = os.path.join(td, "junit.xml")
-        cmd = ["python", "-m", "pytest", "-q", f"--junitxml={junit_path}", "--tb=short"]
+        cmd = ["python", "-m", "pytest", "tests/", "-q", f"--junitxml={junit_path}", "--tb=short"]
         logger.info(f"🔧 DEBUG: Base pytest command: {cmd}")
         
         # Disable external plugins for stability
@@ -203,6 +203,12 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                 pass
         
         # Use task duration if JUnit XML duration seems unrealistic (too fast)
+        logger.info(f"🔧 DEBUG: Timing decision - duration_sum: {duration_sum:.3f}, actual_duration: {actual_duration:.3f}")
+        logger.info(f"🔧 DEBUG: Condition 1 (duration_sum > 0): {duration_sum > 0}")
+        logger.info(f"🔧 DEBUG: Condition 2 (duration_sum < 1.0): {duration_sum < 1.0}")
+        logger.info(f"🔧 DEBUG: Condition 3 (actual_duration > duration_sum * 2): {actual_duration > duration_sum * 2}")
+        logger.info(f"🔧 DEBUG: duration_sum * 2 = {duration_sum * 2:.3f}")
+        
         if duration_sum > 0 and duration_sum < 1.0 and actual_duration > duration_sum * 2:
             logger.warning(f"⚠️ JUnit XML duration ({duration_sum:.2f}s) seems unrealistic, using task duration ({actual_duration:.2f}s)")
             duration_sum = actual_duration

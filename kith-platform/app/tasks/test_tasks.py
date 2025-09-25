@@ -160,7 +160,9 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                             failed += 1
                             failure_message = failure.attrib.get("message") or (failure.text or "").strip()[:2000]
                             traceback_excerpt = (failure.text or "").strip()[:4000]
-                            logger.info(f"🔧 DEBUG: Test failed: {name} - {failure_message[:100]}...")
+                            logger.error(f"❌ TEST FAILED: {name}")
+                            logger.error(f"❌ Failure message: {failure_message[:200]}...")
+                            logger.error(f"❌ Traceback excerpt: {traceback_excerpt[:300]}...")
                         elif skipped_tag is not None:
                             status = "skipped"
                             skipped += 1
@@ -200,8 +202,11 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                 # Fall back to aggregate only
                 pass
         
-        # Fallback duration calculation if JUnit XML parsing failed or no tests found
-        if duration_sum == 0.0 and actual_duration > 0:
+        # Use task duration if JUnit XML duration seems unrealistic (too fast)
+        if duration_sum > 0 and duration_sum < 1.0 and actual_duration > duration_sum * 2:
+            logger.warning(f"⚠️ JUnit XML duration ({duration_sum:.2f}s) seems unrealistic, using task duration ({actual_duration:.2f}s)")
+            duration_sum = actual_duration
+        elif duration_sum == 0.0 and actual_duration > 0:
             duration_sum = actual_duration
             logger.info(f"🔧 DEBUG: Using fallback duration: {duration_sum:.2f} seconds")
         elif duration_sum == 0.0:

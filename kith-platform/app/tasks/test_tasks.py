@@ -129,6 +129,8 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
 
         # Parse JUnit XML if exists
         logger.info(f"🔧 DEBUG: Checking for JUnit XML at: {junit_path}")
+        logger.info(f"🔧 DEBUG: JUnit XML file exists: {os.path.exists(junit_path)}")
+        logger.info(f"🔧 DEBUG: JUnit XML file size: {os.path.getsize(junit_path) if os.path.exists(junit_path) else 'N/A'}")
         if os.path.exists(junit_path):
             logger.info("🔧 DEBUG: JUnit XML found, parsing...")
             try:
@@ -202,8 +204,12 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         if duration_sum == 0.0 and actual_duration > 0:
             duration_sum = actual_duration
             logger.info(f"🔧 DEBUG: Using fallback duration: {duration_sum:.2f} seconds")
+        elif duration_sum == 0.0:
+            # Use actual task duration as final fallback
+            duration_sum = actual_duration
+            logger.warning(f"⚠️ JUnit XML not found, using task duration: {duration_sum:.2f} seconds")
         else:
-            logger.warning("⚠️ JUnit XML not found, using subprocess return code only")
+            logger.info(f"🔧 DEBUG: Using JUnit XML duration: {duration_sum:.2f} seconds")
 
     # Persist aggregate and details
     logger.info("🔧 DEBUG: Persisting test results to database...")

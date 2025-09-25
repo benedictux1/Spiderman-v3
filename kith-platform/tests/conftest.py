@@ -15,62 +15,23 @@ from werkzeug.security import generate_password_hash
 
 # Set test environment
 os.environ['FLASK_ENV'] = 'testing'
-# Use SQLite for testing if PostgreSQL is not available
-if 'DATABASE_URL' not in os.environ:
-    os.environ['DATABASE_URL'] = 'sqlite:///test_kith_platform.db'
+# FORCE SQLite for testing - NEVER use production database for tests
+os.environ['DATABASE_URL'] = 'sqlite:///test_kith_platform.db'
+print("🔧 TEST SETUP: Forcing SQLite database for test isolation")
 
 @pytest.fixture(scope='session')
 def test_db():
-    """Create test database"""
-    # Check if psycopg2 is available
-    try:
-        import psycopg2
-        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-        psycopg2_available = True
-    except ImportError:
-        psycopg2_available = False
-        print("psycopg2 not available, using SQLite for testing")
+    """Create test database - Always uses SQLite for complete isolation"""
+    print("🔧 Creating isolated SQLite test database")
     
-    if psycopg2_available:
-        # Create test database if it doesn't exist
-        try:
-            conn = psycopg2.connect(
-                host='localhost',
-                user='postgres',
-                password='postgres',
-                database='postgres'
-            )
-            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-            cursor = conn.cursor()
-            cursor.execute('CREATE DATABASE kith_test')
-            cursor.close()
-            conn.close()
-        except psycopg2.errors.DuplicateDatabase:
-            pass  # Database already exists
-        except Exception as e:
-            # If PostgreSQL is not available, skip database setup
-            print(f"PostgreSQL not available for testing: {e}")
-            psycopg2_available = False
-        
-        if psycopg2_available:
-            # Create tables
-            engine = create_engine('postgresql://postgres:postgres@localhost:5432/kith_test')
-            Base.metadata.create_all(engine)
-            
-            yield engine
-            
-            # Cleanup
-            Base.metadata.drop_all(engine)
-            engine.dispose()
-            return
-    
-    # Fallback to SQLite if PostgreSQL is not available
+    # Always use SQLite for tests - complete isolation from production
     engine = create_engine('sqlite:///test_kith_platform.db')
     Base.metadata.create_all(engine)
     
     yield engine
     
     # Cleanup
+    print("🔧 Cleaning up test database")
     Base.metadata.drop_all(engine)
     engine.dispose()
 

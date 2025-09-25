@@ -121,7 +121,11 @@ class TestNoteService:
         """Test note processing creates synthesis entries"""
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
-        note_service.db_manager.get_session.return_value.__enter__.return_value = db_session
+        # Configure mock to work as context manager
+        mock_session_context = Mock()
+        mock_session_context.__enter__ = Mock(return_value=db_session)
+        mock_session_context.__exit__ = Mock(return_value=None)
+        note_service.db_manager.get_session.return_value = mock_session_context
         
         content = "John works at Google and likes pizza"
         user_id = sample_contact.user_id

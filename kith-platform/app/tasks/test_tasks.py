@@ -73,7 +73,6 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
         env["FORCE_SQLITE_FOR_TESTS"] = "1"
         env["FLASK_ENV"] = "testing"
-        env["PYTHONPATH"] = test_dir
         
         logger.info(f"🔧 DEBUG: Environment variables for pytest:")
         logger.info(f"  - PYTEST_DISABLE_PLUGIN_AUTOLOAD: {env.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD')}")
@@ -103,6 +102,9 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         logger.info(f"🔧 DEBUG: Using test directory: {test_dir}")
         logger.info(f"🔧 DEBUG: Tests directory exists: {os.path.exists(os.path.join(test_dir, 'tests'))}")
         logger.info(f"🔧 DEBUG: Requirements.txt exists: {os.path.exists(os.path.join(test_dir, 'requirements.txt'))}")
+        
+        # Set PYTHONPATH after test_dir is determined
+        env["PYTHONPATH"] = test_dir
         
         logger.info("🔧 DEBUG: Executing pytest...")
         proc = subprocess.run(cmd, cwd=test_dir, env=env, capture_output=True, text=True)

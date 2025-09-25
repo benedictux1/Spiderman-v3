@@ -2,6 +2,7 @@ import os
 import tempfile
 import subprocess
 import xml.etree.ElementTree as ET
+import time
 from datetime import datetime
 from typing import List, Optional
 from celery import states, Task
@@ -65,7 +66,7 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
     # Build pytest command
     with tempfile.TemporaryDirectory() as td:
         junit_path = os.path.join(td, "junit.xml")
-        cmd = ["python", "-m", "pytest", "-q", f"--junitxml={junit_path}"]
+        cmd = ["python", "-m", "pytest", "-q", f"--junitxml={junit_path}", "--tb=short"]
         logger.info(f"🔧 DEBUG: Base pytest command: {cmd}")
         
         # Disable external plugins for stability
@@ -107,7 +108,11 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         env["PYTHONPATH"] = test_dir
         
         logger.info("🔧 DEBUG: Executing pytest...")
+        start_time = time.time()
         proc = subprocess.run(cmd, cwd=test_dir, env=env, capture_output=True, text=True)
+        end_time = time.time()
+        actual_duration = end_time - start_time
+        logger.info(f"🔧 DEBUG: Actual test execution time: {actual_duration:.2f} seconds")
         
         logger.info(f"🔧 DEBUG: Pytest completed with return code: {proc.returncode}")
         logger.info(f"🔧 DEBUG: stdout length: {len(proc.stdout)} characters")
@@ -192,6 +197,11 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                 logger.error(f"🔧 DEBUG: Error details: {str(e)}")
                 # Fall back to aggregate only
                 pass
+        
+        # Fallback duration calculation if JUnit XML parsing failed or no tests found
+        if duration_sum == 0.0 and actual_duration > 0:
+            duration_sum = actual_duration
+            logger.info(f"🔧 DEBUG: Using fallback duration: {duration_sum:.2f} seconds")
         else:
             logger.warning("⚠️ JUnit XML not found, using subprocess return code only")
 

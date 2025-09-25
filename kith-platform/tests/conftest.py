@@ -15,16 +15,18 @@ from werkzeug.security import generate_password_hash
 
 # Set test environment
 os.environ['FLASK_ENV'] = 'testing'
-os.environ['DATABASE_URL'] = 'postgresql://postgres:postgres@localhost:5432/kith_test'
+# Use SQLite for testing if PostgreSQL is not available
+if 'DATABASE_URL' not in os.environ:
+    os.environ['DATABASE_URL'] = 'sqlite:///test_kith_platform.db'
 
 @pytest.fixture(scope='session')
 def test_db():
     """Create test database"""
     # Create test database if it doesn't exist
-    import psycopg2
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-    
     try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+        
         conn = psycopg2.connect(
             host='localhost',
             user='postgres',
@@ -38,6 +40,10 @@ def test_db():
         conn.close()
     except psycopg2.errors.DuplicateDatabase:
         pass  # Database already exists
+    except Exception as e:
+        # If PostgreSQL is not available, skip database setup
+        print(f"PostgreSQL not available for testing: {e}")
+        pass
     
     # Create tables
     engine = create_engine('postgresql://postgres:postgres@localhost:5432/kith_test')

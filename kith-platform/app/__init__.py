@@ -11,7 +11,22 @@ def create_app(config_class=Config):
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
     
     app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
+
+    # Determine config class
+    if config_class is None:
+        flask_env = os.getenv('FLASK_ENV', 'development')
+        if flask_env == 'production':
+            config_class = ProductionConfig
+        elif flask_env == 'testing':
+            config_class = TestingConfig
+        else:
+            config_class = DevelopmentConfig
+            
     app.config.from_object(config_class)
+
+    # Production environment sanity checks
+    if app.config['ENV'] == 'production' and not app.config.get('SECRET_KEY'):
+        raise ValueError("FLASK_SECRET_KEY is not set in the production environment.")
     
     # Initialize extensions
     login_manager = LoginManager()

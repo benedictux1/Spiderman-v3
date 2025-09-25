@@ -35,9 +35,9 @@ class DevelopmentConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
-    # Ensure a secret key is set in production
-    if Config.SECRET_KEY == 'development-key-change-in-production':
-        raise ValueError("FLASK_SECRET_KEY must be set in the production environment.")
+    # The SECRET_KEY is set via environment variable in production.
+    # The check is performed in the application factory `create_app`
+    # to avoid crashing on import during build or other non-runtime processes.
 
 class TestingConfig(Config):
     TESTING = True

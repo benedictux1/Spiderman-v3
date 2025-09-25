@@ -25,7 +25,7 @@ def create_app(config_class=Config):
     app.config.from_object(config_class)
 
     # Production environment sanity checks
-    if app.config['ENV'] == 'production' and not app.config.get('SECRET_KEY'):
+    if os.getenv('FLASK_ENV') == 'production' and not app.config.get('SECRET_KEY'):
         raise ValueError("FLASK_SECRET_KEY is not set in the production environment.")
     
     # Initialize extensions

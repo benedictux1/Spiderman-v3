@@ -72,6 +72,8 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         env = os.environ.copy()
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
         env["FORCE_SQLITE_FOR_TESTS"] = "1"
+        env["FLASK_ENV"] = "testing"
+        env["PYTHONPATH"] = test_dir
         
         logger.info(f"🔧 DEBUG: Environment variables for pytest:")
         logger.info(f"  - PYTEST_DISABLE_PLUGIN_AUTOLOAD: {env.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD')}")
@@ -89,8 +91,21 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         logger.info(f"🔧 DEBUG: JUnit XML path: {junit_path}")
 
         # Run pytest from the worker's repository root (Render sets cwd to /opt/render/project/src/kith-platform)
+        # Ensure we're in the correct directory with tests
+        test_dir = os.getcwd()
+        if not os.path.exists(os.path.join(test_dir, "tests")):
+            # Try to find the tests directory
+            for root, dirs, files in os.walk("/opt/render/project/src"):
+                if "tests" in dirs and "requirements.txt" in files:
+                    test_dir = root
+                    break
+        
+        logger.info(f"🔧 DEBUG: Using test directory: {test_dir}")
+        logger.info(f"🔧 DEBUG: Tests directory exists: {os.path.exists(os.path.join(test_dir, 'tests'))}")
+        logger.info(f"🔧 DEBUG: Requirements.txt exists: {os.path.exists(os.path.join(test_dir, 'requirements.txt'))}")
+        
         logger.info("🔧 DEBUG: Executing pytest...")
-        proc = subprocess.run(cmd, cwd=os.getcwd(), env=env, capture_output=True, text=True)
+        proc = subprocess.run(cmd, cwd=test_dir, env=env, capture_output=True, text=True)
         
         logger.info(f"🔧 DEBUG: Pytest completed with return code: {proc.returncode}")
         logger.info(f"🔧 DEBUG: stdout length: {len(proc.stdout)} characters")

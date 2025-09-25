@@ -22,31 +22,50 @@ if 'DATABASE_URL' not in os.environ:
 @pytest.fixture(scope='session')
 def test_db():
     """Create test database"""
-    # Create test database if it doesn't exist
+    # Check if psycopg2 is available
     try:
         import psycopg2
         from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-        
-        conn = psycopg2.connect(
-            host='localhost',
-            user='postgres',
-            password='postgres',
-            database='postgres'
-        )
-        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        cursor = conn.cursor()
-        cursor.execute('CREATE DATABASE kith_test')
-        cursor.close()
-        conn.close()
-    except psycopg2.errors.DuplicateDatabase:
-        pass  # Database already exists
-    except Exception as e:
-        # If PostgreSQL is not available, skip database setup
-        print(f"PostgreSQL not available for testing: {e}")
-        pass
+        psycopg2_available = True
+    except ImportError:
+        psycopg2_available = False
+        print("psycopg2 not available, using SQLite for testing")
     
-    # Create tables
-    engine = create_engine('postgresql://postgres:postgres@localhost:5432/kith_test')
+    if psycopg2_available:
+        # Create test database if it doesn't exist
+        try:
+            conn = psycopg2.connect(
+                host='localhost',
+                user='postgres',
+                password='postgres',
+                database='postgres'
+            )
+            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            cursor = conn.cursor()
+            cursor.execute('CREATE DATABASE kith_test')
+            cursor.close()
+            conn.close()
+        except psycopg2.errors.DuplicateDatabase:
+            pass  # Database already exists
+        except Exception as e:
+            # If PostgreSQL is not available, skip database setup
+            print(f"PostgreSQL not available for testing: {e}")
+            psycopg2_available = False
+        
+        if psycopg2_available:
+            # Create tables
+            engine = create_engine('postgresql://postgres:postgres@localhost:5432/kith_test')
+            Base.metadata.create_all(engine)
+            
+            yield engine
+            
+            # Cleanup
+            Base.metadata.drop_all(engine)
+            engine.dispose()
+            return
+    
+    # Fallback to SQLite if PostgreSQL is not available
+    engine = create_engine('sqlite:///test_kith_platform.db')
     Base.metadata.create_all(engine)
     
     yield engine

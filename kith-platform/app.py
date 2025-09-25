@@ -26,6 +26,14 @@ from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime
 from analytics import RelationshipAnalytics
 from calendar_integration import CalendarIntegration
+
+# Import API blueprints
+from app.api.analytics import analytics_bp
+from app.api.auth import auth_bp
+from app.api.contacts import contacts_bp
+from app.api.notes import notes_bp
+from app.api.telegram import telegram_bp
+from app.api.admin import admin_bp
 # from telegram_integration import setup_telegram_routes  # Temporarily disabled
 from constants import (
     Categories, DEFAULT_PORT, DEFAULT_HOST, DEFAULT_MAX_TOKENS, 
@@ -60,6 +68,14 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY') or hashlib.sha256(os.ur
 
 # Enable CORS for production
 CORS(app, origins=["*"])  # Configure with specific origins in production
+
+# Register API blueprints
+app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
+app.register_blueprint(auth_bp, url_prefix='/api/auth')
+app.register_blueprint(contacts_bp, url_prefix='/api/contacts')
+app.register_blueprint(notes_bp, url_prefix='/api/notes')
+app.register_blueprint(telegram_bp, url_prefix='/api/telegram')
+app.register_blueprint(admin_bp, url_prefix='/api/admin')
 
 # --- Database Session Management ---
 try:

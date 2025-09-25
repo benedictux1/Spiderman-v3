@@ -132,3 +132,4 @@ python-json-logger==3.3.0
 
 celery[redis]==5.4.0
 factory-boy==3.3.0
+psutil==6.1.0  # System and process utilities for monitoring

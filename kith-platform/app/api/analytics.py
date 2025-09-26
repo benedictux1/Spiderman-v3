@@ -84,6 +84,47 @@ def start_test_run():
         }), 500
 
 
+@analytics_bp.route('/diagnose', methods=['POST'])
+@login_required
+def run_diagnostic():
+    """Run comprehensive diagnostic of the test environment"""
+    try:
+        # Try to get Celery app
+        celery_app = current_app.extensions.get('celery_app')
+        if celery_app is None:
+            try:
+                from app.celery_app import celery_app
+                current_app.extensions['celery_app'] = celery_app
+            except ImportError as e:
+                return jsonify({'error': 'celery_not_available', 'detail': str(e)}), 503
+
+        # Import and run diagnostic task
+        try:
+            from app.tasks import diagnostic_tasks
+            task_name = 'app.tasks.diagnostic_tasks.diagnose_test_environment'
+            task = celery_app.send_task(task_name)
+            
+            return jsonify({
+                'task_id': task.id,
+                'message': 'Diagnostic started successfully',
+                'status': 'running'
+            }), 202
+            
+        except Exception as e:
+            return jsonify({
+                'error': 'diagnostic_failed',
+                'detail': str(e),
+                'type': type(e).__name__
+            }), 500
+            
+    except Exception as exc:
+        logger.exception('Failed to start diagnostic')
+        return jsonify({
+            'error': 'failed_to_start_diagnostic', 
+            'detail': str(exc)
+        }), 500
+
+
 @analytics_bp.route('/test-runs', methods=['GET'])
 @login_required
 def list_test_runs():

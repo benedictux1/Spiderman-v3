@@ -93,7 +93,7 @@ rich==14.1.0
 rpds-py==0.26.0
 rsa==4.9.1
 # shellingham==1.5.4  # Shell detection - unused in current implementation
-six==1.17.0
+six==1.16.0
 sniffio==1.3.1
 SQLAlchemy==2.0.36
 sympy==1.14.0

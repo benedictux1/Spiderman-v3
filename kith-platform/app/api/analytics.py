@@ -156,6 +156,9 @@ def run_diagnostic_direct():
     
     try:
         logger.info("🔍 STARTING DIRECT DIAGNOSTIC")
+        logger.info(f"🔧 Current working directory: {os.getcwd()}")
+        logger.info(f"🔧 Python version: {sys.version}")
+        logger.info(f"🔧 User authenticated: {current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'Unknown'}")
         
         results = {
             "timestamp": datetime.utcnow().isoformat(),

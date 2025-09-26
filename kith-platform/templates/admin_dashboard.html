@@ -209,18 +209,26 @@
           credentials:'include',
           body: JSON.stringify({})
         });
-        const data = await res.json();
-        if(res.status !== 200){
-          console.error('Direct diagnostic error:', data);
-          statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">Failed: ${data.detail || data.error || res.status}</pre>`;
+        
+        console.log('Response status:', res.status);
+        console.log('Response headers:', res.headers);
+        
+        if(!res.ok){
+          const errorText = await res.text();
+          console.error('HTTP Error Response:', errorText);
+          statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">HTTP ${res.status}: ${errorText.substring(0, 200)}</pre>`;
           return;
         }
-        console.log('🔍 DIAGNOSTIC RESULTS:', data.results);
-        statusEl.innerHTML = `<span style="color: #16a34a;">✅ Direct diagnostic completed!</span> <a href="#" onclick="console.log(${JSON.stringify(data.results).replace(/"/g, '&quot;')}); return false;" style="color: #2563eb;">View in console</a>`;
         
-        // Display key findings
-        const results = data.results;
-        let summary = `
+        const data = await res.json();
+        console.log('🔍 DIAGNOSTIC RESULTS:', data);
+        
+        if(data.results){
+          const results = data.results;
+          statusEl.innerHTML = `<span style="color: #16a34a;">✅ Direct diagnostic completed!</span>`;
+          
+          // Display key findings
+          let summary = `
 📊 DIAGNOSTIC SUMMARY:
 • Python: ${results.python_info?.version?.split(' ')[0] || 'Unknown'}
 • Test files found: ${results.directory_structure?.test_file_count || 0}
@@ -228,12 +236,24 @@
 • Import failures: ${Object.values(results.import_tests || {}).filter(t => t.status === 'failed').length}
 • Pytest return code: ${results.pytest_execution?.return_code || 'Unknown'}
 
-🔍 Check browser console for full details!`;
-        
-        console.log(summary);
+🔍 Full details logged to console above!`;
+          
+          console.log(summary);
+          
+          // Log specific sections
+          console.log('📊 Python Info:', results.python_info);
+          console.log('📁 Directory Structure:', results.directory_structure);
+          console.log('🔍 Test Discovery:', results.test_discovery);
+          console.log('📦 Import Tests:', results.import_tests);
+          console.log('🧪 Pytest Execution:', results.pytest_execution);
+          
+        } else {
+          statusEl.innerHTML = `<pre style="color: #dc2626;">Unexpected response format</pre>`;
+          console.error('Unexpected response:', data);
+        }
         
       }catch(err){
-        statusEl.textContent = 'Direct diagnostic failed: '+err.message;
+        statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">Error: ${err.message}</pre>`;
         console.error('Direct diagnostic error:', err);
       }
     }

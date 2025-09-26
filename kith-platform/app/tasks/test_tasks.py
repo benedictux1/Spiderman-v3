@@ -66,7 +66,9 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
     # Build pytest command
     with tempfile.TemporaryDirectory() as td:
         junit_path = os.path.join(td, "junit.xml")
-        cmd = ["python", "-m", "pytest", "tests/", "-q", f"--junitxml={junit_path}", "--tb=short"]
+        # Use python3 explicitly to avoid command not found issues
+        python_cmd = "python3" if os.system("which python3 > /dev/null 2>&1") == 0 else "python"
+        cmd = [python_cmd, "-m", "pytest", "tests/", "-q", f"--junitxml={junit_path}", "--tb=short"]
         logger.info(f"🔧 DEBUG: Base pytest command: {cmd}")
         
         # Disable external plugins for stability

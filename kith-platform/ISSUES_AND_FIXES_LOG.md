@@ -326,6 +326,7 @@ After the major architectural refactoring to fix import-time side effects, a cas
 | **Missing Migrate** | `ModuleNotFoundError: No module named 'flask_migrate'` | Similar to the SQLAlchemy issue, `flask_migrate` was imported but not installed. | Added `Flask-Migrate==4.0.7` to `requirements.txt`. | ✅ **Fixed** |
 | **Dependency Conflict**| `ResolutionImpossible: ...six==1.17.0...six<=1.16.0` | The new `dependency-injector` package required an older version of the `six` library than what was pinned in `requirements.txt`. | Downgraded `six` from `1.17.0` to `1.16.0` in `requirements.txt`. | ✅ **Fixed** |
 | **Incorrect Import** | `ModuleNotFoundError: No module named 'app.database'` | The refactored `dependencies.py` file used an incorrect import path for the `DatabaseManager`. | Corrected the import path from `app.database...` to `database...`. | ✅ **Fixed** |
+| **Python Version Mismatch** | `dependency-injector` compilation failure with `'PyLongObject' has no member named 'ob_digit'` | Render was using Python 3.13.4 instead of the expected 3.11.0, causing C extension compilation errors due to Python API changes. | Added explicit `runtime: python-3.11.0` to both web and worker services in `render.yaml`. | ✅ **Fixed** |
 
 ---
 

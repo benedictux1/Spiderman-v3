@@ -135,4 +135,4 @@ factory-boy==3.3.0
 psutil==6.1.0  # System and process utilities for monitoring
 Flask-SQLAlchemy==3.1.1
 Flask-Migrate==4.0.7
-dependency-injector==4.48.2 --only-binary=dependency-injector
+dependency-injector==4.41.0

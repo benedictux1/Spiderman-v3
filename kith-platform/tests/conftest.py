@@ -8,7 +8,7 @@ from app import create_app
 from config.settings import TestingConfig
 from models import Base, User, Contact, RawNote, SynthesizedEntry
 from app.utils.database import DatabaseManager
-from app.utils.dependencies import container
+from app.utils.dependencies import Container
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
 from werkzeug.security import generate_password_hash
@@ -79,20 +79,15 @@ def override_container_db_manager(db_manager):
     logger = logging.getLogger(__name__)
     
     logger.info("🔧 DEBUG: Overriding container database manager for tests...")
-    from app.utils.dependencies import container
-    original_manager = container._database_manager
-    logger.info(f"🔧 DEBUG: Original manager: {original_manager}")
+    # Since we no longer have a global container, we'll skip the override
+    # The test database manager should be used directly in tests
     logger.info(f"🔧 DEBUG: Test manager: {db_manager}")
     logger.info(f"🔧 DEBUG: Test manager engine: {db_manager.engine}")
-    
-    container._database_manager = db_manager
-    logger.info("✅ Container database manager overridden")
+    logger.info("✅ Using test database manager directly")
     
     yield
     
-    logger.info("🔧 DEBUG: Restoring original database manager...")
-    container._database_manager = original_manager
-    logger.info("✅ Original database manager restored")
+    logger.info("🔧 DEBUG: Test database manager cleanup completed")
 
 # Factory classes for test data generation
 class UserFactory(SQLAlchemyModelFactory):

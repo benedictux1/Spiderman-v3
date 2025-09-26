@@ -1,6 +1,6 @@
 import os
 from dependency_injector import containers, providers
-from database.connection_manager import DatabaseManager
+from database.connection_manager import SmartConnectionManager
 from app.services.auth_service import AuthService
 from app.services.note_service import AIService, NoteService
 from app.services.contact_service import ContactService
@@ -23,7 +23,7 @@ class Container(containers.DeclarativeContainer):
     """
     config = providers.Configuration()
 
-    db_manager = providers.Singleton(DatabaseManager, config_class=config.config_class)
+    db_manager = providers.Singleton(SmartConnectionManager, config_class=config.config_class)
     
     ai_service = providers.Singleton(AIService)
     

@@ -220,7 +220,7 @@ def run_diagnostic_direct():
             env["FLASK_ENV"] = "testing"
             
             logger.info("🔧 Running pytest --collect-only...")
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             results["test_discovery"] = {
                 "command": ' '.join(cmd),
@@ -270,7 +270,7 @@ def run_diagnostic_direct():
                        "--tb=short", "--maxfail=3"]
                 
                 logger.info("🔧 Running pytest with limited tests...")
-                proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=15)
+                proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
                 
                 results["pytest_execution"] = {
                     "return_code": proc.returncode,

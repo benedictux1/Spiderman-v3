@@ -175,8 +175,33 @@
       }
     }
 
+    async function startDiagnostic(){
+      const statusEl = document.getElementById('diagnosticStatus');
+      statusEl.textContent = 'Starting diagnostic...';
+      try{
+        const res = await fetch('/api/analytics/diagnose', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body: JSON.stringify({})
+        });
+        if(res.status !== 202){
+          const err = await res.json().catch(()=>({error:'failed'}));
+          console.error('Diagnostic error response:', err);
+          statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">Failed: ${err.detail || err.error || res.status}</pre>`;
+          return;
+        }
+        const data = await res.json();
+        statusEl.textContent = `Running diagnostic... task ${data.task_id}`;
+        setTimeout(refreshRuns, 2000);
+      }catch(err){
+        statusEl.textContent = 'Failed to start diagnostic: '+err.message;
+      }
+    }
+
     function init(){
       document.getElementById('runBtn').addEventListener('click', startRun);
+      document.getElementById('diagnosticBtn').addEventListener('click', startDiagnostic);
       refreshOverview();
       refreshTrends();
       refreshCategories();
@@ -209,10 +234,17 @@
         <div id="avgTime" class="metric">–</div>
     </div>
     </div>
-    <div class="card" style="margin-bottom:16px; display:flex; align-items:center; gap:12px;">
-      <button id="runBtn" style="background:#2563eb; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">Run Tests</button>
-      <span id="runStatus" class="muted"></span>
-      <span id="runsError" class="muted" style="display:none"></span>
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+        <button id="runBtn" style="background:#2563eb; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">Run Tests</button>
+        <button id="diagnosticBtn" style="background:#dc2626; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">🔍 Diagnose</button>
+        <span id="runStatus" class="muted"></span>
+        <span id="runsError" class="muted" style="display:none"></span>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="color:#dc2626; font-size:12px;">Diagnostic Status:</span>
+        <span id="diagnosticStatus" class="muted" style="font-size:12px;"></span>
+      </div>
     </div>
     <div class="grid">
       <div class="card">

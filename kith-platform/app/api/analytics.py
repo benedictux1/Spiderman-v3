@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app
-from flask_login import login_required
+from flask_login import login_required, current_user
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
@@ -158,7 +158,7 @@ def run_diagnostic_direct():
         logger.info("🔍 STARTING DIRECT DIAGNOSTIC")
         logger.info(f"🔧 Current working directory: {os.getcwd()}")
         logger.info(f"🔧 Python version: {sys.version}")
-        logger.info(f"🔧 User authenticated: {current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else 'Unknown'}")
+        logger.info(f"🔧 User: {getattr(current_user, 'username', 'Unknown')}")
         
         results = {
             "timestamp": datetime.utcnow().isoformat(),

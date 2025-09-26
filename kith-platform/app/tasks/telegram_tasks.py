@@ -2,7 +2,6 @@ from celery import current_task
 from app.celery_app import celery_app
 from app.services.telegram_service import TelegramService
 from app.utils.database import DatabaseManager
-from app.utils.dependencies import container
 import logging
 
 logger = logging.getLogger(__name__)

@@ -4,9 +4,10 @@ from flask_migrate import Migrate
 from flask_login import LoginManager
 from celery import Celery
 import os
+import logging
 
 from config.settings import ProductionConfig, DevelopmentConfig, TestingConfig
-from app.utils.dependencies import container, get_config
+from app.utils.dependencies import Container, get_config
 
 # Initialize extensions, but don't configure them yet
 db = SQLAlchemy()
@@ -31,7 +32,8 @@ def create_app(config_class=ProductionConfig):
             
     app.config.from_object(config_class)
 
-    # Initialize and wire the dependency container
+    # Create and initialize the dependency container at runtime
+    container = Container()  # Instantiate here, not at import time
     container.config.from_dict({'config_class': config_class})
     container.wire(modules=[
         "app.api.auth", "app.api.contacts", "app.api.notes", 
@@ -70,10 +72,13 @@ def create_app(config_class=ProductionConfig):
     
     # Initialize monitoring (with error handling)
     try:
-        from app.utils.monitoring import initialize_monitoring
+        from app.utils.monitoring import HealthChecker, MetricsCollector
         from app.utils.database import DatabaseManager
         db_manager = DatabaseManager()
-        initialize_monitoring(db_manager)
+        # Initialize monitoring components (simplified since we removed the initialize_monitoring function)
+        health_checker = HealthChecker(db_manager)
+        metrics_collector = MetricsCollector(db_manager)
+        logging.info("Monitoring initialized successfully")
     except Exception as e:
         logging.warning(f"Monitoring initialization failed: {e}. Continuing without monitoring.")
     

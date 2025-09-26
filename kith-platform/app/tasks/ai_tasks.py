@@ -3,7 +3,6 @@ from app.celery_app import celery_app
 from app.services.ai_service import AIService
 from app.services.note_service import NoteService
 from app.utils.database import DatabaseManager
-from app.utils.dependencies import container
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,8 +14,10 @@ def process_note_async(self, contact_id: int, content: str, user_id: int):
         # Update task state
         self.update_state(state='PROGRESS', meta={'status': 'Processing note...'})
         
-        # Get services
-        note_service = NoteService(container.database_manager, container.ai_service)
+        # Get services - create instances directly since we're in a task context
+        db_manager = DatabaseManager()
+        ai_service = AIService()
+        note_service = NoteService(db_manager, ai_service)
         
         # Process the note
         result = note_service.process_note(contact_id, content, user_id)

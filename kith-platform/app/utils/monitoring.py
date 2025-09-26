@@ -9,7 +9,6 @@ from app.utils.database import DatabaseManager
 from app.celery_app import celery_app
 import logging
 from dependency_injector.wiring import inject, Provide
-from app.database.connection_manager import DatabaseManager
 from app.utils.dependencies import Container
 
 logger = logging.getLogger(__name__)

@@ -314,6 +314,21 @@ The dependency container issue has revealed a pattern of this flaw across the co
 
 ---
 
+## 🌪️ **Post-Refactor Deployment Failures**
+
+After the major architectural refactoring to fix import-time side effects, a cascade of new deployment failures occurred. While the core logic was sound, the refactoring exposed several missing dependencies and configuration errors.
+
+| Failure | Error Message | Root Cause | Solution | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Secret Key Check** | `ValueError: FLASK_SECRET_KEY must be set...` | The check for the production secret key was running at import time, before Render could inject the environment variable. | Moved the check from the module level (`settings.py`) into the runtime application factory (`create_app` in `__init__.py`). | ✅ **Fixed** |
+| **Config Key Error** | `KeyError: 'ENV'` | The runtime check for the secret key was using the wrong variable (`app.config['ENV']`). | Changed the check to use `os.getenv('FLASK_ENV') == 'production'`, which is the correct and reliable method. | ✅ **Fixed** |
+| **Missing SQLAlchemy**| `ModuleNotFoundError: No module named 'flask_sqlalchemy'` | The refactoring added an explicit import for this package, but it was not listed in `requirements.txt`. | Added `Flask-SQLAlchemy==3.1.1` to `requirements.txt`. | ✅ **Fixed** |
+| **Missing Migrate** | `ModuleNotFoundError: No module named 'flask_migrate'` | Similar to the SQLAlchemy issue, `flask_migrate` was imported but not installed. | Added `Flask-Migrate==4.0.7` to `requirements.txt`. | ✅ **Fixed** |
+| **Dependency Conflict**| `ResolutionImpossible: ...six==1.17.0...six<=1.16.0` | The new `dependency-injector` package required an older version of the `six` library than what was pinned in `requirements.txt`. | Downgraded `six` from `1.17.0` to `1.16.0` in `requirements.txt`. | ✅ **Fixed** |
+| **Incorrect Import** | `ModuleNotFoundError: No module named 'app.database'` | The refactored `dependencies.py` file used an incorrect import path for the `DatabaseManager`. | Corrected the import path from `app.database...` to `database...`. | ✅ **Fixed** |
+
+---
+
 ## 🎯 **ADMIN DASHBOARD TEST ISSUES - RESOLVED**
 
 ### **Issue: Tests Failing from Admin Dashboard**

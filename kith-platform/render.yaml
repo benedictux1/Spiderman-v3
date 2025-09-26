@@ -3,6 +3,7 @@ services:
     name: kith-platform
     env: python
     branch: ux-improvements
+    runtime: python-3.11.0
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --workers 2 --bind 0.0.0.0:$PORT wsgi:application
     envVars:
@@ -23,6 +24,7 @@ services:
     name: kith-celery
     env: python
     branch: ux-improvements
+    runtime: python-3.11.0
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A app.celery_app.celery_app worker --loglevel=info
     envVars:

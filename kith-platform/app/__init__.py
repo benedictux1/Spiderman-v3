@@ -13,14 +13,14 @@ from app.utils.dependencies import Container, get_config
 db = SQLAlchemy()
 migrate = Migrate()
 
-def create_app(config_class=ProductionConfig):
+def create_app(config_class=None):
     # Get the parent directory (kith-platform) for templates and static files
     template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
     
     app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
-    # Determine config class
+    # Determine config class (prefer environment when not explicitly provided)
     if config_class is None:
         flask_env = os.getenv('FLASK_ENV', 'development')
         if flask_env == 'production':
@@ -201,9 +201,11 @@ def create_app(config_class=ProductionConfig):
     def detailed_health_check():
         """Detailed health check with individual component status"""
         try:
-            from app.utils.monitoring import health_checker
-            if health_checker:
-                return health_checker.get_overall_health()
+            from app.utils.monitoring import HealthChecker
+            from app.utils.database import DatabaseManager
+            db_manager = DatabaseManager()
+            health_checker = HealthChecker(db_manager)
+            return health_checker.get_overall_health()
         except Exception as e:
             logging.warning(f"Detailed health check failed: {e}")
         return {'status': 'healthy', 'version': '3.0.0'}

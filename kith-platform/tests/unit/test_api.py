@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from flask import json
 from app import create_app
-from app.config.settings import TestConfig
+from config.settings import TestingConfig as TestConfig
 from app.models import User, Contact, RawNote
 
 def login(client, username, password):

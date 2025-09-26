@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from app.utils.monitoring import HealthChecker, MetricsCollector, initialize_monitoring
+from app.utils.monitoring import HealthChecker, MetricsCollector
 from app.utils.database import DatabaseManager
 
 @pytest.mark.unit
@@ -294,23 +294,4 @@ class TestMetricsCollector:
         assert ai_metrics['avg_duration'] == 1.0
         assert ai_metrics['avg_tokens'] == 100.0
 
-@pytest.mark.unit
-class TestMonitoringInitialization:
-    
-    def test_initialize_monitoring(self, db_manager):
-        """Test monitoring initialization"""
-        import app.utils.monitoring
-        
-        # Clear global instances
-        app.utils.monitoring.health_checker = None
-        app.utils.monitoring.metrics_collector = None
-        
-        initialize_monitoring(db_manager)
-        
-        # Import after initialization to get the updated global instances
-        from app.utils.monitoring import health_checker, metrics_collector
-        
-        assert health_checker is not None
-        assert metrics_collector is not None
-        assert health_checker.db_manager is db_manager
-        assert metrics_collector.db_manager is db_manager
+# TestMonitoringInitialization class removed - initialize_monitoring function no longer exists

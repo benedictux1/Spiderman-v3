@@ -1,6 +1,6 @@
 import os
 from dependency_injector import containers, providers
-from app.database.connection_manager import DatabaseManager
+from database.connection_manager import DatabaseManager
 from app.services.auth_service import AuthService
 from app.services.note_service import AIService, NoteService
 from app.services.contact_service import ContactService

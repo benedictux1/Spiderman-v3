@@ -89,33 +89,52 @@ def start_test_run():
 def run_diagnostic():
     """Run comprehensive diagnostic of the test environment"""
     try:
-        # Try to get Celery app
-        celery_app = current_app.extensions.get('celery_app')
-        if celery_app is None:
-            try:
+        # Try Celery first, but fall back to direct execution
+        try:
+            celery_app = current_app.extensions.get('celery_app')
+            if celery_app is None:
                 from app.celery_app import celery_app
                 current_app.extensions['celery_app'] = celery_app
-            except ImportError as e:
-                return jsonify({'error': 'celery_not_available', 'detail': str(e)}), 503
 
-        # Import and run diagnostic task
-        try:
             from app.tasks import diagnostic_tasks
             task_name = 'app.tasks.diagnostic_tasks.diagnose_test_environment'
             task = celery_app.send_task(task_name)
             
             return jsonify({
                 'task_id': task.id,
-                'message': 'Diagnostic started successfully',
+                'message': 'Diagnostic started successfully (Celery)',
                 'status': 'running'
             }), 202
             
-        except Exception as e:
-            return jsonify({
-                'error': 'diagnostic_failed',
-                'detail': str(e),
-                'type': type(e).__name__
-            }), 500
+        except Exception as celery_error:
+            logger.warning(f"Celery diagnostic failed: {celery_error}, falling back to direct execution")
+            
+            # Fallback: Run diagnostic directly and return results immediately
+            try:
+                from app.tasks.diagnostic_tasks import diagnose_test_environment
+                # Create a mock task object for the diagnostic function
+                class MockTask:
+                    def update_state(self, **kwargs):
+                        pass
+                
+                mock_task = MockTask()
+                # Run diagnostic directly (synchronously)
+                results = diagnose_test_environment(mock_task)
+                
+                return jsonify({
+                    'message': 'Diagnostic completed successfully (Direct)',
+                    'status': 'completed',
+                    'results': results,
+                    'fallback_mode': True
+                }), 200
+                
+            except Exception as direct_error:
+                return jsonify({
+                    'error': 'diagnostic_failed',
+                    'celery_error': str(celery_error),
+                    'direct_error': str(direct_error),
+                    'detail': 'Both Celery and direct execution failed'
+                }), 500
             
     except Exception as exc:
         logger.exception('Failed to start diagnostic')

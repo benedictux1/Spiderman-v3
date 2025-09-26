@@ -1,11 +1,18 @@
 from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 from flask_login import LoginManager
-from flask_cors import CORS
-from config.settings import Config
-import logging
+from celery import Celery
+import os
 
-def create_app(config_class=Config):
-    import os
+from config.settings import ProductionConfig, DevelopmentConfig, TestingConfig
+from app.utils.dependencies import container, get_config
+
+# Initialize extensions, but don't configure them yet
+db = SQLAlchemy()
+migrate = Migrate()
+
+def create_app(config_class=ProductionConfig):
     # Get the parent directory (kith-platform) for templates and static files
     template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'static'))
@@ -24,6 +31,16 @@ def create_app(config_class=Config):
             
     app.config.from_object(config_class)
 
+    # Initialize and wire the dependency container
+    container.config.from_dict({'config_class': config_class})
+    container.wire(modules=[
+        "app.api.auth", "app.api.contacts", "app.api.notes", 
+        "app.api.admin", "app.api.diagnostics", "app.api.telegram",
+        "app.services.note_service", "app.services.telegram_service",
+        "app.utils.monitoring"
+    ])
+    app.container = container
+
     # Production environment sanity checks
     if os.getenv('FLASK_ENV') == 'production' and not app.config.get('SECRET_KEY'):
         raise ValueError("FLASK_SECRET_KEY is not set in the production environment.")
@@ -32,8 +49,6 @@ def create_app(config_class=Config):
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
-    
-    CORS(app)
     
     # Configure logging
     from app.utils.logging_config import setup_logging

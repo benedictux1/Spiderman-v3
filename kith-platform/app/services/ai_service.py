@@ -1,5 +1,6 @@
 import os
 import openai
+from openai.error import OpenAIError
 import google.generativeai as genai
 from typing import Dict, Any, List
 import logging
@@ -8,18 +9,16 @@ from app.utils.structured_logging import log_performance, StructuredLogger
 logger = logging.getLogger(__name__)
 
 class AIService:
+    """
+    A service class for interacting with the OpenAI API.
+    It is instantiated by the dependency injection container.
+    """
     def __init__(self):
-        self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
-        
-        # Initialize OpenAI
-        if self.openai_api_key:
-            openai.api_key = self.openai_api_key
-        
-        # Initialize Gemini
-        if self.gemini_api_key:
-            genai.configure(api_key=self.gemini_api_key)
-    
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            logging.warning("OPENAI_API_KEY environment variable not set.")
+        openai.api_key = self.api_key
+
     @log_performance("ai_analysis")
     def analyze_note(self, content: str, contact_name: str) -> Dict[str, Any]:
         """Analyze a note and extract structured information"""

@@ -1,7 +1,8 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
+from dependency_injector.wiring import inject, Provide
 from app.services.note_service import NoteService
-from app.utils.dependencies import container
+from app.utils.dependencies import Container
 from app.utils.validators import validate_note_input
 from app.tasks.ai_tasks import process_note_async
 import logging
@@ -38,7 +39,7 @@ def process_note():
             })
         else:
             # Process synchronously
-            note_service = NoteService(container.database_manager, container.ai_service)
+            note_service = NoteService(current_app.container.database_manager, current_app.container.ai_service)
             result = note_service.process_note(
                 contact_id=data['contact_id'],
                 content=data['content'],
@@ -97,7 +98,7 @@ def get_task_status(task_id):
 def get_raw_notes(contact_id):
     """Get raw notes for a contact"""
     try:
-        note_service = NoteService(container.database_manager, container.ai_service)
+        note_service = NoteService(current_app.container.database_manager, current_app.container.ai_service)
         notes = note_service.get_raw_notes(contact_id, current_user.id)
         return jsonify({'notes': notes})
     except ValueError as e:
@@ -106,3 +107,25 @@ def get_raw_notes(contact_id):
     except Exception as e:
         logger.error(f"Error getting raw notes: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@notes_bp.route('/<int:contact_id>', methods=['POST'])
+@login_required
+@inject
+def add_note(contact_id, note_service: NoteService = Provide[Container.note_service]):
+    """Adds a new raw note for a contact."""
+    data = request.json
+    content = data.get('content')
+    
+    if not content:
+        return jsonify({'error': 'Note content is required'}), 400
+    
+    note = note_service.add_raw_note(
+        user_id=current_user.id,
+        contact_id=contact_id,
+        content=content
+    )
+    
+    if not note:
+        return jsonify({'error': 'Failed to create note or contact not found'}), 404
+        
+    return jsonify(note.to_dict()), 201

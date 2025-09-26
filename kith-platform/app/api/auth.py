@@ -1,14 +1,16 @@
-from flask import Blueprint, request, jsonify, render_template, redirect, url_for
+from flask import Blueprint, request, jsonify, render_template, redirect, url_for, current_app
 from flask_login import login_user, logout_user, current_user, login_required
+from dependency_injector.wiring import inject, Provide
 from app.services.auth_service import AuthService
-from app.utils.dependencies import container
+from app.utils.dependencies import Container
 import logging
 
 auth_bp = Blueprint('auth', __name__)
 logger = logging.getLogger(__name__)
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
-def login():
+@inject
+def login(auth_service: AuthService = Provide[Container.auth_service]):
     """Handle user login"""
     if request.method == 'GET':
         if current_user.is_authenticated:
@@ -33,7 +35,7 @@ def login():
             return jsonify({'error': 'Username and password required'}), 400
         
         logger.info(f"🔧 DEBUG: Creating auth service...")
-        auth_service = AuthService(container.database_manager)
+        # auth_service = AuthService(container.database_manager)
         logger.info(f"🔧 DEBUG: Auth service created, authenticating user...")
         
         user = auth_service.authenticate_user(username, password)
@@ -65,7 +67,8 @@ def login():
         return render_template('login.html', error='Login failed')
 
 @auth_bp.route('/register', methods=['POST'])
-def register():
+@inject
+def register(auth_service: AuthService = Provide[Container.auth_service]):
     """Handle user registration"""
     try:
         data = request.get_json() if request.is_json else request.form
@@ -76,7 +79,7 @@ def register():
         if not username or not password:
             return jsonify({'error': 'Username and password required'}), 400
         
-        auth_service = AuthService(container.database_manager)
+        # auth_service = AuthService(container.database_manager)
         user = auth_service.create_user(username, password, role)
         
         if user:

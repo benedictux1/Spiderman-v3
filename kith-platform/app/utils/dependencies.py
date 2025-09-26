@@ -1,49 +1,44 @@
-from functools import lru_cache
-from app.services.ai_service import AIService
+import os
+from dependency_injector import containers, providers
+from app.database.connection_manager import DatabaseManager
+from app.services.auth_service import AuthService
+from app.services.note_service import AIService, NoteService
+from app.services.contact_service import ContactService
 from app.services.telegram_service import TelegramService
-from app.services.file_service import FileService
-from app.services.analytics_service import AnalyticsService
-from app.utils.database import DatabaseManager
+from config.settings import ProductionConfig, DevelopmentConfig, TestingConfig
 
-class Container:
-    """Dependency injection container"""
-    
-    def __init__(self):
-        self._database_manager = None
-        self._ai_service = None
-        self._telegram_service = None
-        self._file_service = None
-        self._analytics_service = None
-    
-    @property
-    def database_manager(self) -> DatabaseManager:
-        if self._database_manager is None:
-            self._database_manager = DatabaseManager()
-        return self._database_manager
-    
-    @property
-    def ai_service(self) -> AIService:
-        if self._ai_service is None:
-            self._ai_service = AIService()
-        return self._ai_service
-    
-    @property
-    def telegram_service(self) -> TelegramService:
-        if self._telegram_service is None:
-            self._telegram_service = TelegramService()
-        return self._telegram_service
-    
-    @property
-    def file_service(self) -> FileService:
-        if self._file_service is None:
-            self._file_service = FileService()
-        return self._file_service
-    
-    @property
-    def analytics_service(self) -> AnalyticsService:
-        if self._analytics_service is None:
-            self._analytics_service = AnalyticsService(self.database_manager)
-        return self._analytics_service
+def get_config():
+    """Determines which configuration class to use based on FLASK_ENV."""
+    flask_env = os.getenv('FLASK_ENV', 'development')
+    if flask_env == 'production':
+        return ProductionConfig
+    elif flask_env == 'testing':
+        return TestingConfig
+    return DevelopmentConfig
 
-# Global container instance
+class Container(containers.DeclarativeContainer):
+    """
+    The dependency injection container for the Kith platform.
+    It is initialized during application startup within the `create_app` factory.
+    """
+    config = providers.Configuration()
+
+    db_manager = providers.Singleton(DatabaseManager, config_class=config.config_class)
+    
+    ai_service = providers.Singleton(AIService)
+    
+    auth_service = providers.Factory(AuthService, db_manager=db_manager)
+    
+    note_service = providers.Factory(
+        NoteService,
+        db_manager=db_manager,
+        ai_service=ai_service
+    )
+
+    contact_service = providers.Factory(ContactService, db_manager=db_manager)
+    
+    telegram_service = providers.Factory(TelegramService, db_manager=db_manager)
+
+# The container is intentionally NOT instantiated here to avoid import-time side effects.
+# It will be instantiated and wired within the application factory (`create_app`).
 container = Container()

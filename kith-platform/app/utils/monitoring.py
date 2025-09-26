@@ -8,13 +8,17 @@ from sqlalchemy import text
 from app.utils.database import DatabaseManager
 from app.celery_app import celery_app
 import logging
+from dependency_injector.wiring import inject, Provide
+from app.database.connection_manager import DatabaseManager
+from app.utils.dependencies import Container
 
 logger = logging.getLogger(__name__)
 
 class HealthChecker:
     """Comprehensive health checking system"""
     
-    def __init__(self, db_manager: DatabaseManager):
+    @inject
+    def __init__(self, db_manager: DatabaseManager = Provide[Container.db_manager]):
         self.db_manager = db_manager
         self.start_time = datetime.utcnow()
     
@@ -159,7 +163,8 @@ class HealthChecker:
 class MetricsCollector:
     """Collect and store application metrics"""
     
-    def __init__(self, db_manager: DatabaseManager):
+    @inject
+    def __init__(self, db_manager: DatabaseManager = Provide[Container.db_manager]):
         self.db_manager = db_manager
         self.metrics = {}
     
@@ -231,12 +236,5 @@ class MetricsCollector:
         
         return summary
 
-# Global instances
-health_checker = None
-metrics_collector = None
-
-def initialize_monitoring(db_manager: DatabaseManager):
-    """Initialize monitoring components"""
-    global health_checker, metrics_collector
-    health_checker = HealthChecker(db_manager)
-    metrics_collector = MetricsCollector(db_manager)
+# The instances are no longer created here.
+# They will be provided by the dependency injection container.

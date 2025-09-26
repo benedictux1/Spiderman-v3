@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 import logging
+import subprocess
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
@@ -208,6 +209,7 @@ def run_diagnostic_direct():
         results["directory_structure"]["test_file_count"] = len(test_files)
         
         # 4. Test Discovery
+        logger.info("🔍 Starting test discovery...")
         try:
             python_cmd = "python3" if os.system("which python3 > /dev/null 2>&1") == 0 else "python"
             cmd = [python_cmd, "-m", "pytest", "tests/", "--collect-only", "-q"]
@@ -217,7 +219,8 @@ def run_diagnostic_direct():
             env["FORCE_SQLITE_FOR_TESTS"] = "1"
             env["FLASK_ENV"] = "testing"
             
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            logger.info("🔧 Running pytest --collect-only...")
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             
             results["test_discovery"] = {
                 "command": ' '.join(cmd),
@@ -230,8 +233,12 @@ def run_diagnostic_direct():
                 discovered_tests = proc.stdout.count("::")
                 results["test_discovery"]["discovered_test_count"] = discovered_tests
                 
+        except subprocess.TimeoutExpired:
+            results["test_discovery"] = {"error": "Test discovery timed out after 10 seconds"}
+            logger.error("❌ Test discovery timed out")
         except Exception as e:
             results["test_discovery"] = {"error": str(e)}
+            logger.error(f"❌ Test discovery failed: {e}")
         
         # 5. Import Tests
         import_tests = {}
@@ -255,13 +262,15 @@ def run_diagnostic_direct():
         results["import_tests"] = import_tests
         
         # 6. Quick pytest execution
+        logger.info("🧪 Starting pytest execution...")
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 junit_path = os.path.join(temp_dir, "junit.xml")
                 cmd = [python_cmd, "-m", "pytest", "tests/", "-v", f"--junitxml={junit_path}", 
                        "--tb=short", "--maxfail=3"]
                 
-                proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+                logger.info("🔧 Running pytest with limited tests...")
+                proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=15)
                 
                 results["pytest_execution"] = {
                     "return_code": proc.returncode,
@@ -273,8 +282,12 @@ def run_diagnostic_direct():
                 if os.path.exists(junit_path):
                     results["pytest_execution"]["junit_size"] = os.path.getsize(junit_path)
                     
+        except subprocess.TimeoutExpired:
+            results["pytest_execution"] = {"error": "Pytest execution timed out after 15 seconds"}
+            logger.error("❌ Pytest execution timed out")
         except Exception as e:
             results["pytest_execution"] = {"error": str(e)}
+            logger.error(f"❌ Pytest execution failed: {e}")
         
         logger.info("✅ DIRECT DIAGNOSTIC COMPLETED")
         

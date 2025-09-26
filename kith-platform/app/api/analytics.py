@@ -144,6 +144,152 @@ def run_diagnostic():
         }), 500
 
 
+@analytics_bp.route('/diagnose-direct', methods=['POST'])
+@login_required
+def run_diagnostic_direct():
+    """Run diagnostic directly without Celery - returns results immediately"""
+    import os
+    import sys
+    import subprocess
+    import tempfile
+    from datetime import datetime
+    
+    try:
+        logger.info("🔍 STARTING DIRECT DIAGNOSTIC")
+        
+        results = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "mode": "direct_execution",
+            "python_info": {},
+            "environment": {},
+            "directory_structure": {},
+            "test_discovery": {},
+            "import_tests": {},
+            "pytest_execution": {}
+        }
+        
+        # 1. Python and System Info
+        results["python_info"] = {
+            "version": sys.version,
+            "executable": sys.executable,
+            "platform": sys.platform,
+            "cwd": os.getcwd(),
+            "pythonpath": os.getenv('PYTHONPATH', 'Not set')
+        }
+        
+        # 2. Environment Variables
+        env_vars = [
+            'FLASK_ENV', 'DATABASE_URL', 'REDIS_URL', 'PYTHON_VERSION',
+            'FORCE_SQLITE_FOR_TESTS', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD'
+        ]
+        results["environment"] = {var: os.getenv(var, 'Not set') for var in env_vars}
+        
+        # 3. Directory Structure
+        cwd = os.getcwd()
+        results["directory_structure"] = {
+            "current_directory": cwd,
+            "tests_exists": os.path.exists(os.path.join(cwd, "tests")),
+            "requirements_exists": os.path.exists(os.path.join(cwd, "requirements.txt")),
+            "app_exists": os.path.exists(os.path.join(cwd, "app")),
+        }
+        
+        # Count test files
+        test_files = []
+        if os.path.exists(os.path.join(cwd, "tests")):
+            for root, dirs, files in os.walk(os.path.join(cwd, "tests")):
+                for file in files:
+                    if file.startswith("test_") and file.endswith(".py"):
+                        test_files.append(os.path.relpath(os.path.join(root, file), cwd))
+        
+        results["directory_structure"]["test_files"] = test_files
+        results["directory_structure"]["test_file_count"] = len(test_files)
+        
+        # 4. Test Discovery
+        try:
+            python_cmd = "python3" if os.system("which python3 > /dev/null 2>&1") == 0 else "python"
+            cmd = [python_cmd, "-m", "pytest", "tests/", "--collect-only", "-q"]
+            
+            env = os.environ.copy()
+            env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+            env["FORCE_SQLITE_FOR_TESTS"] = "1"
+            env["FLASK_ENV"] = "testing"
+            
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            results["test_discovery"] = {
+                "command": ' '.join(cmd),
+                "return_code": proc.returncode,
+                "stdout_preview": proc.stdout[:1000] if proc.stdout else "",
+                "stderr_preview": proc.stderr[:1000] if proc.stderr else "",
+            }
+            
+            if proc.stdout:
+                discovered_tests = proc.stdout.count("::")
+                results["test_discovery"]["discovered_test_count"] = discovered_tests
+                
+        except Exception as e:
+            results["test_discovery"] = {"error": str(e)}
+        
+        # 5. Import Tests
+        import_tests = {}
+        critical_modules = [
+            "tests.conftest",
+            "tests.unit.test_database", 
+            "tests.unit.test_monitoring",
+            "app.utils.dependencies",
+            "app.services.contact_service",
+            "dependency_injector",
+            "factory"
+        ]
+        
+        for module in critical_modules:
+            try:
+                __import__(module)
+                import_tests[module] = {"status": "success", "error": None}
+            except Exception as e:
+                import_tests[module] = {"status": "failed", "error": str(e), "type": type(e).__name__}
+        
+        results["import_tests"] = import_tests
+        
+        # 6. Quick pytest execution
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                junit_path = os.path.join(temp_dir, "junit.xml")
+                cmd = [python_cmd, "-m", "pytest", "tests/", "-v", f"--junitxml={junit_path}", 
+                       "--tb=short", "--maxfail=3"]
+                
+                proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+                
+                results["pytest_execution"] = {
+                    "return_code": proc.returncode,
+                    "junit_created": os.path.exists(junit_path),
+                    "stdout_preview": proc.stdout[:2000] if proc.stdout else "",
+                    "stderr_preview": proc.stderr[:2000] if proc.stderr else "",
+                }
+                
+                if os.path.exists(junit_path):
+                    results["pytest_execution"]["junit_size"] = os.path.getsize(junit_path)
+                    
+        except Exception as e:
+            results["pytest_execution"] = {"error": str(e)}
+        
+        logger.info("✅ DIRECT DIAGNOSTIC COMPLETED")
+        
+        return jsonify({
+            'message': 'Direct diagnostic completed successfully',
+            'status': 'completed',
+            'results': results
+        }), 200
+        
+    except Exception as exc:
+        logger.exception('Direct diagnostic failed')
+        return jsonify({
+            'error': 'diagnostic_failed', 
+            'detail': str(exc),
+            'type': type(exc).__name__
+        }), 500
+
+
 @analytics_bp.route('/test-runs', methods=['GET'])
 @login_required
 def list_test_runs():

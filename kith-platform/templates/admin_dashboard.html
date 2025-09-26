@@ -199,9 +199,49 @@
       }
     }
 
+    async function startDirectDiagnostic(){
+      const statusEl = document.getElementById('diagnosticStatus');
+      statusEl.textContent = 'Running direct diagnostic...';
+      try{
+        const res = await fetch('/api/analytics/diagnose-direct', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if(res.status !== 200){
+          console.error('Direct diagnostic error:', data);
+          statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">Failed: ${data.detail || data.error || res.status}</pre>`;
+          return;
+        }
+        console.log('🔍 DIAGNOSTIC RESULTS:', data.results);
+        statusEl.innerHTML = `<span style="color: #16a34a;">✅ Direct diagnostic completed!</span> <a href="#" onclick="console.log(${JSON.stringify(data.results).replace(/"/g, '&quot;')}); return false;" style="color: #2563eb;">View in console</a>`;
+        
+        // Display key findings
+        const results = data.results;
+        let summary = `
+📊 DIAGNOSTIC SUMMARY:
+• Python: ${results.python_info?.version?.split(' ')[0] || 'Unknown'}
+• Test files found: ${results.directory_structure?.test_file_count || 0}
+• Tests discovered: ${results.test_discovery?.discovered_test_count || 0}
+• Import failures: ${Object.values(results.import_tests || {}).filter(t => t.status === 'failed').length}
+• Pytest return code: ${results.pytest_execution?.return_code || 'Unknown'}
+
+🔍 Check browser console for full details!`;
+        
+        console.log(summary);
+        
+      }catch(err){
+        statusEl.textContent = 'Direct diagnostic failed: '+err.message;
+        console.error('Direct diagnostic error:', err);
+      }
+    }
+
     function init(){
       document.getElementById('runBtn').addEventListener('click', startRun);
       document.getElementById('diagnosticBtn').addEventListener('click', startDiagnostic);
+      document.getElementById('directDiagnosticBtn').addEventListener('click', startDirectDiagnostic);
       refreshOverview();
       refreshTrends();
       refreshCategories();
@@ -238,6 +278,7 @@
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
         <button id="runBtn" style="background:#2563eb; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">Run Tests</button>
         <button id="diagnosticBtn" style="background:#dc2626; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">🔍 Diagnose</button>
+        <button id="directDiagnosticBtn" style="background:#16a34a; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">⚡ Direct Diagnose</button>
         <span id="runStatus" class="muted"></span>
         <span id="runsError" class="muted" style="display:none"></span>
       </div>

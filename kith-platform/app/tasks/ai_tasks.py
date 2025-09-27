@@ -27,6 +27,16 @@ def process_note_async(self, contact_id: int, content: str, user_id: int):
         
         return result
         
+    except ValueError as e:
+        # Handle specific "Contact not found" errors gracefully
+        if "Contact not found" in str(e):
+            logger.warning(f"Contact {contact_id} not found, skipping note processing")
+            self.update_state(state='SUCCESS', meta={'status': 'Contact not found, skipped', 'result': None})
+            return None
+        else:
+            logger.error(f"ValueError processing note: {e}")
+            self.update_state(state='FAILURE', meta={'status': 'Failed to process note', 'error': str(e)})
+            raise
     except Exception as e:
         logger.error(f"Error processing note asynchronously: {e}")
         self.update_state(state='FAILURE', meta={'status': 'Failed to process note', 'error': str(e)})

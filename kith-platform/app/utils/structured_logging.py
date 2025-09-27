@@ -110,6 +110,9 @@ class StructuredLogger:
                 'method': request.method if request else None,
                 'url': request.url if request else None
             })
+            # In test mode, return the actual error for debugging
+            if app.config.get('TESTING', False):
+                return {'error': str(error), 'type': type(error).__name__}, 500
             return {'error': 'Internal server error'}, 500
         
         app.logger.info('Structured logging initialized')

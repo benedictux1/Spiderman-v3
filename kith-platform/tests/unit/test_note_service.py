@@ -12,18 +12,21 @@ class TestNoteService:
         # Setup
         # Configure the mock AI service to return a valid synthesis
         mock_ai_service.synthesize_note.return_value = {
-            'contact_name': 'John Doe',
-            'summary': 'Test summary',
-            'action_items': ['- item 1'],
-            'sentiment': 'positive',
-            'tags': ['work', 'pizza']
+            'categories': {
+                'personal_info': {'content': 'John Doe likes pizza', 'confidence': 0.8},
+                'work': {'content': 'Works at Google', 'confidence': 0.9},
+                'preferences': {'content': 'Likes pizza', 'confidence': 0.7}
+            }
         }
         
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
-        cm = Mock()
-        cm.__enter__.return_value = db_session
-        cm.__exit__.return_value = False
+        
+        # Create a proper context manager mock
+        from unittest.mock import MagicMock
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=db_session)
+        cm.__exit__ = MagicMock(return_value=False)
         note_service.db_manager.get_session.return_value = cm
         
         # Test data
@@ -128,6 +131,14 @@ class TestNoteService:
     
     def test_process_note_with_synthesis_entries(self, db_session, sample_contact, mock_ai_service):
         """Test note processing creates synthesis entries"""
+        # Configure the mock AI service to return a valid synthesis
+        mock_ai_service.synthesize_note.return_value = {
+            'categories': {
+                'personal_info': {'content': 'John works at Google', 'confidence': 0.8},
+                'preferences': {'content': 'Likes pizza', 'confidence': 0.9}
+            }
+        }
+        
         note_service = NoteService(Mock(), mock_ai_service)
         note_service.db_manager = Mock()
         # Configure mock to work as context manager

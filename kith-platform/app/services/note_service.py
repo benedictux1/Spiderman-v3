@@ -41,20 +41,20 @@ class NoteService:
                 
                 # Save synthesized entries
                 synthesis_results = []
-                for category, data in analysis_result.categories.items():
-                    if data.content and len(data.content.strip()) > 10:
+                for category, data in analysis_result['categories'].items():
+                    if data['content'] and len(data['content'].strip()) > 10:
                         entry = SynthesizedEntry(
                             contact_id=contact_id,
                             category=category,
-                            content=data.content,
-                            confidence_score=data.confidence,
+                            content=data['content'],
+                            confidence_score=data['confidence'],
                             created_at=datetime.utcnow()
                         )
                         session.add(entry)
                         synthesis_results.append({
                             'category': category,
-                            'content': data.content,
-                            'confidence': data.confidence
+                            'content': data['content'],
+                            'confidence': data['confidence']
                         })
                 
                 return {

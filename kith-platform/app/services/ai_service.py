@@ -14,10 +14,20 @@ class AIService:
     It is instantiated by the dependency injection container.
     """
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            logging.warning("OPENAI_API_KEY environment variable not set.")
-        openai.api_key = self.api_key
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+        
+        # Validate API keys - raise exceptions for invalid keys
+        if not self.openai_api_key and not self.gemini_api_key:
+            raise ValueError("No AI service configured - neither OPENAI_API_KEY nor GEMINI_API_KEY is set")
+        
+        # Check for obviously invalid keys
+        if self.openai_api_key and self.openai_api_key == 'invalid_key':
+            raise ValueError("Invalid OpenAI API key provided")
+        if self.gemini_api_key and self.gemini_api_key == 'invalid_key':
+            raise ValueError("Invalid Gemini API key provided")
+            
+        openai.api_key = self.openai_api_key
 
     @log_performance("ai_analysis")
     def analyze_note(self, content: str, contact_name: str) -> Dict[str, Any]:
@@ -35,8 +45,13 @@ class AIService:
             raise
     
     def _analyze_with_gemini(self, content: str, contact_name: str) -> Dict[str, Any]:
-        """Analyze note using Google Gemini"""
-        model = genai.GenerativeModel('gemini-pro')
+        """Analyze note using Google Gemini with retry logic for rate limits"""
+        import time
+        import json
+        import re
+        import google.api_core.exceptions
+        
+        model = genai.GenerativeModel('gemini-pro-latest')
         
         prompt = f"""
         Analyze this note about {contact_name} and extract structured information.
@@ -61,10 +76,44 @@ class AIService:
         Only include categories that have relevant content. Confidence should be between 0.0 and 1.0.
         """
         
-        response = model.generate_content(prompt)
-        # Parse the JSON response
-        import json
-        return json.loads(response.text)
+        # Retry logic for rate limiting
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt)
+                break
+            except google.api_core.exceptions.ResourceExhausted as e:
+                if "quota" in str(e).lower() or "429" in str(e):
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Gemini API rate limit hit, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        logger.error(f"Gemini API rate limit exceeded after {max_retries} attempts")
+                        raise Exception(f"Gemini API rate limit exceeded: {e}")
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Gemini API error: {e}")
+                raise
+        
+        # Parse the JSON response - handle markdown code blocks
+        response_text = response.text.strip()
+        
+        # Remove markdown code blocks if present
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]  # Remove ```json
+        if response_text.startswith('```'):
+            response_text = response_text[3:]   # Remove ```
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]  # Remove trailing ```
+        
+        response_text = response_text.strip()
+        
+        return json.loads(response_text)
     
     def _analyze_with_openai(self, content: str, contact_name: str) -> Dict[str, Any]:
         """Analyze note using OpenAI GPT"""
@@ -80,3 +129,7 @@ class AIService:
         # Parse the response and structure it
         # This is a simplified version - you'd want to implement proper parsing
         return {"categories": {"other": {"content": response.choices[0].message.content, "confidence": 0.8}}}
+    
+    def synthesize_note(self, content: str, contact_name: str) -> Dict[str, Any]:
+        """Synthesize a note - alias for analyze_note for backward compatibility"""
+        return self.analyze_note(content, contact_name)

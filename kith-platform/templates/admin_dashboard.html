@@ -123,7 +123,7 @@
         const body = document.getElementById('runsBody');
         body.innerHTML = runs.length ? runs.map(r => `
         <tr>
-          <td>${r.id}</td>
+          <td><a href="#" onclick="showDetailedResults(${r.id}); return false;" style="color:#2563eb; text-decoration:underline; cursor:pointer;">${r.id}</a></td>
             <td style="text-transform:capitalize;">${r.status}</td>
             <td>${r.passed_tests||0}/${r.failed_tests||0}/${r.skipped_tests||0}</td>
             <td>${safeValue(r.execution_time_seconds, 0)}</td>
@@ -258,10 +258,380 @@
       }
     }
 
+    async function runComprehensiveHealthCheck(){
+      const statusEl = document.getElementById('healthStatus');
+      statusEl.textContent = 'Running comprehensive health check...';
+      try{
+        const res = await fetch('/api/analytics/health/run-comprehensive', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'include',
+          body: JSON.stringify({})
+        });
+        
+        if(!res.ok){
+          const errorText = await res.text();
+          console.error('Health check error:', errorText);
+          statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">HTTP ${res.status}: ${errorText.substring(0, 200)}</pre>`;
+          return;
+        }
+        
+        const data = await res.json();
+        console.log('🏥 HEALTH CHECK RESULTS:', data);
+        
+        if(data.results){
+          const results = data.results;
+          statusEl.innerHTML = `<span style="color: #16a34a;">✅ Comprehensive health check completed!</span>`;
+          
+          // Show the health check results card
+          document.getElementById('healthCheckCard').style.display = 'block';
+          
+          // Display health check results
+          displayHealthCheckResults(results);
+          
+        } else {
+          statusEl.innerHTML = `<pre style="color: #dc2626;">Unexpected response format</pre>`;
+          console.error('Unexpected response:', data);
+        }
+        
+      }catch(err){
+        statusEl.innerHTML = `<pre style="color: #dc2626; white-space: pre-wrap; font-size: 12px;">Error: ${err.message}</pre>`;
+        console.error('Health check error:', err);
+      }
+    }
+
+    function displayHealthCheckResults(results){
+      const healthContent = document.getElementById('healthContent');
+      
+      let html = `
+        <div style="margin-bottom:16px; padding:12px; background:#f1f5f9; border-radius:8px;">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:12px; text-align:center;">
+            <div>
+              <div style="font-size:24px; font-weight:700; color:#16a34a;">${results.healthy_checks || 0}</div>
+              <div style="font-size:12px; color:#64748b;">Healthy</div>
+            </div>
+            <div>
+              <div style="font-size:24px; font-weight:700; color:#dc2626;">${(results.total_checks || 0) - (results.healthy_checks || 0)}</div>
+              <div style="font-size:12px; color:#64748b;">Issues</div>
+            </div>
+            <div>
+              <div style="font-size:24px; font-weight:700; color:#2563eb;">${results.health_percentage || 0}%</div>
+              <div style="font-size:12px; color:#64748b;">Health Score</div>
+            </div>
+            <div>
+              <div style="font-size:24px; font-weight:700; color:#64748b;">${results.total_checks || 0}</div>
+              <div style="font-size:12px; color:#64748b;">Total Checks</div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      // Display health check categories
+      const checks = results.checks || {};
+      const categories = {
+        'Core System': ['database', 'redis', 'celery', 'system'],
+        'Database Operations': ['database_migrations', 'data_consistency', 'transaction_rollbacks', 'connection_pooling'],
+        'Background Jobs': ['task_queuing', 'task_failure_handling'],
+        'External Services': ['ai_service_connectivity', 'chromadb_connectivity'],
+        'Security': ['password_hashing', 'input_sanitization'],
+        'Performance': ['api_performance', 'concurrent_users']
+      };
+      
+      Object.entries(categories).forEach(([categoryName, checkNames]) => {
+        html += `
+          <div style="margin-bottom:16px;">
+            <h3 style="color:#334155; margin-bottom:8px; font-size:16px;">${categoryName}</h3>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:8px;">
+        `;
+        
+        checkNames.forEach(checkName => {
+          const check = checks[checkName];
+          if(check){
+            const status = check.status;
+            const statusColor = status === 'healthy' ? '#16a34a' : status === 'degraded' ? '#f59e0b' : '#dc2626';
+            const statusIcon = status === 'healthy' ? '✅' : status === 'degraded' ? '⚠️' : '❌';
+            
+            html += `
+              <div style="padding:8px; border:1px solid #e2e8f0; border-radius:6px; background:#f8fafc;">
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                  <span style="color:${statusColor};">${statusIcon}</span>
+                  <span style="font-weight:600; color:#334155;">${checkName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                </div>
+                <div style="font-size:12px; color:#64748b;">
+                  Status: <span style="color:${statusColor}; font-weight:600;">${status}</span>
+                </div>
+            `;
+            
+            // Add specific details based on check type
+            if(check.response_time){
+              html += `<div style="font-size:11px; color:#64748b;">Response: ${check.response_time}ms</div>`;
+            }
+            if(check.success_rate !== undefined){
+              html += `<div style="font-size:11px; color:#64748b;">Success Rate: ${(check.success_rate * 100).toFixed(1)}%</div>`;
+            }
+            if(check.error){
+              html += `<div style="font-size:11px; color:#dc2626;">Error: ${check.error.substring(0, 50)}...</div>`;
+            }
+            
+            html += `</div>`;
+          }
+        });
+        
+        html += `</div></div>`;
+      });
+      
+      healthContent.innerHTML = html;
+    }
+
+    async function showDetailedResults(runId){
+      const card = document.getElementById('detailedResultsCard');
+      const content = document.getElementById('detailedResultsContent');
+      
+      card.style.display = 'block';
+      content.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;">Loading detailed results...</div>';
+      
+      try{
+        console.log(`🔍 DEBUG: Fetching detailed results for run ${runId}`);
+        // Fetch real test results from the API
+        const response = await fetch(`/api/analytics/test-results/${runId}`, { credentials: 'include' });
+        console.log(`🔍 DEBUG: Response status: ${response.status}`);
+        
+        if(!response.ok){
+          if(response.status === 404){
+            throw new Error(`Test run ${runId} not found. Please check if the run exists.`);
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log(`🔍 DEBUG: API Response data:`, data);
+        
+        // Check if we got an error response
+        if(data.error){
+          throw new Error(`API Error: ${data.error}`);
+        }
+        
+        // Debug the values being used
+        console.log(`🔍 DEBUG: passed_tests: ${data.passed_tests}`);
+        console.log(`🔍 DEBUG: failed_tests: ${data.failed_tests}`);
+        console.log(`🔍 DEBUG: skipped_tests: ${data.skipped_tests}`);
+        console.log(`🔍 DEBUG: execution_time_seconds: ${data.execution_time_seconds}`);
+        
+        // Check if we have the expected data structure
+        if(typeof data.passed_tests === 'undefined' && typeof data.failed_tests === 'undefined'){
+          console.error('🔍 DEBUG: Unexpected data structure received:', data);
+          throw new Error('Invalid response format. Expected test results data but got: ' + JSON.stringify(data));
+        }
+        
+        let html = `
+          <div style="margin-bottom:16px; padding:12px; background:#f1f5f9; border-radius:8px;">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:12px; text-align:center;">
+              <div>
+                <div style="font-size:24px; font-weight:700; color:#16a34a;">${data.passed_tests || 0}</div>
+                <div style="font-size:12px; color:#64748b;">Passed</div>
+              </div>
+              <div>
+                <div style="font-size:24px; font-weight:700; color:#dc2626;">${data.failed_tests || 0}</div>
+                <div style="font-size:12px; color:#64748b;">Failed</div>
+              </div>
+              <div>
+                <div style="font-size:24px; font-weight:700; color:#64748b;">${data.skipped_tests || 0}</div>
+                <div style="font-size:12px; color:#64748b;">Skipped</div>
+              </div>
+              <div>
+                <div style="font-size:24px; font-weight:700; color:#2563eb;">${data.execution_time_seconds || 0}s</div>
+                <div style="font-size:12px; color:#64748b;">Duration</div>
+              </div>
+            </div>
+          </div>
+        `;
+        
+        // Use real test results from the API
+        const detailedResults = data.detailed_results || [];
+        const passedTests = detailedResults.filter(test => test.status === 'passed');
+        const failedTests = detailedResults.filter(test => test.status === 'failed');
+        const skippedTests = detailedResults.filter(test => test.status === 'skipped');
+        
+        // Show failed tests first with categorization
+        if(failedTests.length > 0){
+          // Categorize failures by type
+          const failureCategories = {
+            'Database Issues': [],
+            'Authentication Issues': [],
+            'API Endpoint Issues': [],
+            'Service Dependencies': [],
+            'Data Validation Issues': [],
+            'Other Issues': []
+          };
+          
+          failedTests.forEach(test => {
+            const reason = test.failure_reason || '';
+            if(reason.includes('Database') || reason.includes('Connection') || reason.includes('psycopg2')){
+              failureCategories['Database Issues'].push(test);
+            } else if(reason.includes('Authentication') || reason.includes('credentials') || reason.includes('authorized')){
+              failureCategories['Authentication Issues'].push(test);
+            } else if(reason.includes('status code') || reason.includes('response') || reason.includes('endpoint')){
+              failureCategories['API Endpoint Issues'].push(test);
+            } else if(reason.includes('Redis') || reason.includes('Celery') || reason.includes('service')){
+              failureCategories['Service Dependencies'].push(test);
+            } else if(reason.includes('Validation') || reason.includes('format') || reason.includes('Invalid')){
+              failureCategories['Data Validation Issues'].push(test);
+            } else {
+              failureCategories['Other Issues'].push(test);
+            }
+          });
+          
+          html += `
+            <div style="margin-bottom:16px;">
+              <h3 style="color:#dc2626; margin-bottom:8px; font-size:16px;">❌ Failed Tests (${failedTests.length})</h3>
+              <div style="margin-bottom:8px; font-size:12px; color:#64748b;">
+                💡 <strong>Debugging Tips:</strong> Click on test names to see what needs to be fixed
+              </div>
+          `;
+          
+          // Show each category
+          Object.entries(failureCategories).forEach(([category, tests]) => {
+            if(tests.length > 0){
+              html += `
+                <div style="margin-bottom:12px;">
+                  <h4 style="color:#dc2626; margin-bottom:6px; font-size:14px; font-weight:600;">${category} (${tests.length})</h4>
+                  <div style="max-height:200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
+              `;
+              
+              tests.forEach(test => {
+                // Handle test names with or without :: separator
+                const testNameParts = test.test_name.split('::');
+                const testClass = testNameParts[0] || 'Unknown Class';
+                const testMethod = testNameParts[1] || test.test_name;
+                
+                html += `
+                  <div style="padding:10px; border-bottom:1px solid #f1f5f9; background:#fef2f2;">
+                    <div style="font-weight:600; color:#dc2626; margin-bottom:4px; cursor:pointer;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                      📋 ${testMethod}
+                    </div>
+                    <div style="font-size:11px; color:#64748b; margin-bottom:4px;">
+                      Class: ${testClass} | Duration: ${test.duration.toFixed(2)}s
+                    </div>
+                    <div style="display:none; font-size:12px; color:#991b1b; background:#fee2e2; padding:8px; border-radius:4px; margin-top:4px;">
+                      <strong>Error:</strong> ${test.failure_reason}
+                    </div>
+                  </div>
+                `;
+              });
+              
+              html += `</div></div>`;
+            }
+          });
+          
+          html += `</div>`;
+        }
+        
+        // Show skipped tests with reasons
+        if(skippedTests.length > 0){
+          html += `
+            <div style="margin-bottom:16px;">
+              <h3 style="color:#f59e0b; margin-bottom:8px; font-size:16px;">⏭️ Skipped Tests (${skippedTests.length})</h3>
+              <div style="margin-bottom:8px; font-size:12px; color:#64748b;">
+                💡 <strong>Skip Reasons:</strong> These tests were skipped due to missing dependencies or configuration
+              </div>
+              <div style="max-height:200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
+          `;
+          
+          skippedTests.forEach(test => {
+            // Handle test names with or without :: separator
+            const testNameParts = test.test_name.split('::');
+            const testClass = testNameParts[0] || 'Unknown Class';
+            const testMethod = testNameParts[1] || test.test_name;
+            const skipReason = test.skip_reason || 'No reason provided';
+            
+            html += `
+              <div style="padding:10px; border-bottom:1px solid #f1f5f9; background:#fef3c7;">
+                <div style="font-weight:600; color:#f59e0b; margin-bottom:4px;">
+                  ⏭️ ${testMethod}
+                </div>
+                <div style="font-size:11px; color:#64748b; margin-bottom:4px;">
+                  Class: ${testClass} | Duration: ${test.duration.toFixed(2)}s
+                </div>
+                <div style="font-size:12px; color:#92400e; background:#fef3c7; padding:6px; border-radius:4px; margin-top:4px;">
+                  <strong>Skip Reason:</strong> ${skipReason}
+                </div>
+              </div>
+            `;
+          });
+          
+          html += `</div></div>`;
+        }
+        
+        // Show passed tests with better organization
+        if(passedTests.length > 0){
+          html += `
+            <div>
+              <h3 style="color:#16a34a; margin-bottom:8px; font-size:16px;">✅ Passed Tests (${passedTests.length})</h3>
+              <div style="margin-bottom:8px; font-size:12px; color:#64748b;">
+                🎉 <strong>Working Features:</strong> These tests confirm your system is functioning correctly
+              </div>
+              <div style="max-height:300px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px;">
+          `;
+          
+          // Group passed tests by class
+          const passedByClass = {};
+          passedTests.forEach(test => {
+            const testNameParts = test.test_name.split('::');
+            const testClass = testNameParts[0] || 'Unknown Class';
+            if(!passedByClass[testClass]){
+              passedByClass[testClass] = [];
+            }
+            passedByClass[testClass].push(test);
+          });
+          
+          Object.entries(passedByClass).forEach(([testClass, tests]) => {
+            html += `
+              <div style="padding:8px; border-bottom:1px solid #f1f5f9; background:#f0fdf4;">
+                <div style="font-weight:600; color:#16a34a; margin-bottom:4px;">📁 ${testClass}</div>
+                <div style="margin-left:12px;">
+            `;
+            
+            tests.forEach(test => {
+              // Handle test names with or without :: separator
+              const testNameParts = test.test_name.split('::');
+              const testMethod = testNameParts[1] || test.test_name;
+              html += `
+                <div style="padding:4px 8px; margin:2px 0; background:#dcfce7; border-radius:4px; font-size:12px;">
+                  <span style="color:#16a34a;">✓</span> ${testMethod} <span style="color:#64748b;">(${test.duration.toFixed(2)}s)</span>
+                </div>
+              `;
+            });
+            
+            html += `</div></div>`;
+          });
+          
+          html += `</div></div>`;
+        }
+        
+        content.innerHTML = html;
+        
+        }catch(err){
+          content.innerHTML = `<div style="color:#dc2626; padding:20px; text-align:center;">Error loading detailed results: ${err.message}<br><br>Note: The detailed test results API endpoint may not be implemented yet.</div>`;
+          console.error('Error loading detailed results:', err);
+          console.error('Error stack:', err.stack);
+        }
+    }
+    
+    function closeDetailedResults(){
+      document.getElementById('detailedResultsCard').style.display = 'none';
+    }
+
+    function closeHealthCheck(){
+      document.getElementById('healthCheckCard').style.display = 'none';
+    }
+
     function init(){
       document.getElementById('runBtn').addEventListener('click', startRun);
       document.getElementById('diagnosticBtn').addEventListener('click', startDiagnostic);
       document.getElementById('directDiagnosticBtn').addEventListener('click', startDirectDiagnostic);
+      document.getElementById('healthCheckBtn').addEventListener('click', runComprehensiveHealthCheck);
+      document.getElementById('closeDetailedResults').addEventListener('click', closeDetailedResults);
+      document.getElementById('closeHealthCheck').addEventListener('click', closeHealthCheck);
       refreshOverview();
       refreshTrends();
       refreshCategories();
@@ -299,12 +669,17 @@
         <button id="runBtn" style="background:#2563eb; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">Run Tests</button>
         <button id="diagnosticBtn" style="background:#dc2626; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">🔍 Diagnose</button>
         <button id="directDiagnosticBtn" style="background:#16a34a; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">⚡ Direct Diagnose</button>
+        <button id="healthCheckBtn" style="background:#9333ea; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">🏥 Health Check</button>
         <span id="runStatus" class="muted"></span>
         <span id="runsError" class="muted" style="display:none"></span>
       </div>
       <div style="display:flex; align-items:center; gap:12px;">
         <span style="color:#dc2626; font-size:12px;">Diagnostic Status:</span>
         <span id="diagnosticStatus" class="muted" style="font-size:12px;"></span>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+        <span style="color:#9333ea; font-size:12px;">Health Check Status:</span>
+        <span id="healthStatus" class="muted" style="font-size:12px;"></span>
       </div>
     </div>
     <div class="grid">
@@ -335,6 +710,28 @@
         </thead>
         <tbody id="runsBody"></tbody>
       </table>
+    </div>
+    
+    <!-- Comprehensive Health Check Results Card -->
+    <div class="card" style="margin-top:16px;" id="healthCheckCard" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div class="muted">🏥 Comprehensive Health Check Results</div>
+        <button id="closeHealthCheck" style="background:#dc2626; border:0; color:#fff; border-radius:6px; padding:6px 12px; cursor:pointer; font-size:12px;">Close</button>
+      </div>
+      <div id="healthContent">
+        <!-- Content will be populated by JavaScript -->
+      </div>
+    </div>
+
+    <!-- Detailed Test Results Card -->
+    <div class="card" style="margin-top:16px;" id="detailedResultsCard" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div class="muted">Detailed Test Results</div>
+        <button id="closeDetailedResults" style="background:#dc2626; border:0; color:#fff; border-radius:6px; padding:6px 12px; cursor:pointer; font-size:12px;">Close</button>
+      </div>
+      <div id="detailedResultsContent">
+        <!-- Content will be populated by JavaScript -->
+      </div>
     </div>
   </div>
   <span id="consoleLogAnchor"></span>

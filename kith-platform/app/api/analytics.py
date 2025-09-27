@@ -505,3 +505,173 @@ def get_dashboard_test_categories():
     except Exception as exc:
         logger.exception("Failed to compute dashboard categories")
         return jsonify({'error': 'failed_to_compute_categories', 'detail': str(exc)}), 500
+
+
+@analytics_bp.route('/test-results/<int:run_id>', methods=['GET'])
+@login_required
+def get_detailed_test_results(run_id):
+    """Get detailed test results for a specific test run."""
+    try:
+        logger.info(f"🔍 DEBUG: Getting detailed test results for run {run_id}")
+        dm = DatabaseManager()
+        with dm.get_session() as session:
+            # Get the test run
+            test_run = session.query(TestRun).filter_by(id=run_id).first()
+            if not test_run:
+                return jsonify({'error': 'test_run_not_found'}), 404
+            
+            # Get detailed test results from the run
+            test_results = session.query(TestResult).filter_by(run_id=run_id).all()
+            
+            # Create detailed results from database
+            detailed_results = []
+            for result in test_results:
+                detailed_results.append({
+                    'test_name': result.test_name or 'Unknown Test',
+                    'class_name': 'Unknown Class',
+                    'method_name': result.test_name or 'Unknown Test',
+                    'status': result.status,  # Keep original status: passed/failed/skipped
+                    'failure_reason': getattr(result, 'failure_message', None),
+                    'skip_reason': getattr(result, 'skip_reason', None),
+                    'duration': result.execution_time_seconds or 0
+                })
+            
+            # Sort results: failed first, then passed
+            detailed_results.sort(key=lambda x: (x['status'] != 'failed', x['test_name']))
+            
+            return jsonify({
+                'run_id': run_id,
+                'total_tests': test_run.total_tests,
+                'passed_tests': test_run.passed_tests,
+                'failed_tests': test_run.failed_tests,
+                'skipped_tests': test_run.skipped_tests,
+                'execution_time_seconds': test_run.execution_time_seconds,
+                'status': test_run.status,
+                'started_at': test_run.started_at.isoformat() + 'Z',
+                'detailed_results': detailed_results
+            })
+            
+    except Exception as exc:
+        logger.exception(f"Failed to get detailed test results for run {run_id}")
+        return jsonify({'error': 'failed_to_get_test_results', 'detail': str(exc)}), 500
+
+
+@analytics_bp.route('/health/comprehensive', methods=['GET'])
+@login_required
+def get_comprehensive_health():
+    """Get comprehensive system health status with all new checks"""
+    try:
+        from app.utils.monitoring import HealthChecker
+        
+        checker = HealthChecker()
+        health_result = checker.get_comprehensive_health()
+        
+        return jsonify(health_result)
+        
+    except Exception as exc:
+        logger.exception('Failed to get comprehensive health status')
+        return jsonify({'error': 'failed_to_get_health', 'detail': str(exc)}), 500
+
+
+@analytics_bp.route('/health/categories', methods=['GET'])
+@login_required
+def get_health_categories():
+    """Get health check categories and their descriptions"""
+    try:
+        categories = {
+            'database_operations': {
+                'name': 'Database Operations & Data Integrity',
+                'checks': [
+                    'database_migrations',
+                    'data_consistency', 
+                    'transaction_rollbacks',
+                    'connection_pooling'
+                ],
+                'description': 'Database migrations, data consistency, transaction rollbacks, and connection pooling'
+            },
+            'background_jobs': {
+                'name': 'Background Job Processing',
+                'checks': [
+                    'task_queuing',
+                    'task_failure_handling'
+                ],
+                'description': 'Celery worker health, task queuing, and failure handling'
+            },
+            'external_services': {
+                'name': 'External Service Dependencies',
+                'checks': [
+                    'ai_service_connectivity',
+                    'chromadb_connectivity'
+                ],
+                'description': 'AI Service (Gemini Pro), ChromaDB vector database, Redis connectivity'
+            },
+            'security': {
+                'name': 'Security & Authentication',
+                'checks': [
+                    'password_hashing',
+                    'input_sanitization'
+                ],
+                'description': 'Password hashing, input sanitization, access control'
+            },
+            'performance': {
+                'name': 'Network & Performance',
+                'checks': [
+                    'api_performance',
+                    'concurrent_users'
+                ],
+                'description': 'API response times, concurrent users, memory usage, CPU usage'
+            }
+        }
+        
+        return jsonify({'categories': categories})
+        
+    except Exception as exc:
+        logger.exception('Failed to get health categories')
+        return jsonify({'error': 'failed_to_get_categories', 'detail': str(exc)}), 500
+
+
+@analytics_bp.route('/health/run-comprehensive', methods=['POST'])
+@login_required
+def run_comprehensive_health_check():
+    """Run comprehensive health check and return results"""
+    try:
+        from app.utils.monitoring import HealthChecker
+        
+        checker = HealthChecker()
+        health_result = checker.get_comprehensive_health()
+        
+        # Store health check results in database for tracking
+        try:
+            dm = DatabaseManager()
+            with dm.get_session() as session:
+                # Create a health check record
+                from app.models import TestRun
+                health_run = TestRun(
+                    status=health_result['status'],
+                    triggered_by=getattr(current_user, 'username', 'admin'),
+                    trigger_type='health_check',
+                    environment=os.getenv('FLASK_ENV', 'production'),
+                    version=os.getenv('GIT_COMMIT', 'unknown'),
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                    total_tests=health_result['total_checks'],
+                    passed_tests=health_result['healthy_checks'],
+                    failed_tests=health_result['total_checks'] - health_result['healthy_checks'],
+                    execution_time_seconds=0.0
+                )
+                session.add(health_run)
+                session.commit()
+                
+                health_result['health_check_id'] = health_run.id
+        except Exception as db_error:
+            logger.warning(f"Failed to store health check results: {db_error}")
+        
+        return jsonify({
+            'message': 'Comprehensive health check completed',
+            'status': 'completed',
+            'results': health_result
+        }), 200
+        
+    except Exception as exc:
+        logger.exception('Failed to run comprehensive health check')
+        return jsonify({'error': 'failed_to_run_health_check', 'detail': str(exc)}), 500

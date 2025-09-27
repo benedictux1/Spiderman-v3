@@ -18,6 +18,17 @@ from flask_apscheduler import APScheduler
 from flask_cors import CORS
 from dotenv import load_dotenv
 from s3_storage import s3_storage
+
+# Configure logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('kith_platform.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 from google_credentials import setup_google_credentials
 from models import Contact, RawNote, SynthesizedEntry, User, ContactGroup, ContactGroupMembership, ContactRelationship, Tag, ContactTag
 from app.utils.database import DatabaseManager
@@ -1093,16 +1104,7 @@ setup_google_credentials()
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('kith_platform.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Logger already configured at the top of the file
 
 # Configure OpenAI API
 def get_openai_api_key():

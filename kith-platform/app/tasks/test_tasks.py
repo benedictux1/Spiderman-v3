@@ -20,7 +20,7 @@ def _ensure_tables(dm: DatabaseManager):
 
 
 # Register task on the project Celery app to ensure proper discovery by the worker
-@celery_app.task(bind=True, name='app.tasks.test_tasks.run_test_suite')
+@celery_app.task(bind=True, name='app.tasks.test_tasks.run_test_suite', queue='test_queue')
 def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bool = True, triggered_by: str = "admin"):
     """Execute pytest, collect JUnit XML, and persist results to DB.
 
@@ -60,8 +60,12 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
         run_id = run.id
         logger.info(f"🔧 DEBUG: Test run created with ID: {run_id}")
 
-    self.update_state(state=states.STARTED, meta={"run_id": run_id, "status": "running"})
-    logger.info("🔧 DEBUG: Celery task state updated to STARTED")
+    # Only update state if we're running in a Celery context
+    if hasattr(self, 'request') and self.request.id:
+        self.update_state(state=states.STARTED, meta={"run_id": run_id, "status": "running"})
+        logger.info("🔧 DEBUG: Celery task state updated to STARTED")
+    else:
+        logger.info("🔧 DEBUG: Running outside Celery context, skipping state update")
 
     # Build pytest command
     with tempfile.TemporaryDirectory() as td:
@@ -168,7 +172,9 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                         elif skipped_tag is not None:
                             status = "skipped"
                             skipped += 1
+                            skip_reason = skipped_tag.attrib.get("message") or (skipped_tag.text or "").strip()[:2000]
                             logger.info(f"🔧 DEBUG: Test skipped: {name}")
+                            logger.info(f"🔧 DEBUG: Skip reason: {skip_reason[:200]}...")
                         else:
                             passed += 1
                             logger.info(f"🔧 DEBUG: Test passed: {name}")
@@ -184,6 +190,11 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                         elif "performance" in lname:
                             category = "performance"
 
+                        # Capture skip reason for skipped tests
+                        skip_reason = None
+                        if status == "skipped" and skipped_tag is not None:
+                            skip_reason = skipped_tag.attrib.get("message") or (skipped_tag.text or "").strip()[:2000]
+                        
                         results.append(TestResult(
                             run_id=run_id,
                             test_name=name,
@@ -194,6 +205,7 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
                             execution_time_seconds=time_s,
                             failure_message=failure_message,
                             traceback_excerpt=traceback_excerpt,
+                            skip_reason=skip_reason,
                         ))
                 
                 logger.info(f"🔧 DEBUG: Parsed {total} tests: {passed} passed, {failed} failed, {skipped} skipped")
@@ -229,9 +241,22 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
     with dm.get_session() as session:
         run = session.get(TestRun, run_id)
         if run:
-            # Consider it successful if tests passed, even with non-zero exit codes
+            # Consider it successful if tests executed properly, even with some failures
+            # Exit code 1 means tests ran but some failed (this is normal)
             # Exit code 2 is often a usage error but tests can still pass
-            final_status = "completed" if (proc.returncode == 0 or (proc.returncode == 2 and failed == 0)) else "failed"
+            # Only mark as failed if no tests were executed or there was a process error
+            if total == 0:
+                final_status = "failed"
+                run.error_message = "No tests were executed"
+            elif proc.returncode == 0:
+                final_status = "completed"
+            elif proc.returncode == 1 and total > 0:
+                final_status = "completed"  # Tests ran, some failed (normal)
+            elif proc.returncode == 2 and failed == 0:
+                final_status = "completed"  # Usage error but tests passed
+            else:
+                final_status = "failed"
+                run.error_message = f"Test process failed with exit code {proc.returncode}"
             run.status = final_status
             run.total_tests = total
             run.passed_tests = passed
@@ -257,5 +282,38 @@ def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bo
     result = {"run_id": run_id, "status": "completed" if (proc.returncode == 0 or (proc.returncode == 2 and failed == 0)) else "failed"}
     logger.info(f"🔧 DEBUG: Returning result: {result}")
     return result
+
+
+@celery_app.task(bind=True, name='app.tasks.test_tasks.test_health_check_task', queue='test_queue')
+def test_health_check_task(self: Task):
+    """Simple health check task for testing Celery connectivity"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Health check task started")
+    
+    # Simulate some work
+    time.sleep(1)
+    
+    result = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "task_id": self.request.id if hasattr(self, 'request') else None
+    }
+    
+    logger.info(f"🔧 DEBUG: Health check task completed: {result}")
+    return result
+
+
+@celery_app.task(bind=True, name='app.tasks.test_tasks.test_failure_task', queue='test_queue', max_retries=3)
+def test_failure_task(self: Task):
+    """Task that intentionally fails for testing failure handling"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Failure test task started")
+    
+    # This task will always fail
+    raise Exception("Intentional failure for testing retry logic")
 
 

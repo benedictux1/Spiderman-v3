@@ -50,6 +50,48 @@ class Contact(Base):
     synthesized_entries = relationship("SynthesizedEntry", back_populates="contact", cascade="all, delete-orphan")
     groups = relationship("ContactGroup", secondary="contact_group_memberships", back_populates="members")
     tags = relationship("Tag", secondary="contact_tags", back_populates="contacts")
+    
+    def to_dict(self):
+        """Convert contact to dictionary for JSON serialization"""
+        try:
+            return {
+                'id': self.id,
+                'user_id': self.user_id,
+                'full_name': self.full_name,
+                'tier': self.tier,
+                'vector_collection_id': self.vector_collection_id,
+                'telegram_id': self.telegram_id,
+                'telegram_username': self.telegram_username,
+                'telegram_phone': self.telegram_phone,
+                'telegram_handle': self.telegram_handle,
+                'is_verified': self.is_verified,
+                'is_premium': self.is_premium,
+                'telegram_last_sync': self.telegram_last_sync.isoformat() if self.telegram_last_sync else None,
+                'telegram_metadata': self.telegram_metadata,
+                'custom_fields': self.custom_fields,
+                'created_at': self.created_at.isoformat() if self.created_at else None,
+                'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            }
+        except Exception as e:
+            # Fallback for detached instances
+            return {
+                'id': getattr(self, 'id', None),
+                'user_id': getattr(self, 'user_id', None),
+                'full_name': getattr(self, 'full_name', None),
+                'tier': getattr(self, 'tier', None),
+                'vector_collection_id': getattr(self, 'vector_collection_id', None),
+                'telegram_id': getattr(self, 'telegram_id', None),
+                'telegram_username': getattr(self, 'telegram_username', None),
+                'telegram_phone': getattr(self, 'telegram_phone', None),
+                'telegram_handle': getattr(self, 'telegram_handle', None),
+                'is_verified': getattr(self, 'is_verified', None),
+                'is_premium': getattr(self, 'is_premium', None),
+                'telegram_last_sync': getattr(self, 'telegram_last_sync', None),
+                'telegram_metadata': getattr(self, 'telegram_metadata', None),
+                'custom_fields': getattr(self, 'custom_fields', None),
+                'created_at': getattr(self, 'created_at', None),
+                'updated_at': getattr(self, 'updated_at', None)
+            }
 
 class RawNote(Base):
     __tablename__ = 'raw_notes'
@@ -200,6 +242,7 @@ class TestResult(Base):
     execution_time_seconds = Column(Float, default=0.0)
     failure_message = Column(Text)
     traceback_excerpt = Column(Text)
+    skip_reason = Column(Text)  # Reason why test was skipped
     created_at = Column(DateTime, default=datetime.utcnow)
 
     run = relationship("TestRun", back_populates="results")

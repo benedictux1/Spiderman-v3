@@ -17,6 +17,9 @@ class ContactService:
             with self.db_manager.get_session() as session:
                 contacts = session.query(Contact).filter(Contact.user_id == user_id).all()
                 logger.info(f"Retrieved {len(contacts)} contacts for user {user_id}")
+                # Expunge contacts to avoid DetachedInstanceError
+                for contact in contacts:
+                    session.expunge(contact)
                 return contacts
         except Exception as e:
             logger.error(f"Error retrieving contacts for user {user_id}: {e}")
@@ -67,6 +70,9 @@ class ContactService:
                 session.refresh(contact)
                 
                 logger.info(f"Created contact {contact.id}: {contact.full_name} for user {user_id}")
+                # Convert to dict before session closes to avoid DetachedInstanceError
+                contact_dict = contact.to_dict()
+                session.expunge(contact)  # Detach from session
                 return contact
                 
         except Exception as e:

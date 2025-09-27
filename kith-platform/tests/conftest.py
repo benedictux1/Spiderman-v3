@@ -17,6 +17,7 @@ from werkzeug.security import generate_password_hash
 os.environ['FLASK_ENV'] = 'testing'
 # FORCE SQLite for testing - NEVER use production database for tests
 os.environ['DATABASE_URL'] = 'sqlite:///test_kith_platform.db'
+os.environ['FORCE_SQLITE_FOR_TESTS'] = '1'
 print("🔧 TEST SETUP: Forcing SQLite database for test isolation")
 
 @pytest.fixture(scope='session')
@@ -79,14 +80,25 @@ def override_container_db_manager(db_manager):
     logger = logging.getLogger(__name__)
     
     logger.info("🔧 DEBUG: Overriding container database manager for tests...")
-    # Since we no longer have a global container, we'll skip the override
-    # The test database manager should be used directly in tests
+    
+    # Patch the DatabaseManager class to use our test database
+    from app.utils.database import DatabaseManager
+    original_init = DatabaseManager.__init__
+    
+    def test_init(self):
+        self.engine = db_manager.engine
+        self.SessionLocal = db_manager.SessionLocal
+        self._database_url = 'sqlite:///test_kith_platform.db'
+    
+    DatabaseManager.__init__ = test_init
     logger.info(f"🔧 DEBUG: Test manager: {db_manager}")
     logger.info(f"🔧 DEBUG: Test manager engine: {db_manager.engine}")
     logger.info("✅ Using test database manager directly")
     
     yield
     
+    # Restore original init
+    DatabaseManager.__init__ = original_init
     logger.info("🔧 DEBUG: Test database manager cleanup completed")
 
 # Factory classes for test data generation

@@ -237,7 +237,7 @@ class TestMetricsCollector:
         
         assert select_key in collector.metrics
         assert collector.metrics[select_key]['count'] == 2
-        assert collector.metrics[select_key]['total_duration'] == 0.3
+        assert abs(collector.metrics[select_key]['total_duration'] - 0.3) < 0.001
         assert collector.metrics[select_key]['total_rows'] == 15
         
         assert insert_key in collector.metrics

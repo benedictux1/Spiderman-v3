@@ -39,7 +39,7 @@ def process_note():
             })
         else:
             # Process synchronously
-            note_service = NoteService(current_app.container.database_manager, current_app.container.ai_service)
+            note_service = NoteService(current_app.container.db_manager(), current_app.container.ai_service())
             result = note_service.process_note(
                 contact_id=data['contact_id'],
                 content=data['content'],
@@ -98,7 +98,7 @@ def get_task_status(task_id):
 def get_raw_notes(contact_id):
     """Get raw notes for a contact"""
     try:
-        note_service = NoteService(current_app.container.database_manager, current_app.container.ai_service)
+        note_service = NoteService(current_app.container.db_manager(), current_app.container.ai_service())
         notes = note_service.get_raw_notes(contact_id, current_user.id)
         return jsonify({'notes': notes})
     except ValueError as e:

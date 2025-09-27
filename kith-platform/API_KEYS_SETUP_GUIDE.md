@@ -18,15 +18,15 @@ Add these lines to your `.env` file:
 
 ```bash
 # AI Service API Keys
-OPENAI_API_KEY=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
-GEMINI_API_KEY=AIzaSyBUm1R9dtmNSZlS-qhTtl3K8ouZcrYEFiA
+OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ### **Option 2: Set in Shell (Temporary)**
 
 ```bash
-export OPENAI_API_KEY="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"
-export GEMINI_API_KEY="AIzaSyBUm1R9dtmNSZlS-qhTtl3K8ouZcrYEFiA"
+export OPENAI_API_KEY="your_openai_api_key_here"
+export GEMINI_API_KEY="your_gemini_api_key_here"
 ```
 
 ## 🚀 **Render Deployment**
@@ -37,8 +37,8 @@ When you deploy to Render, it will automatically use the environment variables y
 
 1. **Render Dashboard** → **Your Service** → **Environment**
 2. **Add Environment Variable**:
-   - `OPENAI_API_KEY` = `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`
-   - `GEMINI_API_KEY` = `AIzaSyBUm1R9dtmNSZlS-qhTtl3K8ouZcrYEFiA`
+   - `OPENAI_API_KEY` = `your_openai_api_key_here`
+   - `GEMINI_API_KEY` = `your_gemini_api_key_here`
 
 ### **Render Environment Variables Work Like This:**
 - ✅ **Production**: Uses Render environment variables
@@ -49,8 +49,8 @@ When you deploy to Render, it will automatically use the environment variables y
 
 ### **Add API Keys to .env file:**
 ```bash
-echo "OPENAI_API_KEY=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" >> .env
-echo "GEMINI_API_KEY=AIzaSyBUm1R9dtmNSZlS-qhTtl3K8ouZcrYEFiA" >> .env
+echo "OPENAI_API_KEY=your_openai_api_key_here" >> .env
+echo "GEMINI_API_KEY=your_gemini_api_key_here" >> .env
 ```
 
 ### **Test the fix:**

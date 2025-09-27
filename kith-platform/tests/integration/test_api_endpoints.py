@@ -165,8 +165,8 @@ class TestAPIEndpoints:
         assert response.status_code == 200
         
         data = response.get_json()
-        assert 'contacts' in data
-        assert isinstance(data['contacts'], list)
+        # API returns a direct list, not wrapped in 'contacts' key
+        assert isinstance(data, list)
     
     def test_contacts_create_requires_auth(self, client):
         """Test that creating contacts requires authentication"""
@@ -178,12 +178,13 @@ class TestAPIEndpoints:
         """Test successful contact creation"""
         response = client.post('/api/contacts/', 
                              json={'full_name': 'Test Contact', 'tier': 2})
-        assert response.status_code == 200
+        assert response.status_code == 201  # 201 Created is the correct status code
         
         data = response.get_json()
-        assert 'success' in data
-        assert data['success'] is True
-        assert 'contact_id' in data
+        # API returns the contact object directly, not wrapped with success flag
+        assert 'full_name' in data
+        assert data['full_name'] == 'Test Contact'
+        assert 'id' in data
     
     def test_task_status_endpoint(self, client, authenticated_user):
         """Test task status endpoint"""

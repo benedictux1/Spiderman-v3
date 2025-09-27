@@ -61,8 +61,13 @@ class TestAuthService:
         """Test successful user creation"""
         auth_service = AuthService(Mock())
         auth_service.db_manager = Mock()
+        
+        # Create a mock session instead of using the real db_session
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.first.return_value = None  # No existing user
+        
         cm = MagicMock()
-        cm.__enter__.return_value = db_session
+        cm.__enter__.return_value = mock_session
         cm.__exit__.return_value = False
         auth_service.db_manager.get_session.return_value = cm
         
@@ -71,6 +76,11 @@ class TestAuthService:
         assert user.username == "newuser"
         assert user.role == "user"
         assert check_password_hash(user.password_hash, "password123")
+        
+        # Verify the service called the database methods
+        mock_session.add.assert_called_once()
+        mock_session.flush.assert_called_once()
+        mock_session.expunge.assert_called_once()
     
     def test_create_user_duplicate_username(self, db_session, sample_user):
         """Test user creation with duplicate username"""

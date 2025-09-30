@@ -3,2024 +3,530 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kith - Personal Intelligence Platform</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <title>Kith Platform - Simplified Layout</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple transition for modal */
+        #note-modal {
+            transition: opacity 0.2s ease-in-out;
+        }
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-size: 18px;
+            color: #666;
+        }
+    </style>
 </head>
-<body>
-    <!-- Toast Container -->
-    <div id="toast-container"></div>
-    
-    
-    <div class="container">
-        <!-- Page Title -->
-        <h1>Kith Platform</h1>
-        
-        <!-- Navigation -->
-        <div class="navigation">
-            <button id="main-view-btn" class="nav-btn active">Contacts</button>
-            <button id="graph-view-btn" class="nav-btn">Relationship Graph</button>
-            <button id="manage-graph-btn" class="nav-btn">Manage Graph</button>
-            <button id="settings-btn" class="nav-btn" onclick="showSettingsView()">Settings</button>
+<body class="bg-gray-50 text-gray-800">
+
+<!-- Loading state -->
+<div id="loading" class="loading">
+    <div>Loading...</div>
         </div>
         
-        <!-- Main Input View -->
-        <div id="main-view">
-            <!-- Search Area -->
-            <div class="search-area">
-                <div class="search-container">
-                    <input type="search" id="contact-search" placeholder="Search for a contact...">
-                    <label class="tier-filter">
-                        <input type="checkbox" id="tier-filter"> Tier 1 Only
-                    </label>
+<!-- Main app content (hidden until authenticated) -->
+<div id="app" class="hidden flex flex-col h-screen">
+    <!-- Header & Navigation -->
+    <header class="bg-white border-b border-gray-200">
+        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-8">
+                <a href="/" class="text-lg font-semibold text-gray-700 hover:text-blue-600 transition-colors">Contacts</a>
+                <a href="/relationship-graph" class="text-gray-500 hover:text-blue-600 transition-colors">Relationship Graph</a>
+                <a href="/manage-graph" class="text-gray-500 hover:text-blue-600 transition-colors">Manage Graph</a>
+                <a href="/settings" class="text-gray-500 hover:text-blue-600 transition-colors">Settings</a>
+                </div>
+        </nav>
+    </header>
+
+    <!-- Sub-header with Search -->
+    <div class="bg-white border-b border-gray-200">
+        <div class="container mx-auto px-6 py-4">
+             <input type="text" id="search-input" placeholder="Search for contact here" class="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition">
                 </div>
             </div>
             
-            <!-- Note Input Area -->
-            <div id="input-area">
-                <div class="selected-contact">
-                    <span id="selected-contact-name">Select a contact to add notes...</span>
-                    <button id="change-contact-btn" style="display:none;">Change Contact</button>
-                </div>
-                <div class="note-container">
-                    <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
-                    <button id="record-btn" class="mic-btn" title="Start Voice Recording">🎤</button>
-                </div>
-                <button id="analyze-btn" disabled>Analyze Note</button>
-            </div>
-            
-            <!-- Tier 1 Contacts List -->
-            <div class="tier1-contacts-section">
-                <h3>Tier 1 Contacts</h3>
-                <div id="tier1-contacts" class="tier1-contacts-list">
-                    <!-- Tier 1 contacts will be dynamically inserted here -->
-                </div>
-            </div>
-            
-            <!-- Tier 2 Contacts List -->
-            <div class="tier2-contacts-section">
-                <h3>Tier 2 Contacts</h3>
-                <div id="tier2-contacts" class="tier1-contacts-list">
-                    <!-- Tier 2 contacts will be dynamically inserted here -->
-                </div>
-            </div>
-
-        </div>
-
-        <!-- Review View (Initially hidden) -->
-        <div id="review-view" style="display:none;">
-            <div class="review-header">
-                <h2>AI Analysis Review</h2>
-                <p class="review-subtitle">Edit freely before saving</p>
-                <button id="back-to-input">← Back to Input</button>
-            </div>
-            <div id="review-content"></div>
-            <div class="review-actions">
-                <button id="confirm-btn">Confirm & Save Analysis</button>
-                <button id="cancel-btn">Cancel</button>
-            </div>
-        </div>
-
-        <!-- Individual Contact Profile View (Initially hidden) -->
-        <div id="profile-view" style="display:none;">
-            <input type="hidden" id="selected-contact-id" />
-            <div class="profile-header">
-                <h2 id="contact-profile-name"></h2>
-                <div class="profile-actions">
-                    <button id="back-to-main-from-profile">← Back to Main</button>
-                </div>
-            </div>
-            
-            <!-- Profile Actions -->
-            <div class="profile-actions-bar card">
-                <button id="profile-add-note-btn">Add Note</button>
-                <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
-                
-                <!-- NEW: File Upload -->
-                <form id="file-upload-form" style="display:inline;">
-                    <input type="file" id="file-upload-input" style="display:none;" accept="image/*,.pdf,.txt">
-                    <button type="button" id="profile-upload-file-btn">Upload File</button>
-                </form>
-                
-                <button id="edit-contact-profile-btn">Edit Profile Details</button>
-                <button id="edit-all-categories-btn">Edit Notes</button>
-                <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
-                <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
-            </div>
-            
-            <!-- Tags Section -->
-            <div class="tags-section card">
-                <div class="tags-header">
-                    <h3>Tags</h3>
-                    <button id="manage-tags-btn" class="secondary-btn">Manage Tags</button>
-                </div>
-                <div id="contact-tags-container" class="tags-container">
-                    <!-- Tags will be dynamically loaded here -->
-                </div>
-                <div id="add-tag-section" style="display:none;">
-                    <select id="tag-select" class="tag-select">
-                        <option value="">Select a tag to assign...</option>
-                    </select>
-                    <button id="assign-tag-btn" class="primary-btn">Assign Tag</button>
-                    <button id="cancel-assign-tag-btn" class="secondary-btn">Cancel</button>
-                </div>
-                <button id="add-tag-btn" class="primary-btn">+ Add Tag</button>
-            </div>
-            <div id="file-upload-status" style="margin-top:8px;"></div>
-
-            <!-- Profile Note Input Area (hidden by default) -->
-            <div id="profile-note-input-area" class="card" style="display:none;">
-                <h3>Add New Note</h3>
-                <div class="note-container">
-                    <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
-                    <button id="profile-record-btn" class="mic-btn" title="Start Voice Recording">🎤</button>
-                </div>
-                <div class="note-actions">
-                    <button id="profile-analyze-btn">Analyze Note</button>
-                    <button id="profile-cancel-note-btn">Cancel</button>
-                </div>
-            </div>
-            
-            <div id="contact-profile-content" class="profile-sections">
-                <!-- Category sections will be dynamically inserted here -->
-            </div>
-            
-            <!-- Raw Log Viewer -->
-            <div class="raw-logs-section">
-                <details id="raw-logs-details">
-                    <summary>View Raw Logs</summary>
-                    <div id="raw-logs-content">
-                        <!-- Raw logs will be loaded here -->
-                    </div>
-                </details>
-            </div>
-
-            <!-- Import Progress UI -->
-            <div id="import-progress" style="display:none; margin-top: 16px;" class="card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <strong>Telegram Sync Progress</strong>
-                    <span id="import-progress-status">Starting…</span>
-                </div>
-                <div style="background:#eee; border-radius:6px; height:10px; overflow:hidden;">
-                    <div id="import-progress-bar" style="height:10px; width:0%; background:#4a90e2;"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Sync Telegram Modal -->
-        <div id="sync-telegram-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); align-items:center; justify-content:center; z-index:1000;">
-            <div style="background:#fff; padding:20px; border-radius:8px; width: 380px; max-width: 90%;">
-                <h3>Sync Telegram Chat</h3>
-                <p style="margin-top:4px; color:#555;">Enter the contact's Telegram username and how many days back to sync.</p>
-                <div class="form-group" style="margin-top:12px;">
-                    <label for="sync-telegram-username">Telegram Username</label>
-                    <input id="sync-telegram-username" type="text" placeholder="e.g. johndoe" />
-                </div>
-                <div class="form-group" style="margin-top:12px;">
-                    <label for="sync-telegram-days">Days Back</label>
-                    <input id="sync-telegram-days" type="number" min="1" max="365" value="30" />
-                </div>
-                <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
-                    <button id="sync-telegram-cancel-btn">Cancel</button>
-                    <button id="sync-telegram-start-btn">Start Sync</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Settings View (Initially hidden) -->
-        <div id="settings-view" style="display:none;">
-            <div class="settings-header">
-                <h2>Settings & Management</h2>
-                <button id="back-to-main-from-settings">← Back to Main</button>
-            </div>
-            
-            <!-- Tag Management -->
-            <div class="settings-section">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <h3>🏷️ Manage Tags</h3>
-                        <div id="tags-count" class="tags-count">Loading tags...</div>
-                    </div>
-                    <div style="display: flex; gap: 1rem; align-items: center;">
-                        <button id="create-tag-btn" class="primary-btn">+ Create Tag</button>
-                    </div>
-                </div>
-                
-                <!-- Tags List -->
-                <div id="tags-container" class="tags-management-container">
-                    <!-- Tags will be dynamically loaded here -->
-                </div>
-            </div>
-
-            <!-- Contacts Management -->
-            <div class="settings-section">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <h3>👥 Manage Contacts</h3>
-                        <div id="contacts-count" class="contacts-count">Loading contacts...</div>
-                    </div>
-                    <div style="display: flex; gap: 1rem; align-items: center;">
-                        <button id="toggle-contacts-list" class="toggle-btn" data-tooltip="Show/Hide contact list">
-                            <span id="toggle-icon">👁️</span>
-                            <span id="toggle-text">Hide List</span>
-                        </button>
-                        <button id="show-create-contact-modal-btn">+ Create Contact</button>
-                    </div>
-                </div>
-                
-                <!-- Collapsible Contacts Container -->
-                <div id="contacts-container" class="contacts-container">
-                    <!-- Search and Filter -->
-                    <div class="management-controls">
-                        <input type="text" id="contact-search-manage" placeholder="Search contacts...">
-                        <select id="tier-filter-manage">
-                            <option value="">All Tiers</option>
-                            <option value="1">Tier 1</option>
-                            <option value="2">Tier 2</option>
-                            <option value="3">Tier 3</option>
-                        </select>
-                    </div>
-                    
-                    <!-- Bulk Actions -->
-                    <div class="bulk-actions">
-                        <button id="select-all-btn">Select All</button>
-                        <button id="deselect-all-btn">Deselect All</button>
-                        <button id="delete-selected-btn" class="danger-btn" disabled>Delete Selected</button>
-                    </div>
-                    
-                    <!-- Contacts Table -->
-                    <table id="contacts-table">
-                        <thead>
-                            <tr>
-                                <th><input type="checkbox" id="select-all-header"></th>
-                                <th>Name</th>
-                                <th>Tier</th>
-                                <th>Telegram Handle</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Contacts will be dynamically inserted here -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Import/Export -->
-            <div class="settings-section">
-                <h3>📁 Import & Export</h3>
-                
-                <div class="import-export-grid">
-                    <!-- Card 1: Import vCard -->
-                    <div class="import-card">
-                        <div class="import-card-header">
-                            <span class="import-card-icon">📇</span>
-                            <h4>Import vCard</h4>
-                    </div>
-                        <p class="import-card-description">Upload a vCard (.vcf) file to import contacts into your system.</p>
-                        <div class="import-card-content">
-                            <input type="file" id="vcf-upload" accept=".vcf" class="file-input">
-                            <label for="vcf-upload" class="file-input-label">
-                                <span>Choose File</span>
-                                <span class="file-input-status">no file selected</span>
+    <!-- Main Content Area -->
+    <main class="flex-grow container mx-auto px-6 py-8">
+        <!-- Contacts List View -->
+        <div id="contacts-view" class="w-full bg-white rounded-lg border border-gray-200 p-6 flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Contacts</h2>
+                 <label class="flex items-center space-x-2 text-gray-600">
+                    <input type="checkbox" id="tier1-only-checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                    <span>Tier 1 Only</span>
                             </label>
-                </div>
                     </div>
 
-                    <!-- Card 2: Download CSV -->
-                    <div class="import-card">
-                        <div class="import-card-header">
-                            <span class="import-card-icon">📥</span>
-                            <h4>Download All Data as CSV</h4>
+            <!-- Contacts List -->
+            <div id="contact-list" class="flex-grow">
+                <!-- Contact items will be injected here by JavaScript -->
                         </div>
-                        <p class="import-card-description">Export all your contacts and data as a CSV file for backup or external use.</p>
-                        <div class="import-card-content">
-                            <a id="download-csv-btn" href="/api/export/csv" download class="import-card-button primary">
-                                Download CSV
-                            </a>
                         </div>
-                    </div>
 
-                    <!-- Card 3: Import and Merge -->
-                    <div class="import-card">
-                        <div class="import-card-header">
-                            <span class="import-card-icon">🔄</span>
-                    <h4>Import and Merge from Backup</h4>
-                    </div>
-                        <p class="import-card-description">Upload a CSV file to merge contacts and data. Existing data will not be deleted.</p>
-                        <div class="import-card-content">
-                    <form id="merge-form">
-                                <input type="file" id="merge-file-input" accept=".csv" required class="file-input">
-                                <label for="merge-file-input" class="file-input-label">
-                                    <span>Choose File</span>
-                                    <span class="file-input-status">no file selected</span>
-                                </label>
-                                
-                                <div class="merge-options" style="display:none;">
-                        <div class="form-group">
-                                        <label for="merge-dry-run" class="checkbox-label">
-                                <input type="checkbox" id="merge-dry-run">
-                                            <span>Dry Run (preview changes without applying)</span>
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label for="policy-contact-tier">Policy for Contact Tier Updates:</label>
-                            <select id="policy-contact-tier">
-                                <option value="preserve" selected>Preserve existing</option>
-                                <option value="overwrite">Overwrite with CSV</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="policy-details">Policy for Detail Updates:</label>
-                            <select id="policy-details">
-                                <option value="preserve" selected>Preserve (skip duplicates)</option>
-                                <option value="append">Append (allow duplicates)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                                        <label for="merge-force" class="checkbox-label">
-                                <input type="checkbox" id="merge-force">
-                                            <span>Force Merge (Overwrite existing data)</span>
-                            </label>
-                        </div>
-                                </div>
-                                
-                                <button type="submit" id="merge-btn" class="import-card-button primary" disabled>
-                                    Upload & Merge
-                                </button>
-                    </form>
-                            <div id="merge-preview" class="merge-preview" style="display:none;"></div>
-                            <p id="merge-status" class="status-message"></p>
-                        </div>
-                    </div>
+        <!-- Contact Profile View -->
+        <div id="contact-profile-view" class="hidden w-full bg-white rounded-lg border border-gray-200 p-6">
+            <div class="flex justify-between items-center mb-4">
+                <button id="back-to-contacts" class="text-blue-600 hover:text-blue-800 font-medium flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                    </svg>
+                    Back to Contacts
+                </button>
+                <div class="flex space-x-3">
+                    <button id="add-note-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                        Add Note
+                    </button>
+                    <button id="upload-file-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+                        Upload PDF
+                    </button>
                 </div>
             </div>
-
-            <!-- Telegram Integration -->
-            <div class="settings-section">
-                <h3>💬 Telegram Integration</h3>
-                
-                <div class="telegram-grid">
-                    <!-- Card 1: Setup & Status -->
-                    <div class="telegram-card">
-                        <div class="telegram-card-header">
-                            <span class="telegram-card-icon">⚙️</span>
-                            <h4>Setup & Status</h4>
-                        </div>
-                        <p class="telegram-card-description">Check your Telegram API configuration and connection status.</p>
-                        <div class="telegram-card-content">
-                            <div id="telegram-status-display" class="status-display">
-                                <div class="status-indicator">
-                                    <span class="status-dot" id="telegram-status-dot"></span>
-                                    <span class="status-text" id="telegram-status-text">Checking...</span>
-                                </div>
-                                <div class="status-details" id="telegram-status-details"></div>
-                            </div>
-                            
-                            <!-- API Credentials Form (shown when not configured) -->
-                            <div id="telegram-credentials-form" class="telegram-credentials-form" style="display:none;">
-                                <h5>📱 Enter Your Telegram API Credentials</h5>
-                                <p class="form-help-text">
-                                    Get your API credentials from <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>
-                                </p>
-                                <div class="form-group">
-                                    <label for="telegram-api-id">API ID:</label>
-                                    <input type="text" id="telegram-api-id" placeholder="e.g., 1234567" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="telegram-api-hash">API Hash:</label>
-                                    <input type="text" id="telegram-api-hash" placeholder="e.g., abcdef123456..." required>
-                                </div>
-                                <div class="form-actions">
-                                    <button id="telegram-save-credentials-btn" class="telegram-card-button primary">
-                                        💾 Save Credentials
-                                    </button>
-                                    <button id="telegram-cancel-credentials-btn" class="telegram-card-button secondary">
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div class="telegram-card-actions" id="telegram-main-actions">
-                                <button id="telegram-check-status-btn" class="telegram-card-button secondary">
-                                    Check Status
-                                </button>
-                                <button id="telegram-configure-btn" class="telegram-card-button secondary" style="display:none;">
-                                    ⚙️ Configure API
-                                </button>
-                                <button id="telegram-relink-btn" class="telegram-card-button primary" style="display:none;">
-                                    🔗 Relink Account
-                                </button>
-                                <button id="telegram-delink-btn" class="telegram-card-button danger" style="display:none;">
-                                    🔓 Delink Account
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Card 2: Import Contacts -->
-                    <div class="telegram-card">
-                        <div class="telegram-card-header">
-                            <span class="telegram-card-icon">👥</span>
-                            <h4>Import Contacts</h4>
-                        </div>
-                        <p class="telegram-card-description">Import all your Telegram contacts to the platform automatically.</p>
-                        <div class="telegram-card-content">
-                            <div class="import-options">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="telegram-skip-bots" checked>
-                                    <span>Skip bots and deleted accounts</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="telegram-check-duplicates" checked>
-                                    <span>Check for duplicates</span>
-                                </label>
-                            </div>
-                            <button id="telegram-import-contacts-btn" class="telegram-card-button primary" disabled>
-                                Import Contacts
-                            </button>
-                            <div id="telegram-import-status" class="status-message" style="display:none;"></div>
-                        </div>
-                    </div>
-
-                    <!-- Card 3: Sync Chat History -->
-                    <div class="telegram-card">
-                        <div class="telegram-card-header">
-                            <span class="telegram-card-icon">💬</span>
-                            <h4>Sync Chat History</h4>
-                        </div>
-                        <p class="telegram-card-description">Import chat history for a specific contact to analyze conversations.</p>
-                        <div class="telegram-card-content">
-                            <div class="form-group">
-                                <label for="telegram-contact-select">Select Contact:</label>
-                                <select id="telegram-contact-select" class="contact-select">
-                                    <option value="">Choose a contact...</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="telegram-days-back">Days to sync back:</label>
-                                <select id="telegram-days-back">
-                                    <option value="7">Last 7 days</option>
-                                    <option value="30" selected>Last 30 days</option>
-                                    <option value="90">Last 90 days</option>
-                                    <option value="180">Last 180 days</option>
-                                </select>
-                            </div>
-                            <button id="telegram-sync-chat-btn" class="telegram-card-button primary" disabled>
-                                Sync Chat History
-                            </button>
-                            <div id="telegram-sync-status" class="status-message" style="display:none;"></div>
-                            
-                            <!-- Progress bar for sync -->
-                            <div id="telegram-sync-progress" class="sync-progress" style="display:none;">
-                                <div class="progress-header">
-                                    <span class="progress-label">Syncing messages...</span>
-                                    <span class="progress-percent">0%</span>
-                                </div>
-                                <div class="progress-bar">
-                                    <div class="progress-fill" id="telegram-progress-fill"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            
+            <h1 id="contact-profile-name" class="text-2xl font-bold mb-6 text-gray-800"></h1>
+            
+            <div id="contact-profile-content" class="space-y-4">
+                <!-- Contact categories will be loaded here -->
             </div>
         </div>
+    </main>
+                    </div>
 
-        <div id="create-contact-modal" style="display:none;">
-            <div>
-                <div style="position: relative;">
-                    <h2>Create New Contact</h2>
-                    <button id="close-create-contact-modal-btn" type="button">&times;</button>
-                </div>
-                <div>
-                    <form id="create-contact-form">
-                        <div class="form-group">
-                            <label for="new-contact-name">Full Name</label>
-                            <input type="text" id="new-contact-name" required placeholder="Enter full name">
-                        </div>
-                        <div class="form-group">
-                            <label for="new-contact-tier">Tier</label>
-                            <select id="new-contact-tier">
-                                <option value="1">Tier 1 - Close contacts</option>
-                                <option value="2" selected>Tier 2 - Regular contacts</option>
-                                <option value="3">Tier 3 - Distant contacts</option>
-                            </select>
-                        </div>
-                    </form>
-                </div>
-                <div>
-                    <button id="save-contact-btn" type="button">💾 Save Contact</button>
-                    <button id="cancel-create-contact-btn" type="button">Cancel</button>
-                </div>
-            </div>
+<!-- Add Note Modal -->
+<div id="note-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center p-4 z-50">
+    <div id="modal-content" class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg relative">
+        <button id="close-modal-btn" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
+        <h3 id="modal-contact-name" class="text-2xl font-bold mb-4">Add Note</h3>
+        <textarea id="modal-notes-textarea" placeholder="Type your notes here..." class="w-full h-48 px-4 py-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition resize-none"></textarea>
+        <div class="mt-6 flex justify-end">
+            <button id="analyze-note-btn" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-transform transform active:scale-95">
+                Analyze Note
+            </button>
         </div>
-
-        <!-- Relationship Graph View (Initially hidden) -->
-        <div id="graph-view" style="display:none;">
-            <div class="graph-header">
-                <h2>Relationship Graph</h2>
-                <p class="graph-subtitle">Visualize connections between your contacts</p>
-                <button id="back-to-main-from-graph">← Back to Contacts</button>
-            </div>
-            <div id="graph-container" style="width: 100%; height: 600px; border: 1px solid #ddd;"></div>
-            <div class="graph-controls">
-                <button id="fit-graph-btn">Fit to Screen</button>
-                <button id="reset-physics-btn">Reset Physics</button>
-                <label>
-                    <input type="checkbox" id="show-labels-checkbox" checked> Show Labels
-                </label>
-            </div>
-        </div>
-
-        <!-- Manage Graph Modal (Initially hidden) -->
-        <div id="manage-graph-modal" class="modal" style="display:none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Manage Relationship Graph</h3>
-                    <button class="close-modal-btn">×</button>
-                </div>
-                
-                <!-- Create New Group -->
-                <div class="modal-section">
-                    <h4>Create New Group</h4>
-                    <div class="form-group">
-                        <input type="text" id="new-group-name" placeholder="Group Name (e.g., Family, Work)">
-                        <input type="color" id="new-group-color" value="#97C2FC">
-                        <button id="create-group-btn">Create Group</button>
-                    </div>
-                </div>
-                
-                <hr>
-
-                <!-- Create New Relationship -->
-                <div class="modal-section">
-                    <h4>Create New Relationship</h4>
-                    <div class="form-group">
-                        <select id="rel-source-contact">
-                            <option value="">Select first contact...</option>
-                        </select>
-                        <input type="text" id="rel-label" placeholder="Relationship (e.g., Siblings, Colleagues)">
-                        <select id="rel-target-contact">
-                            <option value="">Select second contact...</option>
-                        </select>
-                        <button id="create-rel-btn">Create Relationship</button>
-                    </div>
-                </div>
-                
-                <div class="modal-actions">
-                    <button class="close-modal-btn">Close</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Create Tag Modal -->
-        <div id="create-tag-modal" class="modal" style="display:none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Create New Tag</h3>
-                    <button class="close-modal-btn" data-modal="create-tag-modal">×</button>
-                </div>
-                
-                <div class="modal-section">
-                    <div class="form-group">
-                        <label for="tag-name">Tag Name</label>
-                        <input type="text" id="tag-name" placeholder="Enter tag name" maxlength="255">
-                    </div>
-                    <div class="form-group">
-                        <label for="tag-color">Color</label>
-                        <input type="color" id="tag-color" value="#97C2FC">
-                    </div>
-                    <div class="form-group">
-                        <label for="tag-description">Description (Optional)</label>
-                        <textarea id="tag-description" placeholder="Enter tag description" rows="3"></textarea>
-                    </div>
-                </div>
-                
-                <div class="modal-actions">
-                    <button id="save-tag-btn" class="primary-btn" onclick="createTag()">Create Tag</button>
-                    <button class="close-modal-btn secondary-btn" data-modal="create-tag-modal">Cancel</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Delete Tag Confirmation Modal -->
-        <div id="delete-tag-modal" class="modal" style="display:none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Delete Tag: <span id="delete-tag-name"></span></h3>
-                    <button class="close-modal-btn" data-modal="delete-tag-modal">×</button>
-                </div>
-                
-                <div class="modal-section">
-                    <p id="delete-tag-description">This tag is currently assigned to <span id="affected-contacts-count">0</span> contacts.</p>
-                    
-                    <div id="affected-contacts-list" class="affected-contacts">
-                        <!-- Affected contacts will be listed here -->
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="reassign-tag-select">Optionally, reassign these contacts to another tag:</label>
-                        <select id="reassign-tag-select">
-                            <option value="">No reassignment</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="modal-actions">
-                    <button id="confirm-delete-tag-btn" class="danger-btn">Delete Tag</button>
-                    <button class="close-modal-btn secondary-btn" data-modal="delete-tag-modal">Cancel</button>
-                </div>
-            </div>
-        </div>
-
-
     </div>
+</div>
 
-    <!-- External JavaScript files -->
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <script src="/static/js/tag-management.js"></script>
-    
-    <!-- Minimal inline script for remaining functions -->
+<!-- File Upload Modal -->
+<div id="file-upload-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg relative">
+        <button id="close-upload-modal-btn" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
+        <h3 id="upload-modal-contact-name" class="text-2xl font-bold mb-4">Upload File</h3>
+        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+            <input type="file" id="file-input" class="hidden" accept=".pdf,.doc,.docx,.txt">
+            <div id="file-drop-zone" class="cursor-pointer">
+                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <p class="mt-2 text-sm text-gray-600">Click to upload or drag and drop</p>
+                <p class="text-xs text-gray-500">PDF, DOC, DOCX, TXT files only</p>
+            </div>
+        </div>
+        <div class="mt-6 flex justify-end space-x-3">
+            <button id="cancel-upload-btn" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">
+                Cancel
+            </button>
+            <button id="upload-file-submit-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors" disabled>
+                Upload File
+            </button>
+        </div>
+    </div>
+</div>
+
     <script>
-        // API configuration
-        const API_URL = '/api/process-note';
-        const SAVE_URL = '/api/save-synthesis';
-        let currentAnalysisData = null;
-        let selectedContactName = null;
-
-        // Wire search input
         document.addEventListener('DOMContentLoaded', () => {
-          const search = document.getElementById('contact-search');
-          if (search) search.addEventListener('input', handleContactSearch);
-          
-          // Initialize tag management
-          if (window.tagManagement && window.tagManagement.initializeTagManagement) {
-            window.tagManagement.initializeTagManagement();
-          }
-          
-          // Load tier contacts on page load
-          loadTier1Contacts();
-          loadTier2Contacts();
+            console.log('DOM loaded, showing app...');
+            // Since we're using server-side authentication, just show the app
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('app').classList.remove('hidden');
+            initializeApp();
         });
 
-        // Normalize analysis response to synthesis array for review UI
-        function transformToSynthesis(data) {
-          const updates = data.categorized_updates || [];
-          return updates.flatMap(u => (u.details || []).map(d => ({
-            category: u.category,
-            content: d,
-            confidence_score: data.confidence_score ?? 10.0
-          })));
-        }
+function initializeApp() {
+    // Real contacts data from database
+    let contacts = [];
+    let activeContactId = null;
+    let currentContactData = null;
 
-        // Note analysis functions
-        async function handleAnalyzeNote() {
-            const noteInput = document.getElementById('note-input');
-            const noteText = noteInput.value.trim();
-            
-            if (!noteText) {
-                alert('Please enter some notes to analyze.');
-                return;
-            }
-            
-            if (!currentContactId) {
-                alert('Please select a contact first.');
-                return;
-            }
-            
-            const analyzeBtn = document.getElementById('analyze-btn');
-            analyzeBtn.disabled = true;
-            analyzeBtn.textContent = 'Analyzing...';
-            
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ note: noteText, contact_id: currentContactId })
-                });
-                
-                const data = await response.json();
-                if (data.error) throw new Error(data.error);
-                currentAnalysisData = data;
-                const synthesis = transformToSynthesis(data);
-                displayReviewCards({ synthesis });
-                showReviewView();
-                
-            } catch (error) {
-                console.error('Analysis error:', error);
-                
-                // Check if it's an OpenAI configuration error
-                if (error.message && error.message.includes('OpenAI API key not configured')) {
-                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Go to your Render dashboard → Environment tab
-3. Add OPENAI_API_KEY with your API key
-4. Restart your Render service\n\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
-                } else {
-                    alert('Error analyzing note: ' + error.message);
-                }
-            } finally {
-                analyzeBtn.disabled = false;
-                analyzeBtn.textContent = 'Analyze Note';
-            }
-        }
+    // DOM Elements
+    const contactListEl = document.getElementById('contact-list');
+    const searchInput = document.getElementById('search-input');
+    const tier1Checkbox = document.getElementById('tier1-only-checkbox');
+    
+    // View Elements
+    const contactsView = document.getElementById('contacts-view');
+    const contactProfileView = document.getElementById('contact-profile-view');
+    const backToContactsBtn = document.getElementById('back-to-contacts');
+    const contactProfileName = document.getElementById('contact-profile-name');
+    const contactProfileContent = document.getElementById('contact-profile-content');
+    
+    // Modal DOM Elements
+    const noteModal = document.getElementById('note-modal');
+    const modalContactName = document.getElementById('modal-contact-name');
+    const modalNotesTextarea = document.getElementById('modal-notes-textarea');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+    const analyzeNoteBtn = document.getElementById('analyze-note-btn');
+    const addNoteBtn = document.getElementById('add-note-btn');
+    
+    // File Upload Modal Elements
+    const fileUploadModal = document.getElementById('file-upload-modal');
+    const uploadModalContactName = document.getElementById('upload-modal-contact-name');
+    const closeUploadModalBtn = document.getElementById('close-upload-modal-btn');
+    const uploadFileBtn = document.getElementById('upload-file-btn');
+    const fileInput = document.getElementById('file-input');
+    const fileDropZone = document.getElementById('file-drop-zone');
+    const uploadFileSubmitBtn = document.getElementById('upload-file-submit-btn');
+    const cancelUploadBtn = document.getElementById('cancel-upload-btn');
 
-        async function handleProfileAnalyzeNote() {
-            const noteInput = document.getElementById('profile-note-input');
-            const noteText = noteInput.value.trim();
-            
-            if (!noteText) {
-                alert('Please enter some notes to analyze.');
-                return;
-            }
-            
-            const contactId = document.getElementById('selected-contact-id')?.value;
-            if (!contactId) {
-                alert('Contact ID not found. Please refresh and try again.');
-                return;
-            }
-            
-            const analyzeBtn = document.getElementById('profile-analyze-btn');
-            analyzeBtn.disabled = true;
-            analyzeBtn.textContent = 'Analyzing...';
-            
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ note: noteText, contact_id: contactId })
-                });
-                
-                const data = await response.json();
-                if (data.error) throw new Error(data.error);
-                currentAnalysisData = data;
-                const synthesis = transformToSynthesis(data);
-                displayReviewCards({ synthesis });
-                showReviewView();
-                
-                noteInput.value = '';
-                document.getElementById('profile-note-input-area').style.display = 'none';
-                
-            } catch (error) {
-                console.error('Profile analysis error:', error);
-                
-                // Check if it's an OpenAI configuration error
-                if (error.message && error.message.includes('OpenAI API key not configured')) {
-                    alert(`AI Analysis Not Available\n\nTo use AI-powered note analysis:\n1. Get an API key from https://platform.openai.com/api-keys\n2. Go to your Render dashboard → Environment tab
-3. Add OPENAI_API_KEY with your API key
-4. Restart your Render service\n\n\nNote: This will require OpenAI credits (~$0.01 per analysis)`);
-                } else {
-                    alert('Error analyzing note: ' + error.message);
-                }
-            } finally {
-                analyzeBtn.disabled = false;
-                analyzeBtn.textContent = 'Analyze Note';
-            }
-        }
+    // 20 Categories in order
+    const CATEGORY_ORDER = [
+        "Actionable", "Goals", "Relationship strategy", "Social", "Wellbeing",
+        "Avocation", "Professional background", "Environment and lifestyle", 
+        "Psychology and values", "Communication style", "Challenges and development",
+        "Deeper insights", "Financial situation", "Admin matters", 
+        "Established patterns", "Core identity", "Information gaps", 
+        "Memory anchors", "Positionality", "Others"
+    ];
 
-        function displayReviewCards(data) {
-            const reviewContent = document.getElementById('review-content');
-            reviewContent.innerHTML = '';
-            
-            if (!data.synthesis || data.synthesis.length === 0) {
-                reviewContent.innerHTML = '<p>No structured data was extracted from your note.</p>';
-                return;
-            }
-            
-            data.synthesis.forEach((item, index) => {
-                const card = document.createElement('div');
-                card.className = 'review-card';
-                card.innerHTML = `
-                    <div class="card-header">
-                        <span class="category category-${item.category.toLowerCase().replace('_', '-')}">${item.category.replace('_', ' ')}</span>
-                        <button class="delete-btn" onclick="deleteCard(this)">×</button>
-                    </div>
-                    <div class="card-content">
-                        <textarea class="content-edit" data-index="${index}">${item.content}</textarea>
-                        <div class="confidence-score">Confidence: ${item.confidence_score}</div>
-                    </div>
-                `;
-                reviewContent.appendChild(card);
-            });
-        }
-
-        function deleteCard(button) {
-            const card = button.closest('.review-card');
-            const textarea = card.querySelector('.content-edit');
-            const index = parseInt(textarea.dataset.index);
-            
-            if (currentAnalysisData?.synthesis) {
-                currentAnalysisData.synthesis.splice(index, 1);
-                displayReviewCards(currentAnalysisData);
-            }
-        }
-
-        async function confirmAndSave() {
-            if (!currentAnalysisData) {
-                alert('No analysis data to save.');
-                return;
-            }
-            
-            const editedCards = document.querySelectorAll('.content-edit');
-            const synthesis = transformToSynthesis(currentAnalysisData);
-            editedCards.forEach((textarea, index) => {
-                if (synthesis[index]) synthesis[index].content = textarea.value;
-            });
-            
-            try {
-                const response = await fetch(SAVE_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contact_id: currentContactId,
-                        raw_note: document.getElementById('note-input').value,
-                        synthesis: { categorized_updates: Object.entries(synthesis.reduce((acc, item) => {
-                          const cat = item.category;
-                          if (!acc[cat]) acc[cat] = [];
-                          acc[cat].push(item.content);
-                          return acc;
-                        }, {})).map(([category, details]) => ({ category, details })) }
-                    })
-                });
-                
-                const result = await response.json();
-                if (response.ok && (result.status === 'success' || result.message)) {
-                    alert('Analysis saved successfully!');
-                    document.getElementById('note-input').value = '';
-                    document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
-                    document.getElementById('change-contact-btn').style.display = 'none';
-                    document.getElementById('analyze-btn').disabled = true;
-                    currentContactId = null;
-                    currentAnalysisData = null;
-                    showMainView();
-                } else {
-                    throw new Error(result.error || result.message || 'Unknown error');
-                }
-            } catch (error) {
-                alert('Error saving analysis: ' + error.message);
-            }
-        }
-
-        function cancelAnalysis() {
-            currentAnalysisData = null;
-            showMainView();
-        }
-
-        function selectContact(contactId, contactName) {
-            currentContactId = contactId;
-            selectedContactName = contactName;
-            
-            document.getElementById('selected-contact-name').textContent = contactName;
-            document.getElementById('change-contact-btn').style.display = 'inline-block';
-            
-            const noteInput = document.getElementById('note-input');
-            const analyzeBtn = document.getElementById('analyze-btn');
-            analyzeBtn.disabled = !noteInput.value.trim();
-            noteInput.disabled = false;
-        }
-
-        // Telegram functions
-        async function handleProfileTelegramSync() {
-            const contactId = document.getElementById('selected-contact-id')?.value;
-            if (!contactId) {
-                alert('Contact ID not found. Please refresh and try again.');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/telegram/start-import', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contact_id: contactId, days_back: 30 })
-                });
-                
-                const result = await response.json();
-                if (result.success) {
-                    alert('Telegram sync started! This may take a few moments.');
-                    pollImportStatus(result.task_id, null, () => loadContactProfile(contactId));
-                } else {
-                    alert('Error starting Telegram sync: ' + result.message);
-                }
-            } catch (error) {
-                alert('Error starting Telegram sync: ' + error.message);
-            }
-        }
-
-        async function checkTelegramStatus() {
-            try {
-                const response = await fetch('/api/telegram/connection-status');
-                const status = await response.json();
-                
-                const statusDiv = document.getElementById('telegram-status');
-                if (statusDiv) {
-                    if (status.authenticated) {
-                        statusDiv.innerHTML = `<span class="status-indicator connected">✓</span>
-                            <span>Connected${status.username ? ` as ${status.username}` : ''}</span>
-                            ${status.last_sync ? `<span style="margin-left:8px; color:#666;">Last sync: ${new Date(status.last_sync).toLocaleString()}</span>` : ''}
-                            ${status.session_updated_at ? `<span style=\"margin-left:8px; color:#666;\">Session updated: ${status.session_updated_at}</span>` : ''}`;
-                    } else {
-                        statusDiv.innerHTML = `<span class="status-indicator disconnected">✗</span>
-                            <span>Not connected</span>
-                            ${status.session_updated_at ? `<span style=\"margin-left:8px; color:#666;\">Session updated: ${status.session_updated_at}</span>` : ''}`;
-                    }
-                }
-            } catch (error) {
-                console.error('Error checking Telegram status:', error);
-            }
-        }
-        
-        // Make function globally accessible
-        window.checkTelegramStatus = checkTelegramStatus;
-
-        function pollImportStatus(taskId, statusDiv = null, onComplete = null) {
-            const progressContainer = document.getElementById('import-progress');
-            const progressBar = document.getElementById('import-progress-bar');
-            const progressStatus = document.getElementById('import-progress-status');
-            if (progressContainer) progressContainer.style.display = 'block';
-            // Add cancel control
-            let cancelBtn = document.getElementById('import-cancel-btn');
-            if (!cancelBtn && progressContainer) {
-                cancelBtn = document.createElement('button');
-                cancelBtn.id = 'import-cancel-btn';
-                cancelBtn.textContent = 'Cancel';
-                cancelBtn.style.marginTop = '8px';
-                cancelBtn.onclick = () => { clearInterval(pollInterval); if (progressContainer) progressContainer.style.display = 'none'; };
-                progressContainer.appendChild(cancelBtn);
-            }
-
-            const pollInterval = setInterval(async () => {
-                try {
-                    const response = await fetch(`/api/telegram/import-status/${taskId}`);
-                    const status = await response.json();
-                    
-                    if (status.status === 'completed') {
-                        clearInterval(pollInterval);
-                        if (progressStatus) progressStatus.textContent = 'Completed';
-                        if (progressBar) progressBar.style.width = '100%';
-                        loadContacts();
-                        loadTier1Contacts();
-                        loadTier2Contacts();
-                        if (onComplete) onComplete();
-                        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 1500);
-                    } else if (status.status === 'failed') {
-                        clearInterval(pollInterval);
-                        const errMsg = status.error_details || status.status_message || status.error || 'Unknown error';
-                        alert('Import failed: ' + errMsg);
-                        if (progressStatus) progressStatus.textContent = 'Failed';
-                        if (progressBar) progressBar.style.width = '100%';
-                        setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
-                    } else {
-                        if (progressStatus) progressStatus.textContent = status.status_message || status.status || 'Running...';
-                        if (progressBar && typeof status.progress === 'number') progressBar.style.width = `${Math.max(0, Math.min(100, status.progress))}%`;
-                    }
-                } catch (error) {
-                    clearInterval(pollInterval);
-                    console.error('Error polling import status:', error);
-                    if (progressStatus) progressStatus.textContent = 'Error';
-                    setTimeout(() => { if (progressContainer) progressContainer.style.display = 'none'; }, 2000);
-                }
-            }, 3000);
-        }
-
-        // vCard import
-        async function handleVCardImport(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            const formData = new FormData();
-            formData.append('vcard_file', file);
-            
-            try {
-                const response = await fetch('/api/import-vcard', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
-                if (response.ok && !result.error) {
-                    alert(result.message || 'vCard processed.');
-                    loadContacts();
-                    loadTier1Contacts();
-                    loadTier2Contacts();
-                } else {
-                    alert('Error importing vCard: ' + (result.error || result.message || 'Unknown error'));
-                }
-            } catch (error) {
-                alert('Error importing vCard: ' + error.message);
-            }
-            
-            event.target.value = '';
-        }
-
-        async function handleMergeImport(event) {
-            console.log('handleMergeImport called'); // Debug log
-            event.preventDefault();
-            const form = document.getElementById('merge-form');
-            const fileInput = document.getElementById('merge-file-input');
-            const mergeStatus = document.getElementById('merge-status');
-            const mergeBtn = document.getElementById('merge-btn');
-            const dryRunCheckbox = document.getElementById('merge-dry-run');
-            const policyTier = document.getElementById('policy-contact-tier');
-            const policyDetails = document.getElementById('policy-details');
-            const forceCheckbox = document.getElementById('merge-force');
-
-            console.log('Form elements:', { form, fileInput, mergeStatus, mergeBtn }); // Debug log
-
-            if (!fileInput.files.length) {
-                alert('Please select a CSV file to merge.');
-                return;
-            }
-
-            const file = fileInput.files[0];
-            console.log('Selected file:', file.name, file.type, file.size); // Debug log
-
-            // Show loading state
-            const originalBtnText = mergeBtn.textContent;
-            mergeBtn.disabled = true;
-            mergeBtn.textContent = 'Processing...';
-            mergeStatus.textContent = 'Uploading and processing CSV file...';
-            mergeStatus.style.color = '#007aff';
-
-            const formData = new FormData();
-            formData.append('backup_file', fileInput.files[0]);
-            formData.append('dry_run', dryRunCheckbox && dryRunCheckbox.checked ? 'true' : 'false');
-            formData.append('force', forceCheckbox && forceCheckbox.checked ? 'true' : 'false');
-            if (policyTier) formData.append('policy_contact_tier', policyTier.value);
-            if (policyDetails) formData.append('policy_details', policyDetails.value);
-
-            try {
-                console.log('Sending request to /api/import/merge-from-csv'); // Debug log
-                const response = await fetch('/api/import/merge-from-csv', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                console.log('Response status:', response.status); // Debug log
-                const result = await response.json();
-                console.log('Merge result:', result); // Debug log
-                
-                if (response.ok && (result.status === 'success' || result.status === 'preview')) {
-                    const stats = result.details || {};
-                    const message = `Merge complete! Added ${stats.contacts_added || 0} new contacts, ${stats.details_added || 0} new details. Skipped ${stats.contacts_skipped || 0} existing contacts, ${stats.details_skipped || 0} duplicate details.`;
-                    alert(message);
-                    mergeStatus.textContent = message;
-                    mergeStatus.style.color = '#28a745';
-                    if (result.status === 'preview' && result.preview) {
-                        renderMergePreview(result.preview);
-                    }
-                    
-                    // Refresh the UI
-                    loadContacts();
-                    loadTier1Contacts();
-                    loadTier2Contacts();
-                    
-                    // Clear the file input
-                    fileInput.value = '';
-                } else {
-                    const errorMsg = result.error || result.message || 'Unknown error';
-                    console.error('Merge failed:', errorMsg); // Debug log
-                    alert('Error merging data: ' + errorMsg);
-                    mergeStatus.textContent = 'Merge failed: ' + errorMsg;
-                    mergeStatus.style.color = '#dc3545';
-                }
-            } catch (error) {
-                console.error('Merge error:', error);
-                alert('Error merging data: ' + error.message);
-                mergeStatus.textContent = 'Merge failed: ' + error.message;
-                mergeStatus.style.color = '#dc3545';
-            } finally {
-                // Restore button state
-                mergeBtn.disabled = false;
-                mergeBtn.textContent = originalBtnText;
-            }
-        }
-
-        function renderMergePreview(preview) {
-            const container = document.getElementById('merge-preview');
-            if (!container) return;
-            const conflicts = preview.conflicts || [];
-            const isRecordType = preview.is_record_type;
-            let html = '';
-            html += `<div class="preview-header">Dry-Run Preview</div>`;
-            html += `<div class="preview-sub">Record-type CSV: ${isRecordType ? 'Yes' : 'No'}</div>`;
-            if (conflicts.length) {
-                html += `<div class="preview-conflicts">`;
-                html += `<div class="conflict-title">Detected Conflicts / Duplicates (${conflicts.length})</div>`;
-                html += `<ul class="conflict-list">`;
-                conflicts.slice(0, 50).forEach(c => {
-                    if (c.type === 'duplicate_detail') {
-                        html += `<li>Duplicate detail for <strong>${escapeHtml(c.contact_name)}</strong> in <em>${escapeHtml(c.category)}</em>: ${escapeHtml(c.content)}</li>`;
-                    } else if (c.type === 'contact_tier_update') {
-                        html += `<li>Contact tier update for <strong>${escapeHtml(c.name)}</strong> → ${escapeHtml(String(c.to))} (policy: ${escapeHtml(c.policy_applied)})</li>`;
-                    } else if (c.type === 'error') {
-                        html += `<li>Error: ${escapeHtml(c.message || 'Unknown')}</li>`;
-                    }
-                });
-                html += `</ul>`;
-                html += `</div>`;
+    // Fetch contacts from database
+    async function loadContacts() {
+        try {
+            const response = await fetch('/api/contacts');
+            const data = await response.json();
+            if (data.success) {
+                contacts = data.contacts.map(contact => ({
+                    id: contact.id,
+                    name: contact.full_name,
+                    tier: contact.tier,
+                    notes: contact.notes,
+                    interaction_count: contact.interaction_count,
+                    last_interaction: contact.last_interaction
+                }));
+                renderContacts();
             } else {
-                html += `<div class="preview-conflicts">No conflicts detected.</div>`;
+                console.error('Failed to load contacts:', data.error);
             }
-            container.innerHTML = html;
-            container.style.display = 'block';
+        } catch (error) {
+            console.error('Error loading contacts:', error);
+            // Fallback to empty array if API fails
+            contacts = [];
+            renderContacts();
         }
+    }
 
-        async function fetchAndRenderRawLogs(contactId) {
-          try {
-            const res = await fetch(`/api/contact/${contactId}/raw-logs`);
-            const entries = await res.json();
-            const box = document.getElementById('raw-logs-content');
-            if (!box) return;
-            
-            if (!Array.isArray(entries) || entries.length === 0) {
-              box.innerHTML = '<div class="empty">No history found for this contact.</div>';
-              return;
-            }
-            
-            let html = '<div class="change-history">';
-            
-            entries.forEach((entry, index) => {
-              let date = 'Unknown date';
-              if (entry.date) {
-                try {
-                  date = new Date(entry.date).toLocaleString();
-                } catch (e) {
-                  date = entry.date;
-                }
-              }
-              const details = entry.details;
-              const engine = entry.engine;
-              
-              html += `<div class="change-entry">`;
-              html += `<div class="change-header">`;
-              html += `<div class="change-date">${date}</div>`;
-              html += `<div class="change-meta">`;
-              if (engine) {
-                const label = engine === 'vision' ? 'Google Vision' : engine === 'openai' ? 'OpenAI' : engine === 'gemini' ? 'Gemini' : 'Local';
-                const icon = engine === 'vision' ? '👁️' : engine === 'openai' ? '🤖' : engine === 'gemini' ? '✨' : '📄';
-                html += `<span class="engine-badge ${engine}" title="Processed by ${label}">${icon} ${label}</span>`;
-              }
-              html += `</div>`; // change-meta
-              html += `</div>`; // change-header
-              
-              html += `<div class="change-description">${entry.content}</div>`;
-              
-              // Only show detailed tables for entries with before/after data
-              if (details && typeof details === 'object' && !Array.isArray(details) && details.before && details.after) {
-                html += `<div class="change-details">`;
-                html += createBeforeAfterTable(details.before, details.after);
-                html += `</div>`;
-              } else if (details && typeof details === 'object' && !Array.isArray(details) && details.categorized_updates) {
-                html += `<div class="change-details">`;
-                html += createCategorizationTable(details.categorized_updates, details.type);
-                html += `</div>`;
-              } else {
-                html += `<div class="change-details-simple">`;
-                html += `<p>Basic event - no detailed changes available</p>`;
-                html += `</div>`;
-              }
-              
-              html += `</div>`;
-            });
-            
-            html += '</div>';
-            box.innerHTML = html;
-            
-          } catch (e) {
-            console.error('Failed to load history', e);
-            document.getElementById('raw-logs-content').innerHTML = '<div class="error">Failed to load history.</div>';
-          }
-        }
-
-        function createBeforeAfterTable(beforeData, afterData) {
-          const allCategories = new Set([...Object.keys(beforeData), ...Object.keys(afterData)]);
-          
-          let html = `<h4>📋 Changes Made</h4>`;
-          html += `<table class="comparison-table">`;
-          html += `<thead>`;
-          html += `<tr><th>Category</th><th>Before</th><th>After</th></tr>`;
-          html += `</thead><tbody>`;
-          
-          allCategories.forEach(category => {
-            const beforeItems = beforeData[category] || [];
-            const afterItems = afterData[category] || [];
-            
-            // Only show categories that actually changed
-            if (JSON.stringify(beforeItems) !== JSON.stringify(afterItems)) {
-              html += `<tr>`;
-              html += `<td class="category-name"><strong>${category.replace('_', ' ')}</strong></td>`;
-              
-              // Before column
-              html += `<td class="before-column">`;
-              if (beforeItems.length === 0) {
-                html += `<em class="empty-state">Nothing</em>`;
-              } else {
-                beforeItems.forEach(item => {
-                  const isRemoved = !afterItems.includes(item);
-                  html += `<div class="item-row ${isRemoved ? 'removed-item' : 'unchanged-item'}">${escapeHtml(item)}</div>`;
-                });
-              }
-              html += `</td>`;
-              
-              // After column
-              html += `<td class="after-column">`;
-              if (afterItems.length === 0) {
-                html += `<em class="empty-state">Nothing</em>`;
-              } else {
-                afterItems.forEach(item => {
-                  const isAdded = !beforeItems.includes(item);
-                  html += `<div class="item-row ${isAdded ? 'added-item' : 'unchanged-item'}">${escapeHtml(item)}</div>`;
-                });
-              }
-              html += `</td>`;
-              
-              html += `</tr>`;
-            }
-          });
-          
-          html += `</tbody></table>`;
-          return html;
-        }
-
-        function createCategorizationTable(categorizedUpdates, eventType) {
-          let html = `<h4>`;
-          if (eventType === 'telegram_sync') {
-            html += `💬 Information Added from Telegram`;
-          } else {
-            html += `✏️ Information Added`;
-          }
-          html += `</h4>`;
-          
-          html += `<table class="categorization-table">`;
-          html += `<thead>`;
-          html += `<tr><th>Category</th><th>New Information</th></tr>`;
-          html += `</thead><tbody>`;
-          
-          categorizedUpdates.forEach(update => {
-            html += `<tr>`;
-            html += `<td class="category-name"><strong>${update.category.replace('_', ' ')}</strong></td>`;
-            html += `<td class="items-column">`;
-            (update.details || []).forEach(detail => {
-              html += `<div class="item-row added-item">${escapeHtml(detail)}</div>`;
-            });
-            html += `</td>`;
-            html += `</tr>`;
-          });
-          
-          html += `</tbody></table>`;
-          return html;
-        }
-
-        function escapeHtml(text) {
-          const div = document.createElement('div');
-          div.textContent = text;
-          return div.innerHTML;
-        }
-
-        // Additional event listeners
-        // Helper functions for file inputs
-        function updateFileInputStatus(event) {
-            const input = event.target;
-            const label = input.nextElementSibling;
-            const statusSpan = label.querySelector('.file-input-status');
-            
-            if (input.files.length > 0) {
-                const fileName = input.files[0].name;
-                statusSpan.textContent = fileName;
-                statusSpan.style.color = 'var(--primary-color)';
+    // Load contact profile data
+    async function loadContactProfile(contactId) {
+        try {
+            const response = await fetch(`/api/contact/${contactId}`);
+            const data = await response.json();
+            if (response.ok) {
+                currentContactData = data;
+                renderContactProfile(data);
+                showContactProfile();
             } else {
-                statusSpan.textContent = 'no file selected';
-                statusSpan.style.color = 'var(--text-secondary)';
+                console.error('Failed to load contact profile:', data.error);
+                alert('Failed to load contact profile');
             }
+        } catch (error) {
+            console.error('Error loading contact profile:', error);
+            alert('Error loading contact profile');
         }
-        
-        function toggleMergeOptions(show) {
-            const mergeOptions = document.querySelector('.merge-options');
-            if (mergeOptions) {
-                mergeOptions.style.display = show ? 'block' : 'none';
-            }
-        }
-        
-        // Telegram Integration Functions
-        function setupTelegramIntegration() {
-            // Check status button
-            const checkStatusBtn = document.getElementById('telegram-check-status-btn');
-            if (checkStatusBtn) {
-                checkStatusBtn.addEventListener('click', checkTelegramStatus);
-            }
-            
-            // Relink button
-            const relinkBtn = document.getElementById('telegram-relink-btn');
-            if (relinkBtn) {
-                relinkBtn.addEventListener('click', relinkTelegramAccount);
-            }
-            
-            // Configure API button
-            const configureBtn = document.getElementById('telegram-configure-btn');
-            if (configureBtn) {
-                configureBtn.addEventListener('click', showCredentialsForm);
-            }
-            
-            // Save credentials button
-            const saveCredentialsBtn = document.getElementById('telegram-save-credentials-btn');
-            if (saveCredentialsBtn) {
-                saveCredentialsBtn.addEventListener('click', saveTelegramCredentials);
-            }
-            
-            // Cancel credentials button
-            const cancelCredentialsBtn = document.getElementById('telegram-cancel-credentials-btn');
-            if (cancelCredentialsBtn) {
-                cancelCredentialsBtn.addEventListener('click', hideCredentialsForm);
-            }
-            
-            // Delink button
-            const delinkBtn = document.getElementById('telegram-delink-btn');
-            if (delinkBtn) {
-                delinkBtn.addEventListener('click', delinkTelegramAccount);
-            }
-            
-            // Import contacts button
-            const importContactsBtn = document.getElementById('telegram-import-contacts-btn');
-            if (importContactsBtn) {
-                importContactsBtn.addEventListener('click', importTelegramContacts);
-            }
-            
-            // Sync chat button
-            const syncChatBtn = document.getElementById('telegram-sync-chat-btn');
-            if (syncChatBtn) {
-                syncChatBtn.addEventListener('click', syncTelegramChat);
-            }
-            
-            // Contact select change
-            const contactSelect = document.getElementById('telegram-contact-select');
-            if (contactSelect) {
-                contactSelect.addEventListener('change', function(e) {
-                    const syncBtn = document.getElementById('telegram-sync-chat-btn');
-                    if (syncBtn) {
-                        syncBtn.disabled = !e.target.value;
-                    }
-                });
-            }
-            
-            // Initial status check
-            checkTelegramStatus();
-            loadContactsForTelegram();
-        }
-        
-        async function checkTelegramStatus() {
-            const statusDot = document.getElementById('telegram-status-dot');
-            const statusText = document.getElementById('telegram-status-text');
-            const statusDetails = document.getElementById('telegram-status-details');
-            const importBtn = document.getElementById('telegram-import-contacts-btn');
-            const relinkBtn = document.getElementById('telegram-relink-btn');
-            const configureBtn = document.getElementById('telegram-configure-btn');
-            const delinkBtn = document.getElementById('telegram-delink-btn');
-            
-            try {
-                statusText.textContent = 'Checking...';
-                statusDot.className = 'status-dot';
-                
-                const response = await fetch('/api/telegram/status');
-                const data = await response.json();
-                
-                if (data.authenticated) {
-                    statusDot.className = 'status-dot connected';
-                    statusText.textContent = 'Connected';
-                    statusDetails.textContent = data.message || 'Telegram integration is ready';
-                    if (importBtn) importBtn.disabled = false;
-                    if (relinkBtn) relinkBtn.style.display = 'none';
-                    if (configureBtn) configureBtn.style.display = 'none';
-                    if (delinkBtn) delinkBtn.style.display = 'inline-block';
-                    
-                    if (data.last_sync) {
-                        statusDetails.textContent += `\nLast sync: ${new Date(data.last_sync).toLocaleString()}`;
-                    }
-                } else if (data.status === 'not_configured') {
-                    statusDot.className = 'status-dot error';
-                    statusText.textContent = 'Not Configured';
-                    statusDetails.textContent = data.message || 'Please enter your Telegram API credentials to get started.';
-                    if (importBtn) importBtn.disabled = true;
-                    if (relinkBtn) relinkBtn.style.display = 'none';
-                    if (configureBtn) configureBtn.style.display = 'inline-block';
-                    if (delinkBtn) delinkBtn.style.display = 'none';
-                } else {
-                    statusDot.className = 'status-dot warning';
-                    statusText.textContent = 'Not Authenticated';
-                    statusDetails.textContent = data.message || 'Please relink your Telegram account or delink to start fresh.';
-                    if (importBtn) importBtn.disabled = true;
-                    if (relinkBtn) relinkBtn.style.display = 'inline-block';
-                    if (configureBtn) configureBtn.style.display = 'none';
-                    if (delinkBtn) delinkBtn.style.display = 'inline-block';
-                }
-            } catch (error) {
-                statusDot.className = 'status-dot error';
-                statusText.textContent = 'Error';
-                statusDetails.textContent = 'Failed to check status. Click "Configure API" to set up your Telegram integration.';
-                if (importBtn) importBtn.disabled = true;
-                if (relinkBtn) relinkBtn.style.display = 'none';
-                if (configureBtn) configureBtn.style.display = 'inline-block';
-                if (delinkBtn) delinkBtn.style.display = 'none';
-            }
-        }
-        
-        async function relinkTelegramAccount() {
-            const relinkBtn = document.getElementById('telegram-relink-btn');
-            const statusText = document.getElementById('telegram-status-text');
-            const statusDetails = document.getElementById('telegram-status-details');
-            
-            try {
-                // Disable button and show loading
-                relinkBtn.disabled = true;
-                relinkBtn.textContent = '🔄 Relinking...';
-                statusText.textContent = 'Relinking...';
-                statusDetails.textContent = 'Enter your phone to receive a code.';
+    }
 
-                // Step 1: phone
-                const phone = prompt('Enter your phone number with country code (e.g., +1234567890):');
-                if (!phone) throw new Error('Phone number is required.');
-                let resp = await fetch('/api/telegram/auth/start', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone })
-                });
-                let data = await resp.json();
-                if (!data.success) throw new Error(data.message || 'Failed to send code');
-                statusDetails.textContent = 'Code sent. Check Telegram and enter it next.';
+    // Render contacts list
+    const renderContacts = () => {
+        const searchTerm = searchInput.value.toLowerCase();
+        const tier1Only = tier1Checkbox.checked;
 
-                // Step 2: code
-                const code = prompt('Enter the login code sent to your Telegram app/SMS:');
-                if (!code) throw new Error('Code is required.');
-                resp = await fetch('/api/telegram/auth/verify', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, code })
-                });
-                data = await resp.json();
-                if (data.password_required) {
-                    const password = prompt('Two-step verification is enabled. Enter your Telegram password:');
-                    if (!password) throw new Error('Password is required.');
-                    resp = await fetch('/api/telegram/auth/password', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone, password })
-                    });
-                    data = await resp.json();
-                }
-
-                if (data.success) {
-                    statusText.textContent = 'Connected';
-                    statusDetails.textContent = 'Telegram authenticated successfully.';
-                    setTimeout(() => { checkTelegramStatus(); }, 1000);
-                } else {
-                    throw new Error(data.message || 'Authentication failed');
-                }
-            } catch (error) {
-                statusDetails.textContent = 'Relink failed: ' + error.message;
-                statusText.textContent = 'Relink Failed';
-            } finally {
-                // Re-enable button
-                relinkBtn.disabled = false;
-                relinkBtn.textContent = '🔗 Relink Account';
-            }
-        }
-        
-        function showCredentialsForm() {
-            const form = document.getElementById('telegram-credentials-form');
-            const mainActions = document.getElementById('telegram-main-actions');
-            
-            if (form && mainActions) {
-                form.style.display = 'block';
-                mainActions.style.display = 'none';
-            }
-        }
-        
-        function hideCredentialsForm() {
-            const form = document.getElementById('telegram-credentials-form');
-            const mainActions = document.getElementById('telegram-main-actions');
-            
-            if (form && mainActions) {
-                form.style.display = 'none';
-                mainActions.style.display = 'flex';
-                
-                // Clear form fields
-                document.getElementById('telegram-api-id').value = '';
-                document.getElementById('telegram-api-hash').value = '';
-            }
-        }
-        
-        async function saveTelegramCredentials() {
-            const saveBtn = document.getElementById('telegram-save-credentials-btn');
-            const apiId = document.getElementById('telegram-api-id').value.trim();
-            const apiHash = document.getElementById('telegram-api-hash').value.trim();
-            const statusText = document.getElementById('telegram-status-text');
-            const statusDetails = document.getElementById('telegram-status-details');
-            
-            // Basic validation
-            if (!apiId || !apiHash) {
-                alert('Please enter both API ID and API Hash.');
-                return;
-            }
-            
-            try {
-                // Disable button and show loading
-                saveBtn.disabled = true;
-                saveBtn.textContent = '💾 Saving...';
-                statusText.textContent = 'Saving credentials...';
-                statusDetails.textContent = 'Please wait while we save your API credentials...';
-                
-                const response = await fetch('/api/telegram/save-credentials', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        api_id: apiId,
-                        api_hash: apiHash
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    statusDetails.textContent = data.message;
-                    hideCredentialsForm();
-                    // Refresh status after a delay
-                    setTimeout(() => {
-                        checkTelegramStatus();
-                    }, 1000);
-                } else {
-                    statusDetails.textContent = data.message;
-                    statusText.textContent = 'Save Failed';
-                }
-            } catch (error) {
-                statusDetails.textContent = `Failed to save credentials: ${error.message}`;
-                statusText.textContent = 'Save Failed';
-            } finally {
-                // Re-enable button
-                saveBtn.disabled = false;
-                saveBtn.textContent = '💾 Save Credentials';
-            }
-        }
-        
-        async function delinkTelegramAccount() {
-            // Show main confirmation dialog
-            const confirmDelink = confirm(
-                '🔓 Delink Telegram Account\n\n' +
-                'This will completely disconnect your Telegram integration and remove all stored credentials.\n\n' +
-                'Click "OK" to proceed with full delink, or "Cancel" to abort.'
-            );
-            
-            if (!confirmDelink) {
-                return; // User cancelled
-            }
-            
-            // Ask if they want to keep credentials (advanced option)
-            const keepCredentials = confirm(
-                '💾 Keep API Credentials?\n\n' +
-                'By default, we\'ll remove everything for a clean slate.\n\n' +
-                'Click "OK" if you want to KEEP your API credentials for easier re-setup later.\n' +
-                'Click "Cancel" for FULL REMOVAL (recommended - complete clean slate).'
-            );
-            
-            // Invert the logic - we want to remove credentials by default
-            const alsoRemoveCredentials = !keepCredentials;
-            
-            const delinkBtn = document.getElementById('telegram-delink-btn');
-            const statusText = document.getElementById('telegram-status-text');
-            const statusDetails = document.getElementById('telegram-status-details');
-            
-            try {
-                // Disable button and show loading
-                delinkBtn.disabled = true;
-                delinkBtn.textContent = '🔄 Delinking...';
-                statusText.textContent = 'Delinking...';
-                statusDetails.textContent = 'Removing Telegram connection...';
-                
-                const response = await fetch('/api/telegram/delink', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        remove_credentials: alsoRemoveCredentials
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    statusDetails.textContent = data.message;
-                    statusText.textContent = 'Delinked';
-                    
-                    // Immediately update UI based on what was removed
-                    const importBtn = document.getElementById('telegram-import-contacts-btn');
-                    const relinkBtn = document.getElementById('telegram-relink-btn');
-                    const configureBtn = document.getElementById('telegram-configure-btn');
-                    const delinkBtn = document.getElementById('telegram-delink-btn');
-                    
-                    const statusDot = document.getElementById('telegram-status-dot');
-                    
-                    if (data.removed_items && data.removed_items.includes('API credentials')) {
-                        // Full delink (default behavior) - show configure button
-                        statusDot.className = 'status-dot error';
-                        statusText.textContent = 'Fully Delinked';
-                        statusDetails.textContent = '✅ Telegram account and credentials completely removed. Click "Configure API" to start fresh.';
-                        if (relinkBtn) relinkBtn.style.display = 'none';
-                        if (configureBtn) configureBtn.style.display = 'inline-block';
-                        if (delinkBtn) delinkBtn.style.display = 'none';
-                    } else {
-                        // Session-only delink (advanced option) - show relink button
-                        statusDot.className = 'status-dot warning';
-                        statusText.textContent = 'Session Removed';
-                        statusDetails.textContent = '💾 API credentials preserved. Click "Relink Account" to reconnect quickly.';
-                        if (relinkBtn) relinkBtn.style.display = 'inline-block';
-                        if (configureBtn) configureBtn.style.display = 'none';
-                        if (delinkBtn) delinkBtn.style.display = 'inline-block';
-                    }
-                    
-                    if (importBtn) importBtn.disabled = true;
-                    
-                    // Also refresh status after a delay to double-check
-                    setTimeout(() => {
-                        checkTelegramStatus();
-                    }, 3000);
-                } else {
-                    statusDetails.textContent = data.message;
-                    statusText.textContent = 'Delink Failed';
-                }
-            } catch (error) {
-                statusDetails.textContent = `Failed to delink: ${error.message}`;
-                statusText.textContent = 'Delink Failed';
-            } finally {
-                // Re-enable button
-                delinkBtn.disabled = false;
-                delinkBtn.textContent = '🔓 Delink Account';
-            }
-        }
-        
-        async function importTelegramContacts() {
-            const btn = document.getElementById('telegram-import-contacts-btn');
-            const statusDiv = document.getElementById('telegram-import-status');
-            const skipBots = document.getElementById('telegram-skip-bots').checked;
-            const checkDuplicates = document.getElementById('telegram-check-duplicates').checked;
-            
-            try {
-                btn.disabled = true;
-                btn.textContent = 'Importing...';
-                statusDiv.style.display = 'block';
-                statusDiv.textContent = 'Starting contact import...';
-                statusDiv.className = 'status-message';
-                
-                const response = await fetch('/api/telegram/import-contacts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ skip_bots: skipBots, check_duplicates: checkDuplicates })
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    statusDiv.textContent = data.message || 'Contact import completed successfully!';
-                    statusDiv.style.color = '#10b981';
-                    // Reload contacts list
-                    setTimeout(() => {
-                        loadContactsForTelegram();
-                        loadContacts(); // Refresh main contacts list
-                    }, 1000);
-                } else {
-                    throw new Error(data.error || 'Import failed');
-                }
-            } catch (error) {
-                statusDiv.textContent = 'Error: ' + error.message;
-                statusDiv.style.color = '#ef4444';
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Import Contacts';
-            }
-        }
-        
-        async function syncTelegramChat() {
-            const btn = document.getElementById('telegram-sync-chat-btn');
-            const statusDiv = document.getElementById('telegram-sync-status');
-            const progressDiv = document.getElementById('telegram-sync-progress');
-            const contactSelect = document.getElementById('telegram-contact-select');
-            const daysBack = document.getElementById('telegram-days-back').value;
-            
-            const contactId = contactSelect.value;
-            if (!contactId) {
-                alert('Please select a contact first');
-                return;
-            }
-            
-            try {
-                btn.disabled = true;
-                btn.textContent = 'Starting Sync...';
-                statusDiv.style.display = 'block';
-                statusDiv.textContent = 'Initializing chat sync...';
-                statusDiv.className = 'status-message';
-                
-                const response = await fetch('/api/telegram/start-import', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        contact_id: parseInt(contactId), 
-                        days_back: parseInt(daysBack) 
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    statusDiv.textContent = 'Chat sync started successfully!';
-                    statusDiv.style.color = '#10b981';
-                    
-                    // Start polling for progress
-                    if (data.task_id) {
-                        pollTelegramProgress(data.task_id);
-                    }
-                } else {
-                    throw new Error(data.error || 'Sync failed to start');
-                }
-            } catch (error) {
-                statusDiv.textContent = 'Error: ' + error.message;
-                statusDiv.style.color = '#ef4444';
-                btn.disabled = false;
-                btn.textContent = 'Sync Chat History';
-            }
-        }
-        
-        async function pollTelegramProgress(taskId) {
-            const progressDiv = document.getElementById('telegram-sync-progress');
-            const progressFill = document.getElementById('telegram-progress-fill');
-            const progressPercent = document.querySelector('.progress-percent');
-            const progressLabel = document.querySelector('.progress-label');
-            const btn = document.getElementById('telegram-sync-chat-btn');
-            
-            progressDiv.style.display = 'block';
-            
-            const pollInterval = setInterval(async () => {
-                try {
-                    const response = await fetch(`/api/telegram/import-status/${taskId}`);
-                    const data = await response.json();
-                    
-                    if (data.progress !== undefined) {
-                        progressFill.style.width = data.progress + '%';
-                        progressPercent.textContent = data.progress + '%';
-                    }
-                    
-                    if (data.status_message) {
-                        progressLabel.textContent = data.status_message;
-                    }
-                    
-                    if (data.status === 'completed') {
-                        clearInterval(pollInterval);
-                        progressLabel.textContent = 'Sync completed successfully!';
-                        progressPercent.textContent = '100%';
-                        progressFill.style.width = '100%';
-                        btn.disabled = false;
-                        btn.textContent = 'Sync Chat History';
-                        
-                        // Hide progress after delay
-                        setTimeout(() => {
-                            progressDiv.style.display = 'none';
-                        }, 3000);
-                    } else if (data.status === 'failed') {
-                        clearInterval(pollInterval);
-                        progressLabel.textContent = 'Sync failed: ' + (data.error_details || 'Unknown error');
-                        btn.disabled = false;
-                        btn.textContent = 'Sync Chat History';
-                    }
-                } catch (error) {
-                    console.error('Error polling progress:', error);
-                }
-            }, 2000); // Poll every 2 seconds
-        }
-        
-        async function loadContactsForTelegram() {
-            const contactSelect = document.getElementById('telegram-contact-select');
-            if (!contactSelect) return;
-            
-            try {
-                const response = await fetch('/api/contacts');
-                const data = await response.json();
-                
-                // Clear existing options except the first one
-                contactSelect.innerHTML = '<option value="">Choose a contact...</option>';
-                
-                if (data.contacts) {
-                    data.contacts.forEach(contact => {
-                        const option = document.createElement('option');
-                        option.value = contact.id;
-                        option.textContent = contact.full_name;
-                        contactSelect.appendChild(option);
-                    });
-                }
-            } catch (error) {
-                console.error('Failed to load contacts:', error);
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', function() {
-            // Core functionality
-            document.getElementById('analyze-btn').addEventListener('click', handleAnalyzeNote);
-            document.getElementById('confirm-btn').addEventListener('click', confirmAndSave);
-            document.getElementById('cancel-btn').addEventListener('click', cancelAnalysis);
-            document.getElementById('back-to-input').addEventListener('click', showMainView);
-            // Sync modal buttons
-            const syncModal = document.getElementById('sync-telegram-modal');
-            const syncCancel = document.getElementById('sync-telegram-cancel-btn');
-            const syncStart = document.getElementById('sync-telegram-start-btn');
-            if (syncCancel) syncCancel.addEventListener('click', () => { syncModal.style.display = 'none'; });
-            if (syncStart) syncStart.addEventListener('click', () => { if (window.startTelegramSyncFromModal) window.startTelegramSyncFromModal(); });
-            
-            // Note input handling
-            document.getElementById('note-input').addEventListener('input', function() {
-                const analyzeBtn = document.getElementById('analyze-btn');
-                analyzeBtn.disabled = !(this.value.trim() && currentContactId);
-            });
-            
-            // Profile note handling
-            document.getElementById('profile-add-note-btn').addEventListener('click', function() {
-                const noteArea = document.getElementById('profile-note-input-area');
-                noteArea.style.display = noteArea.style.display === 'none' ? 'block' : 'none';
-                if (noteArea.style.display === 'block') {
-                    document.getElementById('profile-note-input').focus();
-                }
-            });
-            
-            document.getElementById('profile-cancel-note-btn').addEventListener('click', function() {
-                document.getElementById('profile-note-input-area').style.display = 'none';
-                document.getElementById('profile-note-input').value = '';
-            });
-
-            // Load raw logs when expanded
-            const rawLogs = document.getElementById('raw-logs-details');
-            if (rawLogs) {
-              rawLogs.addEventListener('toggle', async function() {
-                if (rawLogs.open) {
-                  const id = document.getElementById('selected-contact-id').value;
-                  fetchAndRenderRawLogs(id);
-                }
-              });
-            }
-            
-            // Change contact
-            document.getElementById('change-contact-btn').addEventListener('click', function() {
-                currentContactId = null;
-                selectedContactName = null;
-                document.getElementById('selected-contact-name').textContent = 'Select a contact to add notes...';
-                this.style.display = 'none';
-                document.getElementById('analyze-btn').disabled = true;
-            });
-            
-            // Navigation
-            document.getElementById('back-to-main-from-profile').addEventListener('click', showMainView);
-            document.getElementById('back-to-main-from-settings').addEventListener('click', showMainView);
-            
-            // File imports
-            const vCardInput = document.getElementById('vcf-upload');
-            if (vCardInput) {
-                vCardInput.addEventListener('change', handleVCardImport);
-                vCardInput.addEventListener('change', updateFileInputStatus);
-            }
-            
-            // Merge file input
-            const mergeFileInput = document.getElementById('merge-file-input');
-            if (mergeFileInput) {
-                mergeFileInput.addEventListener('change', function(e) {
-                    updateFileInputStatus(e);
-                    toggleMergeOptions(e.target.files.length > 0);
-                    
-                    // Enable/disable merge button
-                    const mergeBtn = document.getElementById('merge-btn');
-                    if (mergeBtn) {
-                        mergeBtn.disabled = e.target.files.length === 0;
-                    }
-                });
-            }
-            
-            // Telegram Integration
-            setupTelegramIntegration();
-
-            // Merge import
-            const mergeForm = document.getElementById('merge-form');
-            if (mergeForm) {
-                console.log('Setting up merge form event listener'); // Debug log
-                mergeForm.addEventListener('submit', handleMergeImport);
-                
-                // Also add a click handler to the button as a fallback
-                const mergeBtn = document.getElementById('merge-btn');
-                if (mergeBtn) {
-                    mergeBtn.addEventListener('click', function(e) {
-                        console.log('Merge button clicked'); // Debug log
-                        if (e.target.type === 'submit') {
-                            // Let the form submit handler take care of it
-                            return;
-                        }
-                        // If for some reason this isn't a submit button, handle it manually
-                        e.preventDefault();
-                        handleMergeImport(e);
-                    });
-                }
-            } else {
-                console.error('Merge form not found!'); // Debug log
-            }
-            
-            // CSV Download
-            const csvDownloadBtn = document.getElementById('download-csv-btn');
-            if (csvDownloadBtn) {
-                // The href attribute is now directly on the anchor tag, so no need for event listener here.
-            }
-
-            // Upload file handlers
-            const uploadBtn = document.getElementById('profile-upload-file-btn');
-            const uploadInput = document.getElementById('file-upload-input');
-            const uploadStatus = document.getElementById('file-upload-status');
-            if (uploadBtn && uploadInput) {
-                uploadBtn.addEventListener('click', () => uploadInput.click());
-                uploadInput.addEventListener('change', async () => {
-                    if (!uploadInput.files || uploadInput.files.length === 0) return;
-                    const contactId = document.getElementById('selected-contact-id')?.value;
-                    if (!contactId) { alert('Select a contact first.'); return; }
-                    const f = uploadInput.files[0];
-                    const fd = new FormData();
-                    fd.append('file', f);
-                    fd.append('contact_id', contactId);
-                    uploadStatus.textContent = `Uploading ${f.name}...`;
-                    uploadBtn.disabled = true;
-                    try {
-                        const res = await fetch('/api/files/upload', { method: 'POST', body: fd });
-                        if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-                        const data = await res.json();
-                        uploadStatus.textContent = `Upload complete. Analysis started (Task ${data.task_id}).`;
-                        showToast('Analysis started', 'info', 2000);
-                        pollFileTask(data.task_id, () => { showToast('File analysis complete', 'success'); });
-                    } catch (e) {
-                        uploadStatus.textContent = `Error: ${e.message}`;
-                        showToast(`Upload error: ${e.message}`, 'error');
-                    } finally {
-                        uploadBtn.disabled = false;
-                        uploadInput.value = '';
-                    }
-                });
-            }
-
-            async function pollFileTask(taskId, onComplete) {
-                const iv = setInterval(async () => {
-                    try {
-                        const r = await fetch(`/api/files/status/${taskId}`);
-                        const s = await r.json();
-                        if (s.status_message) uploadStatus.textContent = s.status_message;
-                        if (s.status === 'completed') { clearInterval(iv); onComplete && onComplete(); }
-                        if (s.status === 'failed') { clearInterval(iv); showToast('File task failed', 'error'); }
-                    } catch (e) { /* ignore transient */ }
-                }, 3000);
-            }
-            
-            // Handle main note input and contact selection
-            function updateNoteInputState() {
-                const noteInput = document.getElementById('note-input');
-                const analyzeBtn = document.getElementById('analyze-btn');
-                const hasContact = currentContactId !== null;
-                const hasText = noteInput && noteInput.value.trim().length > 0;
-                
-                if (noteInput) {
-                    noteInput.disabled = !hasContact;
-                    noteInput.placeholder = hasContact ? 
-                        'Enter unstructured notes about this contact...' : 
-                        'Select a contact first to add notes';
-                }
-                
-                if (analyzeBtn) {
-                    analyzeBtn.disabled = !hasContact || !hasText;
-                }
-            }
-            
-            // Listen for note input changes
-            const noteInput = document.getElementById('note-input');
-            if (noteInput) {
-                noteInput.addEventListener('input', updateNoteInputState);
-            }
-            
-            // Update state when contact is selected (hook into existing selectContact function)
-            const originalSelectContact = window.selectContact;
-            if (originalSelectContact) {
-                window.selectContact = function(...args) {
-                    originalSelectContact.apply(this, args);
-                    setTimeout(updateNoteInputState, 100); // Small delay to ensure currentContactId is set
-                };
-            }
-            
-            // Initial state update
-            updateNoteInputState();
+        const filteredContacts = contacts.filter(contact => {
+            const nameMatch = contact.name.toLowerCase().includes(searchTerm);
+            const tierMatch = !tier1Only || contact.tier === 1;
+            return nameMatch && tierMatch;
         });
+
+        contactListEl.innerHTML = ''; // Clear existing list
+
+        if (filteredContacts.length === 0) {
+             contactListEl.innerHTML = `<div class="text-center text-gray-500 py-4">No contacts found.</div>`;
+                return;
+            }
+            
+        // Create a grid layout
+        const grid = document.createElement('div');
+        grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+
+        filteredContacts.forEach(contact => {
+            const tierIcon = contact.tier === 1 
+                ? `<span class="text-yellow-500" title="Tier 1">⭐</span>` 
+                : `<span class="text-gray-500" title="Tier 2">👥</span>`;
+            
+            const item = document.createElement('div');
+            item.className = 'flex items-center space-x-3 p-4 rounded-lg cursor-pointer transition-colors border hover:bg-gray-100 hover:border-blue-400';
+            item.dataset.contactId = contact.id;
+            
+            item.innerHTML = `
+                ${tierIcon}
+                <span class="font-medium text-gray-700">${contact.name}</span>
+            `;
+            
+            item.addEventListener('click', () => {
+                activeContactId = contact.id;
+                loadContactProfile(contact.id);
+            });
+            grid.appendChild(item);
+        });
+        contactListEl.appendChild(grid);
+    };
+
+    // Render contact profile with 20 categories
+    function renderContactProfile(profileData) {
+        const { contact_info: info, categorized_data: categories } = profileData || {};
+        
+        // Set contact name
+        contactProfileName.textContent = info?.full_name || 'Unknown Contact';
+        
+        // Clear existing content
+        contactProfileContent.innerHTML = '';
+        
+        // Add contact meta info
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'bg-gray-50 rounded-lg p-4 mb-6';
+        metaDiv.innerHTML = `
+            <div class="grid grid-cols-2 gap-4 text-sm">
+                <div><strong>Tier:</strong> ${info?.tier || 'N/A'}</div>
+                <div><strong>Telegram:</strong> @${info?.telegram_username || info?.telegram_handle || 'N/A'}</div>
+            </div>
+        `;
+        contactProfileContent.appendChild(metaDiv);
+
+        // Create categories grid
+        const categoriesGrid = document.createElement('div');
+        categoriesGrid.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
+
+        // Render all 20 categories
+        CATEGORY_ORDER.forEach(category => {
+            const categoryData = categories?.[category] || [];
+            const items = Array.isArray(categoryData) ? categoryData : [categoryData].filter(Boolean);
+            
+            const categoryDiv = document.createElement('div');
+            categoryDiv.className = 'bg-white border border-gray-200 rounded-lg p-4';
+            categoryDiv.innerHTML = `
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-semibold text-gray-800">${category}</h3>
+                    <span class="text-xs text-gray-500">${items.length} item${items.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div class="space-y-2">
+                    ${items.length > 0 
+                        ? items.map(item => `<div class="text-sm text-gray-700 bg-gray-50 p-2 rounded">${item}</div>`).join('')
+                        : '<div class="text-sm text-gray-500 italic">No information available</div>'
+                    }
+                </div>
+            `;
+            categoriesGrid.appendChild(categoryDiv);
+        });
+
+        contactProfileContent.appendChild(categoriesGrid);
+    }
+
+    // Show contact profile view
+    function showContactProfile() {
+        contactsView.classList.add('hidden');
+        contactProfileView.classList.remove('hidden');
+    }
+
+    // Show contacts list view
+    function showContactsList() {
+        contactProfileView.classList.add('hidden');
+        contactsView.classList.remove('hidden');
+        activeContactId = null;
+        currentContactData = null;
+    }
+
+    // Modal functions
+    const openNoteModal = () => {
+        if (activeContactId === null) return;
+        const contact = contacts.find(c => c.id === activeContactId) || 
+                       (currentContactData ? { name: currentContactData.contact_info.full_name } : null);
+        if (!contact) return;
+        
+        modalContactName.textContent = `Add Note for ${contact.name}`;
+        modalNotesTextarea.value = '';
+        noteModal.classList.remove('hidden');
+        noteModal.classList.add('flex');
+    };
+
+    const closeNoteModal = () => {
+        noteModal.classList.add('hidden');
+        noteModal.classList.remove('flex');
+    };
+
+    const openFileUploadModal = () => {
+        if (activeContactId === null) return;
+        const contact = contacts.find(c => c.id === activeContactId) || 
+                       (currentContactData ? { name: currentContactData.contact_info.full_name } : null);
+        if (!contact) return;
+        
+        uploadModalContactName.textContent = `Upload File for ${contact.name}`;
+        fileInput.value = '';
+        uploadFileSubmitBtn.disabled = true;
+        fileUploadModal.classList.remove('hidden');
+        fileUploadModal.classList.add('flex');
+    };
+
+    const closeFileUploadModal = () => {
+        fileUploadModal.classList.add('hidden');
+        fileUploadModal.classList.remove('flex');
+    };
+
+    // Handle note analysis
+    async function analyzeNote() {
+        const noteText = modalNotesTextarea.value.trim();
+        if (!noteText || !activeContactId) return;
+
+        try {
+            analyzeNoteBtn.disabled = true;
+            analyzeNoteBtn.textContent = 'Analyzing...';
+
+            const response = await fetch('/api/process-note', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    contact_id: activeContactId,
+                    note: noteText
+                })
+            });
+
+            const result = await response.json();
+            if (response.ok) {
+                closeNoteModal();
+                // Reload the contact profile to show updated data
+                await loadContactProfile(activeContactId);
+                alert('Note analyzed and processed successfully!');
+            } else {
+                alert('Failed to analyze note: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Error analyzing note:', error);
+            alert('Error analyzing note');
+        } finally {
+            analyzeNoteBtn.disabled = false;
+            analyzeNoteBtn.textContent = 'Analyze Note';
+        }
+    }
+
+    // Handle file upload
+    async function handleFileUpload() {
+        const file = fileInput.files[0];
+        if (!file || !activeContactId) return;
+
+        try {
+            uploadFileSubmitBtn.disabled = true;
+            uploadFileSubmitBtn.textContent = 'Uploading...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('contact_id', activeContactId);
+
+            const response = await fetch('/api/files/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            if (response.ok) {
+                closeFileUploadModal();
+                alert('File uploaded successfully! It will be processed in the background.');
+            } else {
+                alert('Failed to upload file: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Error uploading file:', error);
+            alert('Error uploading file');
+        } finally {
+            uploadFileSubmitBtn.disabled = false;
+            uploadFileSubmitBtn.textContent = 'Upload File';
+        }
+    }
+
+    // Event Listeners
+    searchInput.addEventListener('input', renderContacts);
+    tier1Checkbox.addEventListener('change', renderContacts);
+    backToContactsBtn.addEventListener('click', showContactsList);
+    
+    // Note modal events
+    addNoteBtn.addEventListener('click', openNoteModal);
+    closeModalBtn.addEventListener('click', closeNoteModal);
+    analyzeNoteBtn.addEventListener('click', analyzeNote);
+    noteModal.addEventListener('click', (event) => {
+        if (event.target === noteModal) closeNoteModal();
+    });
+
+    // File upload modal events
+    uploadFileBtn.addEventListener('click', openFileUploadModal);
+    closeUploadModalBtn.addEventListener('click', closeFileUploadModal);
+    cancelUploadBtn.addEventListener('click', closeFileUploadModal);
+    uploadFileSubmitBtn.addEventListener('click', handleFileUpload);
+    fileUploadModal.addEventListener('click', (event) => {
+        if (event.target === fileUploadModal) closeFileUploadModal();
+    });
+
+    // File input events
+    fileDropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            uploadFileSubmitBtn.disabled = false;
+            fileDropZone.innerHTML = `
+                <div class="text-center">
+                    <p class="text-sm font-medium text-gray-900">${file.name}</p>
+                    <p class="text-xs text-gray-500">${(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                </div>
+            `;
+        }
+    });
+
+    // Drag and drop for file upload
+    fileDropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileDropZone.classList.add('border-blue-400', 'bg-blue-50');
+    });
+
+    fileDropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        fileDropZone.classList.remove('border-blue-400', 'bg-blue-50');
+    });
+
+    fileDropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileDropZone.classList.remove('border-blue-400', 'bg-blue-50');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            const event = new Event('change');
+            fileInput.dispatchEvent(event);
+        }
+    });
+
+    // Initial load from database
+    loadContacts();
+}
     </script>
     
-    <!-- External JavaScript Files -->
-    <!-- Performance optimization scripts -->
-    <script src="/static/js/cache-manager.js"></script>
-    <script src="/static/js/lazy-loader.js"></script>
-    <script src="/static/js/debounced-search.js"></script>
-    <script src="/static/js/prefetch-manager.js"></script>
-    
-    <!-- Core application scripts -->
-    <script src="/static/js/main.js"></script>
-    <script src="/static/js/contacts.js"></script>
-    <script src="/static/js/settings.js"></script>
-    <script src="/static/js/relationship-graph.js"></script>
-    <script src="/static/js/ui-enhancements.js"></script>
 </body>
 </html>

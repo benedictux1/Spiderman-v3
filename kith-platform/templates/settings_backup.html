@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Kith Platform - UPDATED VERSION</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+<!-- Loading state -->
+<div id="loading" class="flex justify-center items-center h-screen text-lg text-gray-600">
+    <div>Loading...</div>
+</div>
+
+<!-- Main app content (hidden until authenticated) -->
+<div id="app" class="hidden flex flex-col h-screen">
+    <!-- Header & Navigation -->
+    <header class="bg-white border-b border-gray-200">
+        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-8">
+                <a href="/" class="text-gray-500 hover:text-blue-600 transition-colors">Contacts</a>
+                <a href="/relationship-graph" class="text-gray-500 hover:text-blue-600 transition-colors">Relationship Graph</a>
+                <a href="/manage-graph" class="text-gray-500 hover:text-blue-600 transition-colors">Manage Graph</a>
+                <a href="/settings" class="text-lg font-semibold text-gray-700 hover:text-blue-600 transition-colors">Settings</a>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow container mx-auto px-6 py-8">
+        <div class="space-y-8">
+            <h1 class="text-3xl font-bold text-gray-800">Settings</h1>
+            
+            <!-- Telegram Integration -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Telegram Integration</h2>
+                <div id="telegram-settings">
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-lg font-medium text-gray-700">Telegram Account</h3>
+                                <p class="text-sm text-gray-500">Connect your Telegram account to import contacts and messages</p>
+                            </div>
+                            <div class="flex space-x-3">
+                                <button id="telegram-link-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                                    Link Telegram
+                                </button>
+                                <button id="telegram-unlink-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors hidden">
+                                    Unlink Telegram
+                                </button>
+                            </div>
+                        </div>
+                        <div id="telegram-status" class="text-sm text-gray-600"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Upload Section -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">File Upload</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Upload Files for Analysis</label>
+                        <input type="file" id="file-upload" multiple accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.mp3,.wav" 
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                        <p class="text-sm text-gray-500 mt-1">Supported formats: PDF, DOC, TXT, Images, Audio files</p>
+                    </div>
+                    <button id="upload-files-btn" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">
+                        Upload Files
+                    </button>
+                    <div id="upload-status" class="text-sm"></div>
+                </div>
+            </div>
+
+            <!-- vCard Import -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Import Contacts</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Import vCard (.vcf) File</label>
+                        <input type="file" id="vcard-file-input" accept=".vcf" 
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                        <p class="text-sm text-gray-500 mt-1">Select a vCard file to import contacts</p>
+                    </div>
+                    <button id="import-vcard-btn" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors">
+                        Import vCard
+                    </button>
+                    <div id="vcard-import-status" class="text-sm"></div>
+                </div>
+            </div>
+
+            <!-- Manual Contact Addition -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Add Contact Manually</h2>
+                <form id="add-contact-form" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="contact-name" class="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                            <input type="text" id="contact-name" required 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                        </div>
+                        <div>
+                            <label for="contact-tier" class="block text-sm font-medium text-gray-700 mb-2">Tier</label>
+                            <select id="contact-tier" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                <option value="1">Tier 1 (Inner Circle)</option>
+                                <option value="2" selected>Tier 2 (Outer Circle)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="contact-notes" class="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
+                        <textarea id="contact-notes" rows="3" 
+                                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"></textarea>
+                    </div>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                        Add Contact
+                    </button>
+                    <div id="add-contact-status" class="text-sm"></div>
+                </form>
+            </div>
+
+            <!-- Data Management -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Data Management</h2>
+                <div class="space-y-4">
+                    <div class="flex space-x-4">
+                        <button id="download-csv-btn" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">
+                            Download All Data as CSV
+                        </button>
+                        <button id="import-csv-btn" class="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors">
+                            Import CSV Data
+                        </button>
+                    </div>
+                    <input type="file" id="csv-import-input" accept=".csv" class="hidden">
+                    <div id="download-status" class="text-sm"></div>
+                </div>
+            </div>
+
+            <!-- Relationship Network -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Relationship Network</h2>
+                <div class="space-y-4">
+                    <p class="text-sm text-gray-600">Visualize your contact relationships and network connections</p>
+                    <div id="relationship-network" style="height: 400px; border: 1px solid #e5e7eb; border-radius: 8px;" class="bg-gray-50 flex items-center justify-center">
+                        <div class="text-center text-gray-500">
+                            <div class="text-lg mb-2">📊</div>
+                            <div>Relationship network visualization will appear here</div>
+                        </div>
+                    </div>
+                    <button id="refresh-network-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">
+                        Refresh Network
+                    </button>
+                </div>
+            </div>
+
+            <!-- Account Settings -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Account Settings</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Username</label>
+                        <input type="text" value="admin" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" readonly>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                        <input type="email" placeholder="admin@example.com" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Since we're using server-side authentication, just show the app
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    
+    // Initialize settings functionality
+    initializeSettings();
+});
+
+function initializeSettings() {
+    // Telegram Integration
+    setupTelegramIntegration();
+    
+    // File Upload
+    setupFileUpload();
+    
+    // vCard Import
+    setupVCardImport();
+    
+    // Manual Contact Addition
+    setupManualContactAddition();
+    
+    // CSV Data Management
+    setupCSVManagement();
+    
+    // Relationship Network
+    setupRelationshipNetwork();
+}
+
+// Telegram Integration
+function setupTelegramIntegration() {
+    const linkBtn = document.getElementById('telegram-link-btn');
+    const unlinkBtn = document.getElementById('telegram-unlink-btn');
+    const status = document.getElementById('telegram-status');
+    
+    // Check current Telegram status
+    checkTelegramStatus();
+    
+    linkBtn.addEventListener('click', () => {
+        status.textContent = 'Redirecting to Telegram authentication...';
+        window.location.href = '/api/telegram/auth';
+    });
+    
+    unlinkBtn.addEventListener('click', () => {
+        if (confirm('Are you sure you want to unlink your Telegram account?')) {
+            fetch('/api/telegram/delink', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        status.textContent = 'Telegram account unlinked successfully.';
+                        linkBtn.classList.remove('hidden');
+                        unlinkBtn.classList.add('hidden');
+                    } else {
+                        status.textContent = 'Error unlinking Telegram account.';
+                    }
+                })
+                .catch(error => {
+                    status.textContent = 'Error unlinking Telegram account.';
+                });
+        }
+    });
+}
+
+function checkTelegramStatus() {
+    fetch('/api/telegram/status')
+        .then(response => response.json())
+        .then(data => {
+            const status = document.getElementById('telegram-status');
+            const linkBtn = document.getElementById('telegram-link-btn');
+            const unlinkBtn = document.getElementById('telegram-unlink-btn');
+            
+            if (data.connected) {
+                status.textContent = `Connected as: ${data.username || 'Unknown'}`;
+                linkBtn.classList.add('hidden');
+                unlinkBtn.classList.remove('hidden');
+            } else {
+                status.textContent = 'Not connected to Telegram.';
+                linkBtn.classList.remove('hidden');
+                unlinkBtn.classList.add('hidden');
+            }
+        })
+        .catch(error => {
+            document.getElementById('telegram-status').textContent = 'Error checking Telegram status.';
+        });
+}
+
+// File Upload
+function setupFileUpload() {
+    const uploadBtn = document.getElementById('upload-files-btn');
+    const fileInput = document.getElementById('file-upload');
+    const status = document.getElementById('upload-status');
+    
+    uploadBtn.addEventListener('click', () => {
+        const files = fileInput.files;
+        if (files.length === 0) {
+            status.textContent = 'Please select files to upload.';
+            return;
+        }
+        
+        const formData = new FormData();
+        for (let file of files) {
+            formData.append('files', file);
+        }
+        
+        status.textContent = 'Uploading files...';
+        uploadBtn.disabled = true;
+        
+        fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                status.textContent = `Successfully uploaded ${data.uploaded_count} files.`;
+                fileInput.value = '';
+            } else {
+                status.textContent = `Upload failed: ${data.error}`;
+            }
+        })
+        .catch(error => {
+            status.textContent = 'Upload failed. Please try again.';
+        })
+        .finally(() => {
+            uploadBtn.disabled = false;
+        });
+    });
+}
+
+// vCard Import
+function setupVCardImport() {
+    const importBtn = document.getElementById('import-vcard-btn');
+    const fileInput = document.getElementById('vcard-file-input');
+    const status = document.getElementById('vcard-import-status');
+    
+    importBtn.addEventListener('click', () => {
+        const file = fileInput.files[0];
+        if (!file) {
+            status.textContent = 'Please select a vCard file.';
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('vcard', file);
+        
+        status.textContent = 'Importing vCard...';
+        importBtn.disabled = true;
+        
+        fetch('/api/import/vcard', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                status.textContent = `Successfully imported ${data.imported_count} contacts.`;
+                fileInput.value = '';
+            } else {
+                status.textContent = `Import failed: ${data.error}`;
+            }
+        })
+        .catch(error => {
+            status.textContent = 'Import failed. Please try again.';
+        })
+        .finally(() => {
+            importBtn.disabled = false;
+        });
+    });
+}
+
+// Manual Contact Addition
+function setupManualContactAddition() {
+    const form = document.getElementById('add-contact-form');
+    const status = document.getElementById('add-contact-status');
+    
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const name = document.getElementById('contact-name').value;
+        const tier = document.getElementById('contact-tier').value;
+        const notes = document.getElementById('contact-notes').value;
+        
+        status.textContent = 'Adding contact...';
+        
+        fetch('/api/contacts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: name,
+                tier: parseInt(tier),
+                notes: notes
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                status.textContent = 'Contact added successfully!';
+                form.reset();
+            } else {
+                status.textContent = `Failed to add contact: ${data.error}`;
+            }
+        })
+        .catch(error => {
+            status.textContent = 'Failed to add contact. Please try again.';
+        });
+    });
+}
+
+// CSV Data Management
+function setupCSVManagement() {
+    const downloadBtn = document.getElementById('download-csv-btn');
+    const importBtn = document.getElementById('import-csv-btn');
+    const fileInput = document.getElementById('csv-import-input');
+    const status = document.getElementById('download-status');
+    
+    downloadBtn.addEventListener('click', () => {
+        status.textContent = 'Preparing CSV download...';
+        window.location.href = '/api/export/csv';
+    });
+    
+    importBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+    
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append('csv', file);
+        
+        status.textContent = 'Importing CSV data...';
+        importBtn.disabled = true;
+        
+        fetch('/api/import/csv', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                status.textContent = `Successfully imported ${data.imported_count} records.`;
+                fileInput.value = '';
+            } else {
+                status.textContent = `Import failed: ${data.error}`;
+            }
+        })
+        .catch(error => {
+            status.textContent = 'Import failed. Please try again.';
+        })
+        .finally(() => {
+            importBtn.disabled = false;
+        });
+    });
+}
+
+// Relationship Network
+function setupRelationshipNetwork() {
+    const refreshBtn = document.getElementById('refresh-network-btn');
+    const networkDiv = document.getElementById('relationship-network');
+    
+    refreshBtn.addEventListener('click', () => {
+        loadRelationshipNetwork();
+    });
+    
+    // Load network on page load
+    loadRelationshipNetwork();
+}
+
+function loadRelationshipNetwork() {
+    const networkDiv = document.getElementById('relationship-network');
+    const refreshBtn = document.getElementById('refresh-network-btn');
+    
+    networkDiv.innerHTML = '<div class="flex items-center justify-center h-full"><div class="text-center text-gray-500"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div><div>Loading relationship network...</div></div></div>';
+    
+    refreshBtn.disabled = true;
+    
+    fetch('/api/contacts/graph')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.nodes && data.edges) {
+                // Initialize network visualization here
+                networkDiv.innerHTML = '<div class="text-center text-gray-500"><div class="text-lg mb-2">📊</div><div>Network visualization loaded</div><div class="text-sm mt-2">Nodes: ' + data.nodes.length + ', Edges: ' + data.edges.length + '</div></div>';
+            } else {
+                networkDiv.innerHTML = '<div class="text-center text-gray-500"><div class="text-lg mb-2">📊</div><div>No relationship data available</div></div>';
+            }
+        })
+        .catch(error => {
+            networkDiv.innerHTML = '<div class="text-center text-red-500"><div class="text-lg mb-2">❌</div><div>Error loading network data</div></div>';
+        })
+        .finally(() => {
+            refreshBtn.disabled = false;
+        });
+}
+</script>
+
+</body>
+</html>

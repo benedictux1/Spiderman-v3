@@ -54,3 +54,4 @@ if __name__ == "__main__":
     else:
         print("💥 Database migration failed!")
         sys.exit(1)
+

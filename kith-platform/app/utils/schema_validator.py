@@ -96,3 +96,4 @@ class SchemaValidator:
             summary['tables'].append(table_name)
         
         return summary
+

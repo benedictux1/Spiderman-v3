@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, render_template, redirect, url_for, current_app
+from flask import Blueprint, request, jsonify, render_template, redirect, url_for, current_app, session
 from flask_login import login_user, logout_user, current_user, login_required
 from dependency_injector.wiring import inject, Provide
 from app.services.auth_service import AuthService
@@ -42,8 +42,11 @@ def login(auth_service: AuthService = Provide[Container.auth_service]):
         logger.info(f"🔧 DEBUG: Authentication result: {user.username if user else 'None'}")
         
         if user:
-            logger.info(f"🔧 DEBUG: User authenticated, logging in...")
-            login_user(user)
+            logger.info(f"🔧 DEBUG: User authenticated, setting session...")
+            # Use simple session storage instead of Flask-Login
+            session['user_id'] = user.id
+            session['username'] = user.username
+            session.permanent = True
             logger.info(f"✅ User logged in successfully: {user.username}")
             
             if request.is_json:
@@ -65,6 +68,13 @@ def login(auth_service: AuthService = Provide[Container.auth_service]):
         if request.is_json:
             return jsonify({'error': 'Internal server error'}), 500
         return render_template('login.html', error='Login failed')
+
+@auth_bp.route('/logout', methods=['POST'])
+def logout():
+    """Handle user logout"""
+    session.clear()
+    logger.info("✅ User logged out successfully")
+    return jsonify({'success': True, 'message': 'Logged out successfully'})
 
 @auth_bp.route('/register', methods=['POST'])
 @inject

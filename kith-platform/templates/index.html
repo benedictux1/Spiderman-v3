@@ -15,7 +15,7 @@
     
     <div class="container">
         <!-- Page Title -->
-        <h1>Kith Platform</h1>
+        <h1 style="display:none;">Kith Platform</h1>
         
         <!-- Navigation -->
         <div class="navigation">
@@ -39,15 +39,15 @@
             
             <!-- Note Input Area -->
             <div id="input-area">
-                <div class="selected-contact">
+                <div class="selected-contact" style="display:none;">
                     <span id="selected-contact-name">Select a contact to add notes...</span>
                     <button id="change-contact-btn" style="display:none;">Change Contact</button>
                 </div>
-                <div class="note-container">
+                <div id="note-container" class="note-container" style="display:none;">
                     <textarea id="note-input" placeholder="Enter your unstructured notes for the selected contact..."></textarea>
                     <button id="record-btn" class="mic-btn" title="Start Voice Recording">🎤</button>
                 </div>
-                <button id="analyze-btn" disabled>Analyze Note</button>
+                <button id="analyze-btn" style="display:none;" disabled>Analyze Note</button>
             </div>
             
             <!-- Tier 1 Contacts List -->
@@ -1974,15 +1974,15 @@
             function updateNoteInputState() {
                 const noteInput = document.getElementById('note-input');
                 const analyzeBtn = document.getElementById('analyze-btn');
+                const noteContainer = document.getElementById('note-container');
                 const hasContact = currentContactId !== null;
                 const hasText = noteInput && noteInput.value.trim().length > 0;
                 
                 if (noteInput) {
                     noteInput.disabled = !hasContact;
-                    noteInput.placeholder = hasContact ? 
-                        'Enter unstructured notes about this contact...' : 
-                        'Select a contact first to add notes';
+                    noteInput.placeholder = 'Enter unstructured notes about this contact...';
                 }
+                if (noteContainer) noteContainer.style.display = hasContact ? '' : 'none';
                 
                 if (analyzeBtn) {
                     analyzeBtn.disabled = !hasContact || !hasText;

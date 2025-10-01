@@ -292,6 +292,16 @@ class CachedAPIClient {
             params: { query, ...filters }
         });
     }
+
+    /**
+     * Unified search across contacts and notes
+     */
+    async unifiedSearch(q, { scope = 'all', limit = 5 } = {}) {
+        return this.request('/search', {
+            cacheType: 'search',
+            params: { q, scope, limit }
+        });
+    }
     
     /**
      * Get tier summary with caching

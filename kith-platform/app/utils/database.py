@@ -51,7 +51,9 @@ class DatabaseManager:
         try:
             logger.info(f"🔧 DEBUG: Creating engine with URL: {engine_url[:50]}...")
             self.engine = create_engine(engine_url, pool_pre_ping=True)
-            self.SessionLocal = sessionmaker(bind=self.engine)
+            # Prevent attribute expiration on commit so ORM instances remain usable
+            # outside the session context (e.g., with flask_login user object)
+            self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
             
             # Test connection (lightweight)
             logger.info("🔧 DEBUG: Testing database connection...")

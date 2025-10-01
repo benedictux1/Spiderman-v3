@@ -1,7 +1,7 @@
 // Modern UI Enhancements for Kith Platform
 
 // Enhanced Toast notification system
-function showToast(message, type = 'info', duration = 3000) {
+function showToast(message, type = 'info', duration = 0) {
     // Create toast container if it doesn't exist
     let container = document.getElementById('toast-container');
     if (!container) {
@@ -14,23 +14,54 @@ function showToast(message, type = 'info', duration = 3000) {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.style.pointerEvents = 'auto';
+    toast.style.cssText = `
+        background: ${type === 'error' ? '#fee' : type === 'success' ? '#efe' : type === 'warning' ? '#ffd' : '#eef'};
+        color: ${type === 'error' ? '#a00' : type === 'success' ? '#060' : type === 'warning' ? '#660' : '#006'};
+        border: 1px solid ${type === 'error' ? '#fcc' : type === 'success' ? '#cfc' : type === 'warning' ? '#ffc' : '#ccf'};
+        padding: 12px 16px;
+        margin: 8px 0;
+        border-radius: 6px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-width: 200px;
+        max-width: 400px;
+        word-wrap: break-word;
+    `;
     
-    // Add close button for longer messages
-    if (duration > 5000) {
-        const closeBtn = document.createElement('button');
-        closeBtn.innerHTML = '×';
-        closeBtn.style.cssText = 'float: right; background: none; border: none; font-size: 18px; cursor: pointer; margin-left: 10px;';
-        closeBtn.onclick = () => removeToast(toast);
-        toast.appendChild(closeBtn);
-    }
+    // Always add close button
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '×';
+    closeBtn.style.cssText = `
+        background: none; 
+        border: none; 
+        font-size: 18px; 
+        cursor: pointer; 
+        margin-left: 10px;
+        padding: 0;
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        transition: background-color 0.2s;
+    `;
+    closeBtn.onmouseover = () => closeBtn.style.backgroundColor = 'rgba(0,0,0,0.1)';
+    closeBtn.onmouseout = () => closeBtn.style.backgroundColor = 'transparent';
+    closeBtn.onclick = () => removeToast(toast);
     
     const messageSpan = document.createElement('span');
     messageSpan.textContent = message;
+    messageSpan.style.flex = '1';
+    
     toast.appendChild(messageSpan);
+    toast.appendChild(closeBtn);
     
     container.appendChild(toast);
     
-    // Auto remove
+    // Auto remove only if duration > 0 (0 = persistent)
     if (duration > 0) {
         setTimeout(() => removeToast(toast), duration);
     }
@@ -767,16 +798,25 @@ function enhanceErrorHandling() {
     });
     
     // Enhanced fetch wrapper with better error messages
+    // Relaxed policy: do NOT throw for 4xx responses so callers can handle gracefully (e.g., auth flows)
+    // Only throw for 5xx or network errors.
     window.originalFetch = window.fetch;
     window.fetch = async function(...args) {
         try {
             const response = await window.originalFetch(...args);
+            // Network OK; decide throwing policy
             if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`${response.status}: ${errorText}`);
+                // For server errors (5xx), throw to surface critical failures
+                if (response.status >= 500) {
+                    const errorText = await response.text();
+                    throw new Error(`${response.status}: ${errorText}`);
+                }
+                // For 4xx, let the caller inspect response.status and handle
+                return response;
             }
             return response;
         } catch (error) {
+            // Network or CORS errors
             console.error('Fetch error:', error);
             throw error;
         }

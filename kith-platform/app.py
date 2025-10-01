@@ -34,6 +34,7 @@ from models import Contact, RawNote, SynthesizedEntry, User, ContactGroup, Conta
 from app.utils.database import DatabaseManager
 from config.database import DatabaseConfig
 from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from analytics import RelationshipAnalytics
 from calendar_integration import CalendarIntegration
@@ -41,7 +42,7 @@ from calendar_integration import CalendarIntegration
 # Import API blueprints
 from app.api.analytics import analytics_bp
 from app.api.auth import auth_bp
-from app.api.contacts import contacts_bp
+# from app.api.contacts import contacts_bp  # Disabled - using main app endpoint instead
 from app.api.notes import notes_bp
 from app.api.telegram import telegram_bp
 from app.api.admin import admin_bp
@@ -83,7 +84,7 @@ CORS(app, origins=["*"])  # Configure with specific origins in production
 # Register API blueprints
 app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
-app.register_blueprint(contacts_bp, url_prefix='/api/contacts')
+# app.register_blueprint(contacts_bp, url_prefix='/api/contacts')  # Disabled - using main app endpoint instead
 app.register_blueprint(notes_bp, url_prefix='/api/notes')
 app.register_blueprint(telegram_bp, url_prefix='/api/telegram')
 app.register_blueprint(admin_bp, url_prefix='/api/admin')
@@ -3055,57 +3056,117 @@ def get_raw_logs_for_contact(contact_id):
 
 @app.route('/api/search', methods=['GET'])
 def search_endpoint():
-    """Unified search across contacts and their data."""
-    query = request.args.get('q')
-    if not query or len(query) < 2:
-        return jsonify([])
+    """Unified search across contacts and notes.
+
+    Returns a JSON payload with two groups:
+      - contacts: matches on contact fields
+      - notes: matches inside raw_notes and synthesized_entries with snippets and offsets
+    """
+    q = (request.args.get('q') or '').strip()
+    scope = (request.args.get('scope') or 'all').lower()
+    limit = int(request.args.get('limit') or 10)
+
+    if len(q) < 2:
+        return jsonify({"success": True, "contacts": [], "notes": []})
 
     try:
+        user_id = getattr(current_user, 'id', None)
+        if not user_id:
+            # In anonymous mode, return empty to avoid leaking data
+            return jsonify({"success": True, "contacts": [], "notes": []})
+
         conn = get_db_connection()
         try:
-            # 1. Keyword Search using direct SQL
-            cursor = conn.execute('''
-                SELECT DISTINCT c.id 
-                FROM contacts c 
-                LEFT JOIN synthesized_entries se ON c.id = se.contact_id 
-                WHERE (c.full_name LIKE ? OR se.content LIKE ?) AND c.user_id = ?
-            ''', (f'%{query}%', f'%{query}%'))
-            
-            keyword_contact_ids = [row['id'] for row in cursor.fetchall()]
+            contacts = []
+            notes = []
 
-            # 2. Semantic Search (ChromaDB - Master Collection)
-            try:
-                master_collection = chroma_client.get_or_create_collection(name=ChromaDB.MASTER_COLLECTION_NAME)
-                semantic_results = master_collection.query(query_texts=[query], n_results=10)
-                semantic_contact_ids = [int(meta['contact_id']) for meta in semantic_results['metadatas'][0]]
-            except Exception:
-                semantic_contact_ids = []
+            like = f"%{q}%"
 
-            # 3. Combine and De-duplicate Results
-            combined_ids = list(set(keyword_contact_ids + semantic_contact_ids))
+            if scope in ("all", "contacts"):
+                # Contact field matches (name, telegram fields, tags if stored on contact)
+                cur = conn.execute('''
+                    SELECT id, full_name, tier, telegram_username, telegram_handle
+                    FROM contacts
+                    WHERE user_id = ?
+                      AND (
+                        full_name LIKE ? OR
+                        IFNULL(telegram_username,'') LIKE ? OR
+                        IFNULL(telegram_handle,'') LIKE ?
+                      )
+                    ORDER BY full_name COLLATE NOCASE ASC
+                    LIMIT ?
+                ''', (user_id, like, like, like, limit))
+                contacts = [dict(row) for row in cur.fetchall()]
 
-            # 4. Fetch Contact Details for the matched IDs
-            if not combined_ids:
-                return jsonify([])
+            if scope in ("all", "notes"):
+                # Raw notes
+                cur = conn.execute('''
+                    SELECT rn.id AS note_id, rn.content, rn.created_at,
+                           c.id AS contact_id, c.full_name AS contact_name,
+                           'raw' AS source
+                    FROM raw_notes rn
+                    JOIN contacts c ON c.id = rn.contact_id
+                    WHERE c.user_id = ? AND rn.content LIKE ?
+                    ORDER BY rn.created_at DESC
+                    LIMIT ?
+                ''', (user_id, like, limit))
+                raw_rows = [dict(row) for row in cur.fetchall()]
 
-            # Convert to SQL IN clause
-            placeholders = ','.join('?' * len(combined_ids))
-            cursor = conn.execute(f'''
-                SELECT id, full_name, tier 
-                FROM contacts 
-                WHERE id IN ({placeholders}) AND user_id = ?
-            ''', combined_ids)
-            
-            final_contacts = [dict(row) for row in cursor.fetchall()]
-            
-            return jsonify(final_contacts)
-            
+                # Synthesized entries
+                cur = conn.execute('''
+                    SELECT se.id AS note_id, se.content, se.created_at,
+                           c.id AS contact_id, c.full_name AS contact_name,
+                           'synth' AS source
+                    FROM synthesized_entries se
+                    JOIN contacts c ON c.id = se.contact_id
+                    WHERE c.user_id = ? AND se.content LIKE ?
+                    ORDER BY se.created_at DESC
+                    LIMIT ?
+                ''', (user_id, like, limit))
+                synth_rows = [dict(row) for row in cur.fetchall()]
+
+                def make_snippet(row: dict) -> dict:
+                    text = row.get('content') or ''
+                    lower_text = text.lower()
+                    lower_q = q.lower()
+                    idx = lower_text.find(lower_q)
+                    if idx < 0:
+                        start = 0
+                        end = min(len(text), 120)
+                    else:
+                        start = max(0, idx - 60)
+                        end = min(len(text), idx + len(q) + 60)
+                    snippet = text[start:end]
+                    # return offsets relative to snippet for easier client highlighting
+                    rel_start = max(0, idx - start) if idx >= 0 else -1
+                    rel_end = rel_start + len(q) if rel_start >= 0 else -1
+                    created_at = row.get("created_at")
+                    if hasattr(created_at, 'isoformat'):
+                        created_at = created_at.isoformat()
+                    return {
+                        "note_id": row["note_id"],
+                        "contact_id": row["contact_id"],
+                        "contact_name": row.get("contact_name"),
+                        "source": row.get("source"),
+                        "snippet": snippet,
+                        "offsets": {"start": rel_start, "end": rel_end},
+                        "created_at": created_at
+                    }
+
+                notes = [make_snippet(r) for r in (raw_rows + synth_rows)]
+
+            return jsonify({
+                "success": True,
+                "contacts": contacts,
+                "notes": notes
+            })
+
         finally:
             conn.close()
 
     except Exception as e:
         logger.error(f"Search failed: {e}")
-        return jsonify({"error": f"Search failed: {e}"}), 500
+        return jsonify({"success": False, "error": f"Search failed: {e}"}), 500
 
 @app.route('/api/process-note', methods=['POST'])
 def process_note_endpoint():
@@ -3867,7 +3928,7 @@ def replace_contact_categories(contact_id: int):
             # Prefer dynamic summary over any client-provided note
             log_text = summary
             tags_obj = {"type": "category_edit", "before": before, "after": after}
-            conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+            conn.execute('INSERT INTO raw_notes (contact_id, content, metadata_tags, created_at) VALUES (?, ?, ?, ?)', (
                 contact_id, log_text, json.dumps(tags_obj), datetime.now().isoformat()
             ))
 
@@ -4936,7 +4997,7 @@ def create_note_endpoint():
         tags = data.get('tags')
         with with_write_connection() as conn:
             cur = conn.execute(
-                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                'INSERT INTO raw_notes (contact_id, content, metadata_tags, created_at) VALUES (?, ?, ?, ?)',
                 (contact_id, content, json.dumps(tags) if isinstance(tags, (dict, list)) else tags, datetime.now().isoformat())
             )
             raw_note_id = cur.lastrowid
@@ -5508,7 +5569,7 @@ def transcribe_audio_endpoint():
 
 @app.route('/api/graph-data', methods=['GET'])
 @login_required
-@cache.cached(timeout=3600)
+@cache.cached(timeout=3600, query_string=True)
 def get_graph_data():
     """
     Fetches and formats all data required to render the relationship graph.
@@ -5785,13 +5846,19 @@ def create_tag():
                     'description': new_tag.description
                 }
             }), 201
+        except IntegrityError as e:
+            session.rollback()
+            if "UNIQUE constraint failed" in str(e) and "tags.user_id, tags.name" in str(e):
+                return jsonify({"error": "Tag with this name already exists"}), 409
+            else:
+                logger.error(f"Database integrity error creating tag: {e}")
+                return jsonify({"error": f"Database error: {str(e)}"}), 500
         except Exception as e:
             session.rollback()
-            raise
+            logger.error(f"Error creating tag: {e}")
+            return jsonify({"error": f"Failed to create tag: {str(e)}"}), 500
         finally:
             session.close()
-    except Exception as e:
-        return jsonify({"error": f"Failed to create tag: {e}"}), 500
 
 @app.route('/api/tags/<int:tag_id>', methods=['GET'])
 def get_tag(tag_id):

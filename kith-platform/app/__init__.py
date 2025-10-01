@@ -38,7 +38,10 @@ def create_app(config_class=None):
     container.wire(modules=[
         "app.api.auth", "app.api.contacts", "app.api.notes", 
         "app.api.admin", "app.api.diagnostics", "app.api.telegram",
+        "app.api.tags", "app.api.files", "app.api.search", "app.api.settings",
         "app.services.note_service", "app.services.telegram_service",
+        "app.services.tag_service", "app.services.file_service", 
+        "app.services.search_service", "app.services.settings_service",
         "app.utils.monitoring"
     ])
     app.container = container
@@ -51,6 +54,12 @@ def create_app(config_class=None):
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
+    
+    # Configure session cookies
+    app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
     
     # Configure logging
     from app.utils.logging_config import setup_logging
@@ -92,8 +101,63 @@ def create_app(config_class=None):
     try:
         from app.api.contacts import contacts_bp
         app.register_blueprint(contacts_bp, url_prefix='/api/contacts')
+        logging.info("Contacts blueprint registered successfully")
     except Exception as e:
         logging.warning(f"Failed to register contacts blueprint: {e}")
+        # Fallback: register a simple contacts endpoint
+        @app.route('/api/contacts', methods=['GET'])
+        def fallback_get_contacts():
+            from flask_login import current_user
+            from app.utils.database import DatabaseManager
+            from app.models import Contact
+            from flask import jsonify
+            
+            try:
+                db_manager = DatabaseManager()
+                with db_manager.get_session() as session:
+                    contacts = session.query(Contact).filter(Contact.user_id == current_user.id).all()
+                    return jsonify([{
+                        'id': c.id,
+                        'full_name': c.full_name,
+                        'tier': c.tier,
+                        'telegram_username': c.telegram_username,
+                        'is_verified': c.is_verified,
+                        'is_premium': c.is_premium,
+                        'created_at': c.created_at.isoformat() if c.created_at else None
+                    } for c in contacts])
+            except Exception as e:
+                logging.error(f"Fallback contacts endpoint error: {e}")
+                return jsonify({'error': str(e)}), 500
+        
+        @app.route('/api/contacts', methods=['POST'])
+        def fallback_create_contact():
+            from flask_login import current_user
+            from app.utils.database import DatabaseManager
+            from app.models import Contact
+            from flask import request, jsonify
+            import uuid
+            
+            try:
+                data = request.get_json()
+                db_manager = DatabaseManager()
+                with db_manager.get_session() as session:
+                    contact = Contact(
+                        full_name=data.get('full_name'),
+                        tier=data.get('tier', 2),
+                        user_id=current_user.id,
+                        vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
+                    )
+                    session.add(contact)
+                    session.commit()
+                    return jsonify({
+                        'id': contact.id,
+                        'full_name': contact.full_name,
+                        'tier': contact.tier,
+                        'message': f"Contact '{contact.full_name}' created successfully"
+                    }), 201
+            except Exception as e:
+                logging.error(f"Fallback contact creation error: {e}")
+                return jsonify({'error': str(e)}), 500
     
     try:
         from app.api.notes import notes_bp
@@ -119,6 +183,43 @@ def create_app(config_class=None):
     except Exception as e:
         logging.warning(f"Failed to register analytics blueprint: {e}")
 
+    # Register categories blueprint for Save All Notes
+    try:
+        from app.api.categories import categories_bp
+        app.register_blueprint(categories_bp, url_prefix='/api')
+    except Exception as e:
+        logging.warning(f"Failed to register categories blueprint: {e}")
+
+    try:
+        from app.api.graph import graph_bp
+        app.register_blueprint(graph_bp, url_prefix='/api')
+    except Exception as e:
+        logging.warning(f"Failed to register graph blueprint: {e}")
+
+    try:
+        from app.api.tags import tags_bp
+        app.register_blueprint(tags_bp, url_prefix='/api/tags')
+    except Exception as e:
+        logging.warning(f"Failed to register tags blueprint: {e}")
+
+    try:
+        from app.api.files import files_bp
+        app.register_blueprint(files_bp, url_prefix='/api/files')
+    except Exception as e:
+        logging.warning(f"Failed to register files blueprint: {e}")
+
+    try:
+        from app.api.search import search_bp
+        app.register_blueprint(search_bp, url_prefix='/api/search')
+    except Exception as e:
+        logging.warning(f"Failed to register search blueprint: {e}")
+
+    try:
+        from app.api.settings import settings_bp
+        app.register_blueprint(settings_bp, url_prefix='/api/settings')
+    except Exception as e:
+        logging.warning(f"Failed to register settings blueprint: {e}")
+
     try:
         from app.celery_app import celery_app
         app.extensions['celery_app'] = celery_app
@@ -127,8 +228,22 @@ def create_app(config_class=None):
     
     @login_manager.user_loader
     def load_user(user_id):
-        from app.services.auth_service import AuthService
-        return AuthService.get_user_by_id(user_id)
+        """Load user by ID for Flask-Login"""
+        try:
+            from app.utils.database import DatabaseManager
+            from app.models import User
+            
+            db_manager = DatabaseManager()
+            with db_manager.get_session() as session:
+                user = session.query(User).filter(User.id == user_id).first()
+                if user:
+                    # Create lightweight AuthUser to avoid SQLAlchemy session issues
+                    from app.api.auth import AuthUser
+                    return AuthUser(user.id, user.username)
+                return None
+        except Exception as e:
+            logging.error(f"Error loading user {user_id}: {e}")
+            return None
     
     # Add health and monitoring routes
     @app.route('/')
@@ -148,6 +263,7 @@ def create_app(config_class=None):
         except Exception as e:
             logging.warning(f"Authentication check failed: {e}, showing login")
             return render_template('login.html')
+    
     
     @app.route('/health')
     def health_check():

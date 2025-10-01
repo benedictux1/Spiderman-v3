@@ -112,13 +112,50 @@ document.addEventListener('DOMContentLoaded', function() {
                     const result = await createContact(name, tier);
                     createContactModal.style.display = 'none';
                     createContactForm.reset();
-                    // Refresh both settings table and main view lists
-                    if (typeof loadContacts === 'function') loadContacts(true);
-                    if (typeof loadTier1Contacts === 'function') loadTier1Contacts();
-                    if (typeof loadTier2Contacts === 'function') loadTier2Contacts();
+                    
+                    // Force refresh all contact displays with cache busting
+                    console.log('Refreshing contact displays after creation...');
+                    
+                    // Refresh main contacts table
+                    if (typeof loadContacts === 'function') {
+                        console.log('Calling loadContacts(true)...');
+                        await loadContacts(true);
+                    }
+                    
+                    // Refresh tier-specific displays
+                    if (typeof loadTier1Contacts === 'function') {
+                        console.log('Calling loadTier1Contacts()...');
+                        await loadTier1Contacts();
+                    }
+                    
+                    if (typeof loadTier2Contacts === 'function') {
+                        console.log('Calling loadTier2Contacts()...');
+                        await loadTier2Contacts();
+                    }
+                    
+                    // Refresh relationship graph if module is loaded
+                    if (typeof refreshGraphData === 'function') {
+                        try { 
+                            console.log('Calling refreshGraphData()...');
+                            refreshGraphData(); 
+                        } catch (e) { 
+                            console.warn('refreshGraphData failed:', e);
+                        }
+                    }
+                    
                     const msg = result?.already_exists ? 'Contact already exists. Using existing entry.' : 'Contact created successfully!';
                     alert(msg);
+                    
+                    // Additional refresh after a short delay to ensure data is available
+                    setTimeout(async () => {
+                        console.log('Performing delayed refresh...');
+                        if (typeof loadContacts === 'function') await loadContacts(true);
+                        if (typeof loadTier1Contacts === 'function') await loadTier1Contacts();
+                        if (typeof loadTier2Contacts === 'function') await loadTier2Contacts();
+                    }, 1000);
+                    
                 } catch (e) {
+                    console.error('Error creating contact:', e);
                     alert('Error creating contact: ' + (e.message || e));
                 }
             });
@@ -128,7 +165,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function createContact(name, tier) {
     try {
-        const response = await fetch('/api/contacts/', {
+        const response = await fetch('/api/contacts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ full_name: name, tier: tier })

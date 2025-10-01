@@ -4,10 +4,18 @@
 async function loadContacts(bustCache = false) {
     try {
         const url = bustCache ? `/api/contacts/?_=${Date.now()}` : '/api/contacts/';
+        console.log('Loading contacts from:', url);
         const response = await fetch(url);
         const contacts = await response.json();
         
+        console.log('Retrieved contacts:', contacts.length, 'contacts');
+        
         const tbody = document.querySelector('#contacts-table tbody');
+        if (!tbody) {
+            console.error('contacts-table tbody not found!');
+            return;
+        }
+        
         tbody.innerHTML = '';
         
         if (contacts.length === 0) {
@@ -81,9 +89,11 @@ async function loadContacts(bustCache = false) {
 
 async function loadTier1Contacts() {
     try {
+        console.log('Loading tier 1 contacts...');
         const response = await fetch(`/api/contacts/?tier=1&_=${Date.now()}`);
         const contacts = await response.json();
         const tier1 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 1) : [];
+        console.log('Found tier 1 contacts:', tier1.length);
         displayTier1Contacts(tier1);
     } catch (error) {
         console.error('Error loading tier 1 contacts:', error);
@@ -92,9 +102,11 @@ async function loadTier1Contacts() {
 
 async function loadTier2Contacts() {
     try {
+        console.log('Loading tier 2 contacts...');
         const response = await fetch(`/api/contacts/?tier=2&_=${Date.now()}`);
         const contacts = await response.json();
         const tier2 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 2) : [];
+        console.log('Found tier 2 contacts:', tier2.length);
         displayTier2Contacts(tier2);
     } catch (error) {
         console.error('Error loading tier 2 contacts:', error);
@@ -102,8 +114,12 @@ async function loadTier2Contacts() {
 }
 
 function displayTier1Contacts(contacts) {
+    console.log('Displaying tier 1 contacts:', contacts.length);
     const container = document.getElementById('tier1-contacts');
-    if (!container) return;
+    if (!container) {
+        console.error('tier1-contacts container not found!');
+        return;
+    }
     
     container.innerHTML = '';
     contacts.forEach(contact => {
@@ -117,11 +133,16 @@ function displayTier1Contacts(contacts) {
         contactDiv.onclick = () => window.openContactProfile(contact.id, contact.full_name);
         container.appendChild(contactDiv);
     });
+    console.log('Tier 1 contacts displayed');
 }
 
 function displayTier2Contacts(contacts) {
+    console.log('Displaying tier 2 contacts:', contacts.length);
     const container = document.getElementById('tier2-contacts');
-    if (!container) return;
+    if (!container) {
+        console.error('tier2-contacts container not found!');
+        return;
+    }
     
     container.innerHTML = '';
     contacts.forEach(contact => {
@@ -135,6 +156,7 @@ function displayTier2Contacts(contacts) {
         contactDiv.onclick = () => window.openContactProfile(contact.id, contact.full_name);
         container.appendChild(contactDiv);
     });
+    console.log('Tier 2 contacts displayed');
 }
 
 async function deleteContact(contactId) {

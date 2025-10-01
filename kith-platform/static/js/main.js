@@ -224,8 +224,15 @@ function showSettingsView() {
         
         // Load tags for management if tag management is available
         if (window.tagManagement && window.tagManagement.loadAllTags) {
-            console.log('🏷️ Loading tags for management');
-            window.tagManagement.loadAllTags();
+            // Avoid redundant loads: only load if not initialized and not in-flight
+            const alreadyInitialized = !!window.tagManagement.hasInitializedTagsOnce;
+            const inFlight = !!window.tagManagement.isLoadingAllTags;
+            if (!alreadyInitialized && !inFlight) {
+                console.log('🏷️ Loading tags for management');
+                window.tagManagement.loadAllTags();
+            } else {
+                console.log('🏷️ Skipping tag load (initialized:', alreadyInitialized, 'inFlight:', inFlight, ')');
+            }
         }
         
         // Load contacts for management
@@ -271,9 +278,28 @@ async function loadContactProfile(contactId) {
     if (!res.ok) throw new Error(payload && (payload.error || payload.message) || 'Failed to load contact');
 
     // Normalize to { contact_info, categorized_data }
-    const normalized = (payload && payload.success && payload.data)
+    let normalized = (payload && payload.success && payload.data)
       ? normalizeProfileShape(payload.data)
       : normalizeProfileShape(payload);
+
+    // Option B: If modular response lacks categories, fetch legacy rich profile and merge
+    try {
+      const hasAnyCategory = normalized && normalized.categorized_data && Object.values(normalized.categorized_data).some(arr => Array.isArray(arr) && arr.length > 0);
+      if (!hasAnyCategory) {
+        const legacyRes = await fetch(`/api/contact/${contactId}`);
+        if (legacyRes.ok) {
+          const legacyPayload = await legacyRes.json().catch(() => ({}));
+          const legacy = (legacyPayload && legacyPayload.success && legacyPayload.data)
+            ? normalizeProfileShape(legacyPayload.data)
+            : normalizeProfileShape(legacyPayload);
+          const legacyHasCats = legacy && legacy.categorized_data && Object.values(legacy.categorized_data).some(arr => Array.isArray(arr) && arr.length > 0);
+          if (legacyHasCats) {
+            // Merge: prefer legacy categories, keep current contact_info
+            normalized = { contact_info: normalized.contact_info || legacy.contact_info, categorized_data: legacy.categorized_data };
+          }
+        }
+      }
+    } catch (_) { /* non-fatal enrichment */ }
 
     renderContactProfile(normalized);
     
@@ -629,7 +655,24 @@ function wireProfileButtons() {
         });
         const out = await res.json();
         if (!res.ok || out.error) throw new Error(out.error || out.message || 'Failed to save');
-        await loadContactProfile(id);
+        // Immediately fetch categories from modular GET to ensure UI reflects latest
+        try {
+          const catsRes = await fetch(`/api/contact/${id}/categories`);
+          if (catsRes.ok) {
+            const cats = await catsRes.json();
+            if (cats && cats.categorized_data) {
+              // Render with latest categories while keeping existing contact info in DOM
+              const currentName = document.getElementById('contact-profile-name')?.textContent || '';
+              renderContactProfile({ contact_info: { full_name: currentName }, categorized_data: cats.categorized_data });
+            } else {
+              await loadContactProfile(id);
+            }
+          } else {
+            await loadContactProfile(id);
+          }
+        } catch (_) {
+          await loadContactProfile(id);
+        }
         // after reload, buttons reset via renderContactProfile
         alert('All categories saved.');
       } catch (e) {

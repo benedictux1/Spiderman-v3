@@ -156,12 +156,12 @@ class TestAPIEndpoints:
     
     def test_contacts_get_requires_auth(self, client):
         """Test that getting contacts requires authentication"""
-        response = client.get('/api/contacts/')
+        response = client.get('/api/contacts')
         assert response.status_code == 302  # Redirect to login
     
     def test_contacts_get_success(self, client, authenticated_user):
         """Test successful retrieval of contacts"""
-        response = client.get('/api/contacts/')
+        response = client.get('/api/contacts')
         assert response.status_code == 200
         
         data = response.get_json()
@@ -170,13 +170,13 @@ class TestAPIEndpoints:
     
     def test_contacts_create_requires_auth(self, client):
         """Test that creating contacts requires authentication"""
-        response = client.post('/api/contacts/', 
+        response = client.post('/api/contacts', 
                              json={'full_name': 'Test Contact'})
         assert response.status_code == 302  # Redirect to login
     
     def test_contacts_create_success(self, client, authenticated_user):
         """Test successful contact creation"""
-        response = client.post('/api/contacts/', 
+        response = client.post('/api/contacts', 
                              json={'full_name': 'Test Contact', 'tier': 2})
         assert response.status_code == 201  # 201 Created is the correct status code
         

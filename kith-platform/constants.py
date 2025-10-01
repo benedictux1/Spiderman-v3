@@ -5,7 +5,7 @@ Centralized constants for the entire application.
 """
 
 # Application Configuration
-DEFAULT_PORT = 5001
+DEFAULT_PORT = 8000
 DEFAULT_HOST = '0.0.0.0'
 DEFAULT_API_URL = f'http://localhost:{DEFAULT_PORT}'
 DEFAULT_DB_NAME = 'kith_platform.db'

@@ -5,6 +5,8 @@
 let allTags = [];
 let currentContactTags = [];
 let tagToDelete = null;
+let isLoadingAllTags = false; // in-flight guard to dedupe requests
+let hasInitializedTagsOnce = false; // suppress first-load toast
 
 // Initialize tag management functionality
 function initializeTagManagement() {
@@ -70,8 +72,20 @@ function setupTagEventListeners() {
 
 // Load all tags for the user
 async function loadAllTags() {
+    if (isLoadingAllTags) {
+        return; // prevent duplicate fetches
+    }
+    isLoadingAllTags = true;
+    // reflect flags on window for other modules
+    if (window.tagManagement) {
+        window.tagManagement.isLoadingAllTags = true;
+    }
     try {
-        const response = await fetch('/api/tags');
+        const doFetch = window.originalFetch || fetch;
+        const response = await doFetch('/api/tags');
+        const contentType = response.headers.get && response.headers.get('content-type');
+        console.debug('loadAllTags response', { status: response.status, ok: response.ok, contentType });
+        
         if (response.status === 401) {
             // Avoid toast spam; show a single actionable message
             if (!document.getElementById('login-required-banner')) {
@@ -83,17 +97,54 @@ async function loadAllTags() {
             }
             return;
         }
+        
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        allTags = await response.json();
+        
+        // Ensure JSON; if not, do not throw—gracefully handle and surface diagnostics
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text().catch(() => '');
+            console.warn('Expected JSON for /api/tags, received non-JSON. First 200 chars:', text.slice(0, 200));
+            allTags = [];
+            updateTagSelects();
+            renderTagsManagement();
+            return;
+        }
+        
+        const data = await response.json();
+        // Ensure we have a valid array
+        allTags = Array.isArray(data) ? data : [];
         updateTagSelects();
         renderTagsManagement();
+        
+        // Only show success message if we actually loaded tags
+        if (allTags.length > 0) {
+            console.log(`Successfully loaded ${allTags.length} tags`);
+        }
+        
     } catch (error) {
         console.error('Error loading tags:', error);
-        // Suppress duplicate toasts if banner is present
-        if (!document.getElementById('login-required-banner')) {
-            showToast('Failed to load tags', 'error');
+        // Update UI away from the Loading state
+        const countElement = document.getElementById('tags-count');
+        if (countElement) {
+            countElement.textContent = '0 tags';
+        }
+        const container = document.getElementById('tags-container');
+        if (container) {
+            container.innerHTML = '<div class="no-tags">Unable to load tags. Please try again.</div>';
+        }
+        // Only show error toast if this is a real failure (not first load or auth issue)
+        if (!document.getElementById('login-required-banner') && hasInitializedTagsOnce) {
+            showToast('Failed to load tags', 'error', 0); // 0 duration = persistent
+        }
+    }
+    finally {
+        isLoadingAllTags = false;
+        hasInitializedTagsOnce = true;
+        if (window.tagManagement) {
+            window.tagManagement.isLoadingAllTags = false;
+            window.tagManagement.hasInitializedTagsOnce = true;
         }
     }
 }
@@ -109,7 +160,7 @@ async function loadContactTags(contactId) {
         renderContactTags();
     } catch (error) {
         console.error('Error loading contact tags:', error);
-        showToast('Failed to load contact tags', 'error');
+        showToast('Failed to load contact tags', 'error', 0); // Persistent
     }
 }
 
@@ -234,13 +285,13 @@ function updateReassignTagSelect() {
 async function assignTagToContact() {
     const tagSelect = document.getElementById('tag-select');
     if (!tagSelect || !tagSelect.value) {
-        showToast('Please select a tag to assign', 'error');
+        showToast('Please select a tag to assign', 'error', 0); // Persistent
         return;
     }
 
     const contactId = document.getElementById('selected-contact-id').value;
     if (!contactId) {
-        showToast('No contact selected', 'error');
+        showToast('No contact selected', 'error', 0); // Persistent
         return;
     }
 
@@ -269,7 +320,7 @@ async function assignTagToContact() {
         currentContactTags = previous;
         renderContactTags();
         console.error('Error assigning tag:', error);
-        showToast(`Failed to assign tag: ${error.message}`, 'error');
+        showToast(`Failed to assign tag: ${error.message}`, 'error', 0); // Persistent
     }
 }
 
@@ -277,7 +328,7 @@ async function assignTagToContact() {
 async function removeTagFromContact(tagId) {
     const contactId = document.getElementById('selected-contact-id').value;
     if (!contactId) {
-        showToast('No contact selected', 'error');
+        showToast('No contact selected', 'error', 0); // Persistent
         return;
     }
 
@@ -299,7 +350,7 @@ async function removeTagFromContact(tagId) {
         currentContactTags = previous;
         renderContactTags();
         console.error('Error removing tag:', error);
-        showToast(`Failed to remove tag: ${error.message}`, 'error');
+        showToast(`Failed to remove tag: ${error.message}`, 'error', 0); // Persistent
     }
 }
 
@@ -332,7 +383,7 @@ async function createTag() {
 
     if (!name) {
         console.log('❌ Tag name is required');
-        showToast('Tag name is required', 'error');
+        showToast('Tag name is required', 'error', 0); // Persistent
         return;
     }
 
@@ -363,7 +414,7 @@ async function createTag() {
         
     } catch (error) {
         console.error('Error creating tag:', error);
-        showToast(`Failed to create tag: ${error.message}`, 'error');
+        showToast(`Failed to create tag: ${error.message}`, 'error', 0); // Persistent
     }
 }
 
@@ -463,14 +514,14 @@ async function showDeleteTagModal(tag) {
 
     } catch (error) {
         console.error('Error loading affected contacts:', error);
-        showToast('Failed to load affected contacts', 'error');
+        showToast('Failed to load affected contacts', 'error', 0); // Persistent
     }
 }
 
 // Confirm tag deletion
 async function confirmDeleteTag() {
     if (!tagToDelete) {
-        showToast('No tag selected for deletion', 'error');
+        showToast('No tag selected for deletion', 'error', 0); // Persistent
         return;
     }
 
@@ -505,7 +556,7 @@ async function confirmDeleteTag() {
         
     } catch (error) {
         console.error('Error deleting tag:', error);
-        showToast(`Failed to delete tag: ${error.message}`, 'error');
+        showToast(`Failed to delete tag: ${error.message}`, 'error', 0); // Persistent
     }
 }
 
@@ -542,11 +593,11 @@ function escapeHtml(text) {
 }
 
 // Utility function to show toast messages
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', duration = 0) {
     console.log(`🍞 Toast: ${type.toUpperCase()} - ${message}`);
-    // Use existing toast functionality if available
-    if (window.showToast && window.showToast !== showToast) {
-        window.showToast(message, type);
+    // Use the enhanced toast functionality from ui-enhancements.js
+    if (typeof window.showToast === 'function' && window.showToast !== showToast) {
+        window.showToast(message, type, duration);
     } else {
         // Fallback to alert
         alert(`${type.toUpperCase()}: ${message}`);
@@ -563,8 +614,12 @@ window.tagManagement = {
     createTag,
     confirmDeleteTag,
     assignTagToContact,
-    removeTagFromContact
+    removeTagFromContact,
+    // expose flags for other modules (e.g., settings)
+    get isLoadingAllTags() { return isLoadingAllTags; },
+    set isLoadingAllTags(v) { isLoadingAllTags = !!v; },
+    get hasInitializedTagsOnce() { return hasInitializedTagsOnce; },
+    set hasInitializedTagsOnce(v) { hasInitializedTagsOnce = !!v; }
 };
 
-// Make createTag globally available for onclick fallback
-window.createTag = createTag;
+// createTag is now only available through event listeners

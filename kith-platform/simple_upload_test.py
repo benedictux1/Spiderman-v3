@@ -23,16 +23,16 @@ except Exception as e:
 
 print("\n2. Testing upload endpoint registration...")
 # Check if upload endpoint is registered
-if '/api/files/upload' in [str(rule) for rule in flask_app.app.url_map.iter_rules()]:
+if '/api/files/upload' in [str(rule) for rule in flask_app.url_map.iter_rules()]:
     print("   ✓ Upload endpoint is registered")
 else:
     print("   ✗ Upload endpoint not found")
 
 print("\n3. Checking authentication decorator...")
 # Get the upload endpoint function
-for rule in flask_app.app.url_map.iter_rules():
+for rule in flask_app.url_map.iter_rules():
     if '/api/files/upload' in str(rule):
-        endpoint = flask_app.app.view_functions[rule.endpoint]
+        endpoint = flask_app.view_functions[rule.endpoint]
         if hasattr(endpoint, '__wrapped__'):
             print("   ✓ Upload endpoint has authentication")
         else:

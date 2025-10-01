@@ -31,7 +31,7 @@ class TestAPIEndpoints:
         db_session.add(sample_contact)
         db_session.commit()
 
-        response = client.get('/api/contacts/')
+        response = client.get('/api/contacts')
         assert response.status_code == 200
         data = response.get_json()
         assert isinstance(data, list)
@@ -46,7 +46,7 @@ class TestAPIEndpoints:
             'full_name': 'Jane Doe',
             'telegram_username': 'jane_doe'
         }
-        response = client.post('/api/contacts/', data=json.dumps(contact_data), content_type='application/json')
+        response = client.post('/api/contacts', data=json.dumps(contact_data), content_type='application/json')
         if response.status_code != 201:
             print(f"Response status: {response.status_code}")
             print(f"Response data: {response.get_data(as_text=True)}")

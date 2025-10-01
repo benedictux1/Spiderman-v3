@@ -7,21 +7,65 @@ from app.utils.dependencies import Container
 contacts_bp = Blueprint('contacts', __name__)
 
 @contacts_bp.route('/', methods=['GET'])
+@contacts_bp.route('', methods=['GET'])  # Handle both /api/contacts/ and /api/contacts
 @login_required
-@inject
-def get_contacts(contact_service: ContactService = Provide[Container.contact_service]):
+def get_contacts():
     """Get all contacts for the current user"""
-    contacts = contact_service.get_contacts_by_user(current_user.id)
-    return jsonify([contact.to_dict() for contact in contacts])
+    try:
+        from app.utils.database import DatabaseManager
+        from app.models import Contact
+        
+        db_manager = DatabaseManager()
+        with db_manager.get_session() as session:
+            contacts = session.query(Contact).filter(Contact.user_id == current_user.id).all()
+            return jsonify([{
+                'id': c.id,
+                'full_name': c.full_name,
+                'tier': c.tier,
+                'telegram_username': c.telegram_username,
+                'is_verified': c.is_verified,
+                'is_premium': c.is_premium,
+                'created_at': c.created_at.isoformat() if c.created_at else None
+            } for c in contacts])
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Error getting contacts: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @contacts_bp.route('/', methods=['POST'])
+@contacts_bp.route('', methods=['POST'])  # Handle both /api/contacts/ and /api/contacts
 @login_required
-@inject
-def create_contact(contact_service: ContactService = Provide[Container.contact_service]):
+def create_contact():
     """Create a new contact"""
-    data = request.json
-    contact = contact_service.create_contact(user_id=current_user.id, **data)
-    return jsonify(contact.to_dict()), 201
+    try:
+        from app.utils.database import DatabaseManager
+        from app.models import Contact
+        import uuid
+        
+        data = request.json
+        if not data or not data.get('full_name'):
+            return jsonify({'error': 'Full name is required'}), 400
+            
+        db_manager = DatabaseManager()
+        with db_manager.get_session() as session:
+            contact = Contact(
+                full_name=data.get('full_name'),
+                tier=data.get('tier', 2),
+                user_id=current_user.id,
+                vector_collection_id=f"contact_{uuid.uuid4().hex[:8]}"
+            )
+            session.add(contact)
+            session.commit()
+            return jsonify({
+                'id': contact.id,
+                'full_name': contact.full_name,
+                'tier': contact.tier,
+                'message': f"Contact '{contact.full_name}' created successfully"
+            }), 201
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Error creating contact: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @contacts_bp.route('/<int:contact_id>', methods=['GET'])
 @login_required

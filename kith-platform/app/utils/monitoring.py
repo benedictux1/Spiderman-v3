@@ -294,7 +294,23 @@ class HealthChecker:
     def check_task_failure_handling(self) -> Dict[str, Any]:
         """Test task failure handling and retry logic"""
         try:
-            from app.tasks.test_tasks import test_failure_task
+            # Check if Celery is available
+            if not hasattr(celery_app, 'send_task'):
+                return {
+                    'status': 'degraded',
+                    'error': 'Celery not available',
+                    'failure_handled': False
+                }
+            
+            # Try to import the test task
+            try:
+                from app.tasks.test_tasks import test_failure_task
+            except ImportError as e:
+                return {
+                    'status': 'degraded',
+                    'error': f'Test task not available: {e}',
+                    'failure_handled': False
+                }
             
             # Queue a task that will fail
             task = test_failure_task.delay()
@@ -309,7 +325,7 @@ class HealthChecker:
                 }
             except Exception as e:
                 # Check if task was retried
-                task_info = task.info
+                task_info = task.info or {}
                 retry_count = task_info.get('retries', 0)
                 
                 return {

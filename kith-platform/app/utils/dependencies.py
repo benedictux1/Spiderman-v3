@@ -5,6 +5,10 @@ from app.services.auth_service import AuthService
 from app.services.note_service import AIService, NoteService
 from app.services.contact_service import ContactService
 from app.services.telegram_service import TelegramService
+from app.services.tag_service import TagService
+from app.services.file_service import FileService
+from app.services.search_service import SearchService
+from app.services.settings_service import SettingsService
 from config.settings import ProductionConfig, DevelopmentConfig, TestingConfig
 
 def get_config():
@@ -38,6 +42,14 @@ class Container(containers.DeclarativeContainer):
     contact_service = providers.Factory(ContactService, db_manager=db_manager)
     
     telegram_service = providers.Factory(TelegramService, db_manager=db_manager)
+    
+    tag_service = providers.Factory(TagService, db_manager=db_manager)
+    
+    file_service = providers.Factory(FileService, db_manager=db_manager)
+    
+    search_service = providers.Factory(SearchService, db_manager=db_manager)
+    
+    settings_service = providers.Factory(SettingsService, db_manager=db_manager)
 
 # The container is intentionally NOT instantiated here to avoid import-time side effects.
 # It will be instantiated and wired within the application factory (`create_app`).

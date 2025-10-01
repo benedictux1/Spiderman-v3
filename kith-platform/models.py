@@ -156,6 +156,38 @@ class UploadedFile(Base):
     user = relationship("User")
     analysis_task = relationship("ImportTask")
     generated_raw_note = relationship("RawNote")
+    
+    def to_dict(self):
+        """Convert uploaded file to dictionary for JSON serialization"""
+        try:
+            return {
+                'id': self.id,
+                'contact_id': self.contact_id,
+                'user_id': self.user_id,
+                'original_filename': self.original_filename,
+                'stored_filename': self.stored_filename,
+                'file_path': self.file_path,
+                'file_type': self.file_type,
+                'file_size_bytes': self.file_size_bytes,
+                'analysis_task_id': self.analysis_task_id,
+                'generated_raw_note_id': self.generated_raw_note_id,
+                'created_at': self.created_at.isoformat() if self.created_at else None
+            }
+        except Exception as e:
+            # Fallback for detached instances
+            return {
+                'id': getattr(self, 'id', None),
+                'contact_id': getattr(self, 'contact_id', None),
+                'user_id': getattr(self, 'user_id', None),
+                'original_filename': getattr(self, 'original_filename', None),
+                'stored_filename': getattr(self, 'stored_filename', None),
+                'file_path': getattr(self, 'file_path', None),
+                'file_type': getattr(self, 'file_type', None),
+                'file_size_bytes': getattr(self, 'file_size_bytes', None),
+                'analysis_task_id': getattr(self, 'analysis_task_id', None),
+                'generated_raw_note_id': getattr(self, 'generated_raw_note_id', None),
+                'created_at': getattr(self, 'created_at', None)
+            }
 
 class ContactGroup(Base):
     __tablename__ = 'contact_groups'
@@ -197,6 +229,37 @@ class Tag(Base):
     contacts = relationship("Contact", secondary="contact_tags", back_populates="tags")
     
     __table_args__ = (UniqueConstraint('user_id', 'name', name='_user_tag_name_uc'),)
+    
+    def to_dict(self):
+        """Convert tag to dictionary for JSON serialization"""
+        try:
+            created_at = None
+            updated_at = None
+            if hasattr(self, 'created_at') and self.created_at:
+                created_at = self.created_at.isoformat()
+            if hasattr(self, 'updated_at') and self.updated_at:
+                updated_at = self.updated_at.isoformat()
+                
+            return {
+                'id': self.id,
+                'user_id': self.user_id,
+                'name': self.name,
+                'color': self.color,
+                'description': self.description,
+                'created_at': created_at,
+                'updated_at': updated_at
+            }
+        except Exception as e:
+            # Fallback for detached instances
+            return {
+                'id': getattr(self, 'id', None),
+                'user_id': getattr(self, 'user_id', None),
+                'name': getattr(self, 'name', None),
+                'color': getattr(self, 'color', None),
+                'description': getattr(self, 'description', None),
+                'created_at': getattr(self, 'created_at', None),
+                'updated_at': getattr(self, 'updated_at', None)
+            }
 
 class ContactTag(Base):
     __tablename__ = 'contact_tags'

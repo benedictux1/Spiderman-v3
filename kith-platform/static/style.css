@@ -1938,6 +1938,7 @@ button {
     top: 20px;
     right: 20px;
     min-width: 300px;
+    max-width: 400px;
     padding: 1rem 1.5rem;
     background: var(--bg-primary);
     border-radius: var(--radius-lg);
@@ -1946,6 +1947,7 @@ button {
     z-index: 10000;
     animation: slideInRight 0.3s ease-out;
     transition: var(--transition-smooth);
+    transform: translateX(0);
 }
 
 .toast.success {

@@ -7,9 +7,10 @@ import logging
 
 # Lightweight user class for Flask-Login (avoids SQLAlchemy session issues)
 class AuthUser(UserMixin):
-    def __init__(self, user_id, username):
+    def __init__(self, user_id, username, role='user'):
         self.id = user_id
         self.username = username
+        self.role = role
 
 auth_bp = Blueprint('auth', __name__)
 logger = logging.getLogger(__name__)
@@ -99,7 +100,9 @@ def register():
         if not username or not password:
             return jsonify({'error': 'Username and password required'}), 400
         
-        # auth_service = AuthService(container.database_manager)
+        from app.utils.database import DatabaseManager
+        db_manager = DatabaseManager()
+        auth_service = AuthService(db_manager)
         user = auth_service.create_user(username, password, role)
         
         if user:

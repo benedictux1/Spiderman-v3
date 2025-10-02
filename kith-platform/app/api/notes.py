@@ -5,55 +5,57 @@ from app.services.note_service import NoteService
 from app.utils.dependencies import Container
 from app.utils.validators import validate_note_input
 from app.tasks.ai_tasks import process_note_async
+from app.models import Contact
+from app.services.ai_service import AIService
+from app.utils.database import DatabaseManager
 import logging
 
 notes_bp = Blueprint('notes', __name__)
 logger = logging.getLogger(__name__)
 
-@notes_bp.route('/process', methods=['POST'])
+@notes_bp.route('/process-note', methods=['POST'])
 @login_required
 def process_note():
-    """Process raw note with AI analysis"""
+    """Process note analysis."""
     try:
-        # Validate input
         data = request.get_json()
-        validation_result = validate_note_input(data)
-        if not validation_result.is_valid:
-            return jsonify({'error': validation_result.error}), 400
-        
-        # Check if async processing is requested
-        async_processing = data.get('async', False)
-        
-        if async_processing:
-            # Start async task
-            task = process_note_async.delay(
-                contact_id=data['contact_id'],
-                content=data['content'],
-                user_id=current_user.id
-            )
-            
-            return jsonify({
-                'success': True,
-                'task_id': task.id,
-                'status': 'Processing asynchronously'
-            })
-        else:
-            # Process synchronously
-            note_service = NoteService(current_app.container.db_manager(), current_app.container.ai_service())
-            result = note_service.process_note(
-                contact_id=data['contact_id'],
-                content=data['content'],
-                user_id=current_user.id
-            )
-            
-            return jsonify(result)
-        
-    except ValueError as e:
-        logger.warning(f"Invalid note processing request: {e}")
-        return jsonify({'error': str(e)}), 400
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        raw_note_text = data.get('note') or data.get('note_text') or ''
+        contact_id = data.get('contact_id')
+
+        if not raw_note_text:
+            return jsonify({"error": "Valid note text is required"}), 400
+        if not contact_id:
+            return jsonify({"error": "Valid contact_id is required"}), 400
+
+        db_manager = DatabaseManager()
+        with db_manager.get_session() as session:
+            contact = session.query(Contact).filter(Contact.id == contact_id, Contact.user_id == current_user.id).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+
+            ai_service = AIService()
+            try:
+                analysis_result = ai_service.analyze_note(
+                    content=raw_note_text,
+                    contact_name=contact.full_name
+                )
+                
+                return jsonify({
+                    'success': True,
+                    'synthesis': analysis_result.get('categories', {}),
+                    'contact_name': contact.full_name
+                })
+                
+            except Exception as ai_error:
+                logger.error(f"AI analysis failed for contact {contact_id}: {ai_error}")
+                return jsonify({"error": f"AI analysis failed: {str(ai_error)}"}), 500
+                
     except Exception as e:
-        logger.error(f"Error processing note: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        logger.exception(f"Note processing failed for contact {contact_id}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @notes_bp.route('/task/<task_id>/status', methods=['GET'])
 @login_required

@@ -3,9 +3,9 @@
 
 async function loadContacts(bustCache = false) {
     try {
-        const url = bustCache ? `/api/contacts/?_=${Date.now()}` : '/api/contacts/';
+        const url = bustCache ? `/api/contacts?_=${Date.now()}` : '/api/contacts';
         console.log('Loading contacts from:', url);
-        const response = await fetch(url);
+        const response = await fetch(url, { credentials: 'include' });
         const contacts = await response.json();
         
         console.log('Retrieved contacts:', contacts.length, 'contacts');
@@ -67,7 +67,7 @@ async function loadContacts(bustCache = false) {
                         const row = btn.closest('tr');
                         if (row) row.remove();
                         try {
-                            const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
+                            const res = await fetch(`/api/contact/${id}`, { method: 'DELETE', credentials: 'include' });
                             const out = await res.json();
                             if (out.error) throw new Error(out.error);
                         } catch (e) {
@@ -90,7 +90,7 @@ async function loadContacts(bustCache = false) {
 async function loadTier1Contacts() {
     try {
         console.log('Loading tier 1 contacts...');
-        const response = await fetch(`/api/contacts/?tier=1&_=${Date.now()}`);
+        const response = await fetch(`/api/contacts?tier=1&_=${Date.now()}`, { credentials: 'include' });
         const contacts = await response.json();
         const tier1 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 1) : [];
         console.log('Found tier 1 contacts:', tier1.length);
@@ -103,7 +103,7 @@ async function loadTier1Contacts() {
 async function loadTier2Contacts() {
     try {
         console.log('Loading tier 2 contacts...');
-        const response = await fetch(`/api/contacts/?tier=2&_=${Date.now()}`);
+        const response = await fetch(`/api/contacts?tier=2&_=${Date.now()}`, { credentials: 'include' });
         const contacts = await response.json();
         const tier2 = Array.isArray(contacts) ? contacts.filter(c => c.tier === 2) : [];
         console.log('Found tier 2 contacts:', tier2.length);
@@ -161,7 +161,7 @@ function displayTier2Contacts(contacts) {
 
 async function deleteContact(contactId) {
     try {
-        const response = await fetch(`/api/contacts/${contactId}`, { method: 'DELETE' });
+        const response = await fetch(`/api/contacts/${contactId}`, { method: 'DELETE', credentials: 'include' });
         const result = await response.json();
         if (result.success) {
             alert('Contact deleted successfully');

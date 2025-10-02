@@ -9,22 +9,51 @@ import os
 admin_bp = Blueprint('admin', __name__)
 logger = logging.getLogger(__name__)
 
+def admin_required(f):
+    """Admin permission decorator"""
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+        if getattr(current_user, 'role', 'user') != 'admin':
+            return jsonify({"error": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 @admin_bp.route('/users', methods=['GET'])
 @login_required
+@admin_required
 def get_users():
     """Get all users (admin only)"""
-    # Placeholder implementation
-    return jsonify({'users': []})
-
+    try:
+        with DatabaseManager().get_session() as session:
+            from app.models import User
+            users = session.query(User).all()
+            user_list = []
+            for user in users:
+                user_list.append({
+                    'id': user.id,
+                    'username': user.username,
+                    'role': getattr(user, 'role', 'user'),
+                    'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') and user.created_at else None
+                })
+            return jsonify({'users': user_list})
+    except Exception as e:
+        logger.error(f"Error getting users: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @admin_bp.route('/dashboard', methods=['GET'])
 @login_required
+@admin_required
 def admin_dashboard():
     """Render admin dashboard page that consumes analytics endpoints"""
     return render_template('admin_dashboard.html')
 
 
 @admin_bp.route('/init-database', methods=['GET'])
+@login_required
+@admin_required
 @inject
 def init_database(db_manager: DatabaseManager = Provide[Container.db_manager]):
     """Initialize database schema and create default admin user"""

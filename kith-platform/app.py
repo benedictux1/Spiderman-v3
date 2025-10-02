@@ -78,6 +78,12 @@ app = Flask(__name__)
 # Secret key for session management (prefer env var, fallback to generated)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY') or hashlib.sha256(os.urandom(32)).hexdigest()
 
+# Session configuration
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
+
 # Enable CORS for production
 CORS(app, origins=["*"])  # Configure with specific origins in production
 
@@ -149,9 +155,15 @@ login_manager.login_view = 'login_page'
 
 @login_manager.unauthorized_handler
 def _unauthorized():
+    # Debug authentication
+    logger.info(f"🔧 DEBUG: Unauthorized handler triggered for {request.path}")
+    logger.info(f"🔧 DEBUG: current_user: {current_user}")
+    logger.info(f"🔧 DEBUG: is_authenticated: {getattr(current_user, 'is_authenticated', 'N/A')}")
+    logger.info(f"🔧 DEBUG: session cookie: {request.cookies.get('session', 'No session cookie')}")
+    
     # For API calls, return JSON; for browser, simple redirect
     if request.path.startswith('/api') or request.path.startswith('/admin/api'):
-        return jsonify({"error": "Authentication required"}), 401
+        return jsonify({"error":"Authentication required"}), 401
     from flask import redirect
     return redirect('/login')
 
@@ -163,6 +175,12 @@ def admin_required(f):
             return jsonify({"error": "Admin access required"}), 403
         return f(*args, **kwargs)
     return decorated_function
+
+def is_admin():
+    """Check if current user is admin"""
+    if not current_user.is_authenticated:
+        return False
+    return getattr(current_user, 'role', 'user') == 'admin'
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -3170,136 +3188,130 @@ def search_endpoint():
 
 @app.route('/api/process-note', methods=['POST'])
 def process_note_endpoint():
+    """Process note analysis directly (compatibility endpoint)."""
+    if not current_user.is_authenticated:
+        return jsonify({"error": "Authentication required"}), 401
     try:
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
         
         # Accept either 'note' or 'note_text'
-        raw_note_text = sanitize_text(data.get('note') or data.get('note_text') or '')
-        contact_id = validate_input('contact_id', data.get('contact_id'))
-
+        raw_note_text = data.get('note') or data.get('note_text') or ''
+        contact_id = data.get('contact_id')
+        
         if not raw_note_text:
             return jsonify({"error": "Valid note text is required"}), 400
         if not contact_id:
             return jsonify({"error": "Valid contact_id is required"}), 400
 
-        # --- RAG PIPELINE --- (best-effort; safe if collection missing)
-        collection_name = f"{ChromaDB.CONTACT_COLLECTION_PREFIX}{contact_id}"
-        try:
-            collection = chroma_client.get_or_create_collection(name=collection_name)
-            query_text = " ".join(raw_note_text.split()[:30])
-            results = collection.query(query_texts=[query_text], n_results=3)
-            retrieved_history = "\n---\n".join(results['documents'][0]) if results['documents'] else "No relevant history found."
-        except Exception:
-            retrieved_history = "No relevant history found."
-
-        master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=raw_note_text, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
+        # Get contact information
+        from app.utils.database import DatabaseManager
+        from app.models import Contact
+        from app.services.ai_service import AIService
         
-        # If OpenAI isn't configured, provide clear instructions
-        current_api_key = get_openai_api_key()
-        if not current_api_key:
-            logger.warning("OpenAI API key not configured")
-            return jsonify({
-                "error": "OpenAI API key not configured",
-                "message": "To use AI analysis, please configure your OpenAI API key",
-                "instructions": {
-                    "step1": "Get an API key from https://platform.openai.com/api-keys",
-                    "step2": "Go to your Render dashboard → Environment tab",
-                    "step3": "Add OPENAI_API_KEY with your API key",
-                    "step4": "Restart your Render service"
-                },
-                "mock_available": True
-            }), 400
-
-        try:
-            logger.info(f"Making OpenAI API call with model: {OPENAI_MODEL}")
-            response_content = _openai_chat(
-                messages=[{"role": "user", "content": master_prompt}],
-                model=OPENAI_MODEL,
-                max_tokens=DEFAULT_MAX_TOKENS,
-                temperature=DEFAULT_AI_TEMPERATURE,
-            )
-            logger.info("OpenAI API call successful")
-        except Exception as openai_error:
-            logger.exception("OpenAI API call failed")
-            error_msg = str(openai_error)
+        db_manager = DatabaseManager()
+        with db_manager.get_session() as session:
+            contact = session.query(Contact).filter(Contact.id == contact_id).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
             
-            # Provide specific error messages for common issues
-            if "invalid_api_key" in error_msg.lower():
-                return jsonify({"error": "Invalid OpenAI API key. Please check your API key in Render dashboard."}), 500
-            elif "insufficient_quota" in error_msg.lower():
-                return jsonify({"error": "OpenAI API quota exceeded. Please add credits to your OpenAI account."}), 500
-            elif "rate_limit" in error_msg.lower():
-                return jsonify({"error": "OpenAI API rate limit exceeded. Please try again in a moment."}), 500
-            else:
-                return jsonify({"error": f"OpenAI API Error: {error_msg}"}), 500
-        
-        # Clean up the response content to extract JSON
-        if response_content.startswith('```json'):
-            response_content = response_content.replace('```json', '').replace('```', '').strip()
-        elif response_content.startswith('```'):
-            response_content = response_content.replace('```', '').strip()
-        
-        try:
-            ai_json_response = json.loads(response_content)
-        except json.JSONDecodeError:
-            json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
-            if json_match:
-                ai_json_response = json.loads(json_match.group())
-            else:
-                return jsonify({"error": "Failed to parse AI response"}), 500
-        
-        return jsonify(normalize_ai_output(ai_json_response))
+            # Process with AI
+            ai_service = AIService()
+            try:
+                analysis_result = ai_service.analyze_note(
+                    content=raw_note_text,
+                    contact_name=contact.full_name
+                )
+                
+                return jsonify({
+                    'success': True,
+                    'synthesis': analysis_result.get('categories', {}),
+                    'contact_name': contact.full_name
+                })
+                
+            except Exception as ai_error:
+                logger.error(f"AI analysis failed: {ai_error}")
+                return jsonify({"error": f"AI analysis failed: {str(ai_error)}"}), 500
+                
     except Exception as e:
-        logger.exception("Failed to process note")
-        return jsonify({"error": f"An internal error occurred: {str(e)}"}), 500
+        logger.exception("Note processing failed")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/api/save-synthesis', methods=['POST'])
+@login_required
 def save_synthesis_endpoint():
     """Save the approved analysis to the database."""
+    logger.info("🔧 DEBUG: save_synthesis_endpoint called")
     try:
         data = request.get_json()
+        logger.info(f"🔧 DEBUG: Received data: {data}")
         contact_id = data.get('contact_id')
         raw_note_text = data.get('raw_note')
         synthesis_data = data.get('synthesis')
         ai_synthesis = data.get('ai_synthesis')
         user_edited_synthesis = data.get('user_edited_synthesis')
         
+        logger.info(f"🔧 DEBUG: Validating data - contact_id={contact_id}, synthesis_data type={type(synthesis_data)}")
         if not contact_id or not synthesis_data:
             return jsonify({"error": "Missing required data"}), 400
 
+        logger.info("🔧 DEBUG: Getting database session")
         # Use SQLAlchemy session for database operations
         session = get_session()
         try:
+            logger.info("🔧 DEBUG: Querying for contact")
             # Verify contact exists
             contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
 
+            logger.info(f"🔧 DEBUG: Contact found - {contact.full_name}")
             # Log the raw note with full details
             if isinstance(raw_note_text, str) and raw_note_text.strip():
+                logger.info("🔧 DEBUG: Creating RawNote with metadata_tags")
                 tags_obj = {
                     "type": "manual_note",
                     "raw_note": raw_note_text.strip(),
                     "categorized_updates": synthesis_data.get('categorized_updates', [])
                 }
+                logger.info(f"🔧 DEBUG: tags_obj = {tags_obj}")
+                logger.info(f"🔧 DEBUG: Creating RawNote with contact_id={contact_id}, metadata_tags={tags_obj}")
                 raw_note = RawNote(
                     contact_id=contact_id,
                     content='Manual note analyzed and saved',
-                    tags=json.dumps(tags_obj)
+                    metadata_tags=tags_obj
                 )
+                logger.info("🔧 DEBUG: RawNote created successfully")
                 session.add(raw_note)
+                logger.info("🔧 DEBUG: RawNote added to session")
 
-            # Save synthesized entries
-            for category_data in synthesis_data.get('categorized_updates', []):
-                for detail in category_data.get('details', []):
-                    synthesized_entry = SynthesizedEntry(
-                        contact_id=contact_id,
-                        category=category_data['category'],
-                        content=detail
-                    )
-                    session.add(synthesized_entry)
+            # Save synthesized entries - handle both old and new format
+            logger.info(f"🔧 DEBUG: synthesis_data structure: {synthesis_data}")
+            
+            # New format: synthesis_data.synthesis contains categories
+            if 'synthesis' in synthesis_data and isinstance(synthesis_data['synthesis'], dict):
+                logger.info("🔧 DEBUG: Processing synthesis data (new format)")
+                for category, data in synthesis_data['synthesis'].items():
+                    if isinstance(data, dict) and data.get('content') and len(data['content'].strip()) > 10:
+                        logger.info(f"🔧 DEBUG: Creating SynthesizedEntry for category={category}")
+                        synthesized_entry = SynthesizedEntry(
+                            contact_id=contact_id,
+                            category=category,
+                            content=data['content']
+                        )
+                        session.add(synthesized_entry)
+            # Old format: categorized_updates array
+            elif 'categorized_updates' in synthesis_data:
+                logger.info("🔧 DEBUG: Processing synthesis data (old format)")
+                for category_data in synthesis_data.get('categorized_updates', []):
+                    for detail in category_data.get('details', []):
+                        synthesized_entry = SynthesizedEntry(
+                            contact_id=contact_id,
+                            category=category_data['category'],
+                            content=detail
+                        )
+                        session.add(synthesized_entry)
             
             session.commit()
             
@@ -3350,12 +3362,14 @@ def save_synthesis_endpoint():
         except Exception as e:
             session.rollback()
             logger.error(f"Failed to save analysis: {e}")
+            logger.exception("Full traceback:")
             return jsonify({"error": f"Failed to save analysis: {e}"}), 500
         finally:
             session.close()
 
     except Exception as e:
         logger.error(f"Failed to save analysis: {e}")
+        logger.exception("Full traceback:")
         return jsonify({"error": f"Failed to save analysis: {e}"}), 500
 
 @app.route('/api/telegram/direct-import', methods=['POST'])
@@ -3511,7 +3525,7 @@ def process_transcript_endpoint():
             raw_note = RawNote(
                 contact_id=contact_id,
                 content='Telegram transcript processed and saved',
-                tags=json.dumps(tags_obj)
+                metadata_tags=tags_obj
             )
             session.add(raw_note)
             
@@ -5454,7 +5468,7 @@ def run_file_analysis_job(task_id: str, file_id: int):
             raw_note = RawNote(
                 contact_id=contact_id,
                 content=f"--- Analysis of uploaded file ---\n{extracted_text}",
-                tags=json.dumps({"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini})
+                metadata_tags={"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini}
             )
             session.add(raw_note)
             session.flush()  # Get the ID without committing
@@ -5859,6 +5873,9 @@ def create_tag():
             return jsonify({"error": f"Failed to create tag: {str(e)}"}), 500
         finally:
             session.close()
+    except Exception as e:
+        logger.error(f"Error in create_tag: {e}")
+        return jsonify({"error": f"Failed to create tag: {str(e)}"}), 500
 
 @app.route('/api/tags/<int:tag_id>', methods=['GET'])
 def get_tag(tag_id):

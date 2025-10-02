@@ -168,6 +168,7 @@ async function createContact(name, tier) {
         const response = await fetch('/api/contacts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ full_name: name, tier: tier })
         });
         if (response.status === 401) {
@@ -209,6 +210,7 @@ async function bulkDeleteContacts(contactIds) {
         const response = await fetch('/api/contacts/bulk-delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ contact_ids: contactIds })
         });
         const result = await response.json();

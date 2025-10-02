@@ -7,15 +7,7 @@ let currentContactId = null; // Added for openContactProfile
 
 // Setup event listeners for all buttons
 function setupEventListeners() {
-    // Add Note button
-    const addNoteBtn = document.getElementById('profile-add-note-btn');
-    if (addNoteBtn) {
-        addNoteBtn.addEventListener('click', function() {
-            const noteArea = document.getElementById('profile-note-input-area');
-            noteArea.style.display = 'block';
-            document.getElementById('profile-note-input').focus();
-        });
-    }
+    // Note: Add Note button removed - note area is now always visible
 
     // Wire Back to Main buttons
     const backToMainFromProfileBtn = document.getElementById('back-to-main-from-profile');
@@ -108,6 +100,7 @@ function deleteSelectedContacts(contactIds) {
         headers: {
             'Content-Type': 'application/json'
         },
+        credentials: 'include',
         body: JSON.stringify({ contact_ids: contactIds })
     })
     .then(response => response.json().then(data => ({ ok: response.ok, data })))
@@ -266,8 +259,8 @@ function openContactProfile(contactId, contactName) {
 // Fetch and render a contact profile, including all categories
 async function loadContactProfile(contactId) {
   try {
-    // Prefer new modular API (/api/contacts/:id). Fallback to legacy (/api/contact/:id)
-    let res = await fetch(`/api/contacts/${contactId}`);
+    // Use the correct endpoint (/api/contact/:id)
+    let res = await fetch(`/api/contact/${contactId}`);
     let payload = await res.json().catch(() => ({}));
     // If modular route not available, try legacy
     if (!res.ok || (payload && payload.error)) {
@@ -442,14 +435,6 @@ function renderContactProfile(profileData, noticeMessage) {
 
   container.innerHTML = '';
 
-  // Meta card
-  const meta = document.createElement('div');
-  meta.className = 'card';
-  meta.innerHTML = `
-    <div><strong>Telegram:</strong> @${info?.telegram_username || info?.telegram_handle || 'N/A'}</div>
-  `;
-  container.appendChild(meta);
-
   // Optional inline notice (non-blocking)
   if (noticeMessage) {
     const warn = document.createElement('div');
@@ -510,7 +495,7 @@ function renderContactProfile(profileData, noticeMessage) {
         btn.disabled = true; btn.textContent = 'Seeding...';
         try {
           // Prefer modular API if available
-          let res = await fetch(`/api/contacts/${id}/seed-demo`, { method: 'POST' });
+          let res = await fetch(`/api/contact/${id}/seed-demo`, { method: 'POST' });
           let out = await res.json().catch(() => ({}));
           if (!res.ok || out.error) {
             // fallback to legacy
@@ -536,6 +521,14 @@ function renderContactProfile(profileData, noticeMessage) {
     editAllBtn.style.display = 'inline-block';
     saveAllBtn.style.display = 'none';
   }
+
+  // Meta card - MOVED TO BOTTOM
+  const meta = document.createElement('div');
+  meta.className = 'card';
+  meta.innerHTML = `
+    <div><strong>Telegram:</strong> @${info?.telegram_username || info?.telegram_handle || 'N/A'}</div>
+  `;
+  container.appendChild(meta);
 }
 
 // Convert various backend profile shapes into the UI-friendly shape
@@ -567,7 +560,6 @@ window.loadContactProfile = loadContactProfile;
 
 // Profile actions wiring
 function wireProfileButtons() {
-  const addBtn = document.getElementById('profile-add-note-btn');
   const analyzeBtn = document.getElementById('profile-analyze-btn');
   const cancelNoteBtn = document.getElementById('profile-cancel-note-btn');
   const syncBtn = document.getElementById('profile-sync-telegram-btn');
@@ -576,16 +568,10 @@ function wireProfileButtons() {
   const editAllBtn = document.getElementById('edit-all-categories-btn');
   const saveAllBtn = document.getElementById('save-all-categories-btn');
 
-  if (addBtn) {
-    addBtn.onclick = () => {
-      const noteArea = document.getElementById('profile-note-input-area');
-      noteArea.style.display = 'block';
-      document.getElementById('profile-note-input').focus();
-    };
-  }
+  // Note: Add Note button removed - note area is now always visible
   if (cancelNoteBtn) {
     cancelNoteBtn.onclick = () => {
-      document.getElementById('profile-note-input-area').style.display = 'none';
+      // Just clear the text area, keep the note input area visible
       document.getElementById('profile-note-input').value = '';
     };
   }
@@ -600,6 +586,7 @@ function wireProfileButtons() {
         const res = await fetch('/api/process-note', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ note, contact_id: id })
         });
         const data = await res.json();
@@ -607,10 +594,11 @@ function wireProfileButtons() {
         await fetch('/api/save-synthesis', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ contact_id: id, raw_note: note, synthesis: data })
         });
         document.getElementById('profile-note-input').value = '';
-        document.getElementById('profile-note-input-area').style.display = 'none';
+        // Keep note input area visible for easy note entry
         await loadContactProfile(id);
         alert('Note analyzed and saved.');
       } catch (e) {
@@ -802,7 +790,7 @@ function wireProfileButtons() {
       const id = parseInt(document.getElementById('selected-contact-id').value, 10);
       if (!confirm('Delete this contact and all associated data?')) return;
       try {
-        const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/contact/${id}`, { method: 'DELETE' });
         const out = await res.json();
         if (out.error) throw new Error(out.error);
         alert('Contact deleted.');

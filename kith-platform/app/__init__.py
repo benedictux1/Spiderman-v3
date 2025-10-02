@@ -55,6 +55,15 @@ def create_app(config_class=None):
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
     
+    # Configure CORS
+    from flask_cors import CORS
+    CORS(app, 
+         origins=app.config.get('CORS_ORIGINS', ['http://localhost:3000', 'http://localhost:5000']),
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+         supports_credentials=True,
+         max_age=3600)
+    
     # Configure session cookies
     app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
     app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -78,6 +87,43 @@ def create_app(config_class=None):
     
     # Add logging middleware
     app.wsgi_app = LoggingMiddleware(app.wsgi_app)
+    
+    # Add security headers and XSS protection
+    @app.after_request
+    def add_security_headers(response):
+        """Add security headers to all responses"""
+        # Prevent XSS attacks
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        
+        # Content Security Policy
+        csp = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        response.headers['Content-Security-Policy'] = csp
+        
+        # Strict Transport Security (HTTPS only)
+        if app.config.get('FORCE_HTTPS', False):
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        
+        # Referrer Policy
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        
+        # Permissions Policy
+        response.headers['Permissions-Policy'] = (
+            'geolocation=(), microphone=(), camera=(), '
+            'payment=(), usb=(), magnetometer=(), gyroscope=(), '
+            'accelerometer=(), ambient-light-sensor=()'
+        )
+        
+        return response
     
     # Initialize monitoring (with error handling)
     try:
@@ -239,7 +285,7 @@ def create_app(config_class=None):
                 if user:
                     # Create lightweight AuthUser to avoid SQLAlchemy session issues
                     from app.api.auth import AuthUser
-                    return AuthUser(user.id, user.username)
+                    return AuthUser(user.id, user.username, getattr(user, 'role', 'user'))
                 return None
         except Exception as e:
             logging.error(f"Error loading user {user_id}: {e}")
@@ -313,6 +359,100 @@ def create_app(config_class=None):
             logging.warning(f"Metrics collection failed: {e}")
         return {'metrics': 'not_available'}
     
+    # Static file routes
+    @app.route('/favicon.ico')
+    def favicon():
+        """Serve favicon"""
+        try:
+            from flask import send_from_directory
+            return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
+        except Exception:
+            return '', 404
+    
+    @app.route('/robots.txt')
+    def robots_txt():
+        """Serve robots.txt"""
+        try:
+            from flask import send_from_directory
+            return send_from_directory(app.static_folder, 'robots.txt', mimetype='text/plain')
+        except Exception:
+            # Return default robots.txt content
+            return """User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Allow: /static/
+Allow: /""", 200, {'Content-Type': 'text/plain'}
+    
+    @app.route('/sitemap.xml')
+    def sitemap():
+        """Serve sitemap.xml"""
+        try:
+            from flask import send_from_directory
+            return send_from_directory(app.static_folder, 'sitemap.xml', mimetype='application/xml')
+        except Exception:
+            # Return basic sitemap
+            sitemap_content = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+        <loc>https://kith-platform.com/</loc>
+        <lastmod>2025-10-02</lastmod>
+        <changefreq>daily</changefreq>
+        <priority>1.0</priority>
+    </url>
+</urlset>"""
+            return sitemap_content, 200, {'Content-Type': 'application/xml'}
+    
+    # Error handlers
+    @app.errorhandler(404)
+    def not_found_error(error):
+        """Handle 404 errors"""
+        from flask import render_template
+        try:
+            return render_template('404.html'), 404
+        except Exception:
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Page Not Found - Kith</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                    h1 { color: #4f6cff; }
+                </style>
+            </head>
+            <body>
+                <h1>404 - Page Not Found</h1>
+                <p>The page you're looking for doesn't exist.</p>
+                <a href="/">Go Home</a>
+            </body>
+            </html>
+            """, 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        """Handle 500 errors"""
+        from flask import render_template
+        try:
+            return render_template('500.html'), 500
+        except Exception:
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Server Error - Kith</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                    h1 { color: #ff6c6c; }
+                </style>
+            </head>
+            <body>
+                <h1>500 - Internal Server Error</h1>
+                <p>Something went wrong on our end. Please try again later.</p>
+                <a href="/">Go Home</a>
+            </body>
+            </html>
+            """, 500
+    
     @app.route('/health/detailed')
     def detailed_health_check():
         """Detailed health check with individual component status"""
@@ -327,6 +467,13 @@ def create_app(config_class=None):
         return {'status': 'healthy', 'version': '3.0.0'}
     
     return app
+
+def is_admin():
+    """Check if current user is admin"""
+    from flask_login import current_user
+    if not current_user.is_authenticated:
+        return False
+    return getattr(current_user, 'role', 'user') == 'admin'
 
 def configure_logging(app):
     import os

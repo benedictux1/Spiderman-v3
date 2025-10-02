@@ -3067,7 +3067,7 @@ def save_synthesis_endpoint():
                 raw_note = RawNote(
                     contact_id=contact_id,
                     content='Manual note analyzed and saved',
-                    tags=json.dumps(tags_obj)
+                    metadata_tags=tags_obj
                 )
                 session.add(raw_note)
 
@@ -3291,7 +3291,7 @@ def process_transcript_endpoint():
             raw_note = RawNote(
                 contact_id=contact_id,
                 content='Telegram transcript processed and saved',
-                tags=json.dumps(tags_obj)
+                metadata_tags=tags_obj
             )
             session.add(raw_note)
             
@@ -3708,7 +3708,7 @@ def replace_contact_categories(contact_id: int):
             # Prefer dynamic summary over any client-provided note
             log_text = summary
             tags_obj = {"type": "category_edit", "before": before, "after": after}
-            conn.execute('INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)', (
+            conn.execute('INSERT INTO raw_notes (contact_id, content, metadata_tags, created_at) VALUES (?, ?, ?, ?)', (
                 contact_id, log_text, json.dumps(tags_obj), datetime.now().isoformat()
             ))
 
@@ -4776,7 +4776,7 @@ def create_note_endpoint():
         tags = data.get('tags')
         with with_write_connection() as conn:
             cur = conn.execute(
-                'INSERT INTO raw_notes (contact_id, content, tags, created_at) VALUES (?, ?, ?, ?)',
+                'INSERT INTO raw_notes (contact_id, content, metadata_tags, created_at) VALUES (?, ?, ?, ?)',
                 (contact_id, content, json.dumps(tags) if isinstance(tags, (dict, list)) else tags, datetime.now().isoformat())
             )
             raw_note_id = cur.lastrowid
@@ -5219,7 +5219,7 @@ def run_file_analysis_job(task_id: str, file_id: int):
             raw_note = RawNote(
                 contact_id=contact_id,
                 content=f"--- Analysis of uploaded file ---\n{extracted_text}",
-                tags=json.dumps({"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini})
+                metadata_tags={"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini}
             )
             session.add(raw_note)
             session.flush()  # Get the ID without committing

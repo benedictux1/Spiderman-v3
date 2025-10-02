@@ -13,7 +13,7 @@ async function initializeGraphView() {
     
     try {
         // Fetch graph data from API with cache busting
-        const response = await fetch(`/api/graph-data?t=${Date.now()}`);
+        const response = await fetch(`/api/graph-data?t=${Date.now()}`, { credentials: 'include' });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -258,7 +258,7 @@ async function showManageGraphModal() {
     
     try {
         // Populate contact dropdowns
-        const response = await fetch('/api/contacts');
+        const response = await fetch('/api/contacts', { credentials: 'include' });
         const contacts = await response.json();
         
         sourceSelect.innerHTML = '<option value="">Select first contact...</option>';
@@ -298,6 +298,7 @@ function setupGraphManagement() {
             const response = await fetch('/api/groups', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({ name, color })
             });
             
@@ -341,6 +342,7 @@ function setupGraphManagement() {
             const response = await fetch('/api/relationships', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({ 
                     source_contact_id: parseInt(sourceId), 
                     target_contact_id: parseInt(targetId), 
@@ -390,7 +392,7 @@ async function refreshGraphData() {
     if (!network) return;
     
     try {
-        const response = await fetch(`/api/graph-data?t=${Date.now()}`);
+        const response = await fetch(`/api/graph-data?t=${Date.now()}`, { credentials: 'include' });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }

@@ -199,6 +199,41 @@ def authenticated_user(client, sample_user):
     return sample_user
 
 @pytest.fixture
+def admin_user(db_session):
+    """Create an admin user for testing"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Creating admin user...")
+    user = UserFactory(role="admin")
+    logger.info(f"🔧 DEBUG: Admin user factory created user: {user.username} (ID: {user.id})")
+    
+    db_session.add(user)
+    logger.info("🔧 DEBUG: Admin user added to session")
+    
+    db_session.commit()
+    logger.info("🔧 DEBUG: Session committed")
+    
+    logger.info(f"✅ Admin user created: {user.username} (ID: {user.id})")
+    return user
+
+@pytest.fixture
+def authenticated_admin_user(client, admin_user):
+    """Create an authenticated admin user session"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"🔧 DEBUG: Creating authenticated admin user session for: {admin_user.username} (ID: {admin_user.id})")
+    
+    with client.session_transaction() as sess:
+        sess['_user_id'] = str(admin_user.id)
+        sess['_fresh'] = True
+        logger.info(f"🔧 DEBUG: Session variables set - _user_id: {sess.get('_user_id')}, _fresh: {sess.get('_fresh')}")
+    
+    logger.info(f"✅ Authenticated admin user session created for: {admin_user.username}")
+    return admin_user
+
+@pytest.fixture
 def mock_ai_service():
     """Mock AI service for testing"""
     with patch('app.services.ai_service.AIService') as mock:

@@ -152,7 +152,7 @@ async function loadAllTags() {
 // Load tags for a specific contact
 async function loadContactTags(contactId) {
     try {
-        const response = await fetch(`/api/contacts/${contactId}/tags`);
+        const response = await fetch(`/api/contacts/${contactId}/tags`, { credentials: 'include' });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -307,6 +307,7 @@ async function assignTagToContact() {
         const response = await fetch(`/api/contacts/${contactId}/tags`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ tag_id: selectedId })
         });
         if (!response.ok) {
@@ -338,7 +339,7 @@ async function removeTagFromContact(tagId) {
     currentContactTags = currentContactTags.filter(t => t.id !== tagId);
     renderContactTags();
     try {
-        const response = await fetch(`/api/contacts/${contactId}/tags/${tagId}`, { method: 'DELETE' });
+        const response = await fetch(`/api/contacts/${contactId}/tags/${tagId}`, { method: 'DELETE', credentials: 'include' });
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
@@ -393,6 +394,7 @@ async function createTag() {
             headers: {
                 'Content-Type': 'application/json',
             },
+            credentials: 'include',
             body: JSON.stringify({
                 name: name,
                 color: color,
@@ -478,7 +480,7 @@ async function showDeleteTagModal(tag) {
     
     try {
         // Load affected contacts
-        const response = await fetch(`/api/tags/${tag.id}/contacts`);
+        const response = await fetch(`/api/tags/${tag.id}/contacts`, { credentials: 'include' });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -534,6 +536,7 @@ async function confirmDeleteTag() {
             headers: {
                 'Content-Type': 'application/json',
             },
+            credentials: 'include',
             body: JSON.stringify({
                 reassign_to_tag_id: reassignTagIdInt
             })

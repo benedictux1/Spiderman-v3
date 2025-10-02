@@ -18,12 +18,11 @@ class TestAdminDashboard:
         response = client.get('/api/admin/dashboard')
         assert response.status_code == 403  # Forbidden for non-admin
     
-    def test_admin_dashboard_success(self, client, authenticated_user):
+    def test_admin_dashboard_success(self, client, authenticated_admin_user):
         """Test successful admin dashboard access"""
-        with patch('app.is_admin', return_value=True):
-            response = client.get('/api/admin/dashboard')
-            assert response.status_code == 200
-            assert 'text/html' in response.headers['Content-Type']
+        response = client.get('/api/admin/dashboard')
+        assert response.status_code == 200
+        assert 'text/html' in response.headers['Content-Type']
     
     def test_admin_users_requires_auth(self, client):
         """Test that admin users endpoint requires authentication"""
@@ -35,15 +34,14 @@ class TestAdminDashboard:
         response = client.get('/api/admin/users')
         assert response.status_code == 403  # Forbidden for non-admin
     
-    def test_admin_users_success(self, client, authenticated_user):
+    def test_admin_users_success(self, client, authenticated_admin_user):
         """Test successful admin users access"""
-        with patch('app.is_admin', return_value=True):
-            response = client.get('/api/admin/users')
-            assert response.status_code == 200
-            
-            data = response.get_json()
-            assert 'users' in data
-            assert isinstance(data['users'], list)
+        response = client.get('/api/admin/users')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert 'users' in data
+        assert isinstance(data['users'], list)
     
     def test_admin_init_database_requires_auth(self, client):
         """Test that admin init database requires authentication"""

@@ -4,9 +4,50 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kith - Personal Intelligence Platform</title>
+    
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Kith is a personal intelligence platform that helps you manage relationships, analyze notes, and build meaningful connections with AI-powered insights.">
+    <meta name="keywords" content="personal intelligence, relationship management, AI analysis, note taking, contact management">
+    <meta name="author" content="Kith Platform">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="Kith - Personal Intelligence Platform">
+    <meta property="og:description" content="AI-powered personal intelligence platform for relationship management and note analysis">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://kith-platform.com">
+    <meta property="og:image" content="https://kith-platform.com/static/og-image.png">
+    <meta property="og:site_name" content="Kith Platform">
+    
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Kith - Personal Intelligence Platform">
+    <meta name="twitter:description" content="AI-powered personal intelligence platform for relationship management and note analysis">
+    <meta name="twitter:image" content="https://kith-platform.com/static/og-image.png">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+    
+    <!-- Stylesheets -->
     <link rel="stylesheet" href="/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Accessibility styles -->
+    <style>
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+    </style>
 </head>
 <body>
     <!-- Toast Container -->
@@ -18,22 +59,24 @@
         <h1 style="display:none;">Kith Platform</h1>
         
         <!-- Navigation -->
-        <div class="navigation">
-            <button id="main-view-btn" class="nav-btn active">Contacts</button>
-            <button id="graph-view-btn" class="nav-btn">Relationship Graph</button>
-            <button id="manage-graph-btn" class="nav-btn">Manage Graph</button>
-            <button id="settings-btn" class="nav-btn" onclick="showSettingsView()">Settings</button>
-        </div>
+        <nav class="navigation" role="navigation" aria-label="Main navigation">
+            <button id="main-view-btn" class="nav-btn active" aria-label="View contacts" aria-pressed="true">Contacts</button>
+            <button id="graph-view-btn" class="nav-btn" aria-label="View relationship graph" aria-pressed="false">Relationship Graph</button>
+            <button id="manage-graph-btn" class="nav-btn" aria-label="Manage relationship graph" aria-pressed="false">Manage Graph</button>
+            <button id="settings-btn" class="nav-btn" onclick="showSettingsView()" aria-label="Open settings" aria-pressed="false">Settings</button>
+        </nav>
         
         <!-- Main Input View -->
         <div id="main-view">
             <!-- Search Area -->
-            <div class="search-area">
+            <div class="search-area" role="search" aria-label="Contact search">
                 <div class="search-container">
-                    <input type="search" id="contact-search" placeholder="Search for a contact...">
-                    <label class="tier-filter">
-                        <input type="checkbox" id="tier-filter"> Tier 1 Only
+                    <input type="search" id="contact-search" placeholder="Search for a contact..." aria-label="Search contacts" aria-describedby="search-help">
+                    <label class="tier-filter" for="tier-filter">
+                        <input type="checkbox" id="tier-filter" aria-describedby="tier-filter-help"> Tier 1 Only
                     </label>
+                    <div id="search-help" class="sr-only">Search through your contacts by name or other details</div>
+                    <div id="tier-filter-help" class="sr-only">Filter to show only Tier 1 contacts</div>
                 </div>
             </div>
             
@@ -85,52 +128,31 @@
         <!-- Individual Contact Profile View (Initially hidden) -->
         <div id="profile-view" style="display:none;">
             <input type="hidden" id="selected-contact-id" />
-            <div class="profile-header">
-                <h2 id="contact-profile-name"></h2>
-                <div class="profile-actions">
-                    <button id="back-to-main-from-profile">← Back to Main</button>
+            <div class="profile-header-compact">
+                <div class="profile-header-left">
+                    <h2 id="contact-profile-name"></h2>
                 </div>
-            </div>
-            
-            <!-- Profile Actions -->
-            <div class="profile-actions-bar card">
-                <button id="profile-add-note-btn">Add Note</button>
-                <button id="profile-sync-telegram-btn">Sync Telegram Chat</button>
-                
-                <!-- NEW: File Upload -->
-                <form id="file-upload-form" style="display:inline;">
-                    <input type="file" id="file-upload-input" style="display:none;" accept="image/*,.pdf,.txt">
-                    <button type="button" id="profile-upload-file-btn">Upload File</button>
-                </form>
-                
-                <button id="edit-contact-profile-btn">Edit Profile Details</button>
-                <button id="edit-all-categories-btn">Edit Notes</button>
-                <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
-                <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
-            </div>
-            
-            <!-- Tags Section -->
-            <div class="tags-section card">
-                <div class="tags-header">
-                    <h3>Tags</h3>
-                    <button id="manage-tags-btn" class="secondary-btn">Manage Tags</button>
+                <div class="profile-header-right">
+                    <button id="back-to-main-from-profile" class="back-btn-compact">← Back to Main</button>
                 </div>
-                <div id="contact-tags-container" class="tags-container">
-                    <!-- Tags will be dynamically loaded here -->
+                <div class="profile-actions-compact">
+                    <button id="edit-all-categories-btn">Edit Notes</button>
+                    <button id="profile-upload-file-btn" type="button">Upload file</button>
+                    <button id="profile-sync-telegram-btn">Sync Tele Chat</button>
+                    <button id="edit-contact-profile-btn">Edit Profile Details</button>
+                    <button id="delete-contact-btn" class="danger-btn">Delete Contact</button>
+                    <button id="save-all-categories-btn" style="display:none;">Save All Notes</button>
+                    
+                    <!-- Hidden file upload input -->
+                    <form id="file-upload-form" style="display:none;">
+                        <input type="file" id="file-upload-input" accept="image/*,.pdf,.txt">
+                    </form>
                 </div>
-                <div id="add-tag-section" style="display:none;">
-                    <select id="tag-select" class="tag-select">
-                        <option value="">Select a tag to assign...</option>
-                    </select>
-                    <button id="assign-tag-btn" class="primary-btn">Assign Tag</button>
-                    <button id="cancel-assign-tag-btn" class="secondary-btn">Cancel</button>
-                </div>
-                <button id="add-tag-btn" class="primary-btn">+ Add Tag</button>
             </div>
             <div id="file-upload-status" style="margin-top:8px;"></div>
 
-            <!-- Profile Note Input Area (hidden by default) -->
-            <div id="profile-note-input-area" class="card" style="display:none;">
+            <!-- Profile Note Input Area (visible by default) - MOVED TO TOP -->
+            <div id="profile-note-input-area" class="card">
                 <h3>Add New Note</h3>
                 <div class="note-container">
                     <textarea id="profile-note-input" placeholder="Enter new unstructured notes for this contact..."></textarea>
@@ -154,6 +176,25 @@
                         <!-- Raw logs will be loaded here -->
                     </div>
                 </details>
+            </div>
+
+            <!-- Tags Section - MOVED TO BOTTOM -->
+            <div class="tags-section card">
+                <div class="tags-header">
+                    <h3>Tags</h3>
+                    <button id="manage-tags-btn" class="secondary-btn">Manage Tags</button>
+                </div>
+                <div id="contact-tags-container" class="tags-container">
+                    <!-- Tags will be dynamically loaded here -->
+                </div>
+                <div id="add-tag-section" style="display:none;">
+                    <select id="tag-select" class="tag-select">
+                        <option value="">Select a tag to assign...</option>
+                    </select>
+                    <button id="assign-tag-btn" class="primary-btn">Assign Tag</button>
+                    <button id="cancel-assign-tag-btn" class="secondary-btn">Cancel</button>
+                </div>
+                <button id="add-tag-btn" class="primary-btn">+ Add Tag</button>
             </div>
 
             <!-- Import Progress UI -->
@@ -645,7 +686,7 @@
     <!-- Minimal inline script for remaining functions -->
     <script>
         // API configuration
-        const API_URL = '/api/process-note';
+        const API_URL = '/api/notes/process';
         const SAVE_URL = '/api/save-synthesis';
         let currentAnalysisData = null;
         let selectedContactName = null;
@@ -1832,17 +1873,10 @@
                 analyzeBtn.disabled = !(this.value.trim() && currentContactId);
             });
             
-            // Profile note handling
-            document.getElementById('profile-add-note-btn').addEventListener('click', function() {
-                const noteArea = document.getElementById('profile-note-input-area');
-                noteArea.style.display = noteArea.style.display === 'none' ? 'block' : 'none';
-                if (noteArea.style.display === 'block') {
-                    document.getElementById('profile-note-input').focus();
-                }
-            });
+            // Note: Add Note button removed - note area is now always visible
             
             document.getElementById('profile-cancel-note-btn').addEventListener('click', function() {
-                document.getElementById('profile-note-input-area').style.display = 'none';
+                // Just clear the text area, keep the note input area visible
                 document.getElementById('profile-note-input').value = '';
             });
 

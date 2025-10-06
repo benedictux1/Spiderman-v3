@@ -23,13 +23,7 @@ function setupEventListeners() {
         });
     }
 
-    // Sync Telegram Chat button
-    const syncTelegramBtn = document.getElementById('profile-sync-telegram-btn');
-    if (syncTelegramBtn) {
-        syncTelegramBtn.addEventListener('click', function() {
-            handleProfileTelegramSync();
-        });
-    }
+    // Sync Telegram Chat button - handled in wireProfileButtons() to avoid duplicate handlers
 
     // Edit Profile Details button
     const editProfileBtn = document.getElementById('edit-contact-profile-btn');
@@ -240,6 +234,81 @@ function showSettingsView() {
 
 // Make showSettingsView globally available
 window.showSettingsView = showSettingsView;
+
+// Profile: Sync Telegram chat using enhanced endpoints
+let isTelegramSyncInProgress = false;
+
+async function handleProfileTelegramSync() {
+  // Prevent multiple simultaneous syncs
+  if (isTelegramSyncInProgress) {
+    console.log('Telegram sync already in progress, ignoring duplicate request');
+    return;
+  }
+  
+  isTelegramSyncInProgress = true;
+  
+  try {
+    // Determine contact context
+    const hiddenId = document.getElementById('selected-contact-id');
+    const contactId = hiddenId ? hiddenId.value : currentContactId;
+    // Fetch contact to get telegram handle if available
+    let identifier = '';
+    try {
+      if (contactId) {
+        const res = await fetch(`/api/contact/${contactId}`);
+        const payload = await res.json().catch(() => ({}));
+        const info = (payload && payload.contact_info) || (payload && payload.data && payload.data.contact_info) || payload;
+        const uname = (info && (info.telegram_username || info.username)) || '';
+        const phone = (info && (info.telegram_phone || info.phone)) || '';
+        identifier = (uname || '').replace(/^@/, '').trim() || (phone || '').trim();
+      }
+    } catch (_) { /* ignore and fall back to prompt */ }
+
+    if (!identifier) {
+      identifier = prompt('Enter Telegram username (without @) or phone with country code:');
+      if (!identifier) return;
+      identifier = identifier.replace(/^@/, '').trim();
+    }
+
+    // Ensure we are connected (best-effort)
+    try {
+      const status = await fetch('/api/telegram/enhanced/status').then(r => r.json());
+      const st = status && status.status;
+      if (st && st.has_session && !st.is_connected) {
+        await fetch('/api/telegram/enhanced/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      }
+    } catch (_) {}
+
+    // Trigger enhanced sync-contact
+    const daysBackStr = prompt('How many days back to sync? (default 30)', '30');
+    if (daysBackStr === null) return;
+    const days_back = parseInt(daysBackStr || '30', 10) || 30;
+
+    const resp = await fetch('/api/telegram/enhanced/sync-contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_identifier: identifier, days_back })
+    });
+    const data = await resp.json().catch(() => ({}));
+
+    if (data && data.success) {
+      alert(`Telegram sync completed for ${identifier}. Messages imported: ${data.message_count || data.messages || 'unknown'}.`);
+      // Optionally refresh profile data afterwards
+      if (contactId) {
+        try { await loadContactProfile(contactId); } catch (_) {}
+      }
+    } else {
+      const msg = (data && (data.message || data.error)) || 'Unknown error';
+      alert('Error starting Telegram sync: ' + msg);
+    }
+  } catch (err) {
+    console.error('Profile Telegram sync error:', err);
+    alert('Error starting Telegram sync: ' + (err && err.message || err));
+  } finally {
+    isTelegramSyncInProgress = false;
+  }
+}
+
 
 // Open a contact profile from anywhere
 function openContactProfile(contactId, contactName) {

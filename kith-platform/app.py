@@ -45,6 +45,7 @@ from app.api.auth import auth_bp
 # from app.api.contacts import contacts_bp  # Disabled - using main app endpoint instead
 from app.api.notes import notes_bp
 from app.api.telegram import telegram_bp
+from app.api.telegram_enhanced import telegram_enhanced_bp
 from app.api.admin import admin_bp
 # from telegram_integration import setup_telegram_routes  # Temporarily disabled
 from constants import (
@@ -93,6 +94,11 @@ app.register_blueprint(auth_bp, url_prefix='/api/auth')
 # app.register_blueprint(contacts_bp, url_prefix='/api/contacts')  # Disabled - using main app endpoint instead
 app.register_blueprint(notes_bp, url_prefix='/api/notes')
 app.register_blueprint(telegram_bp, url_prefix='/api/telegram')
+try:
+    app.register_blueprint(telegram_enhanced_bp)  # Enhanced Telegram endpoints
+    logger.info("✅ Enhanced Telegram blueprint registered successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to register Enhanced Telegram blueprint: {e}", exc_info=True)
 app.register_blueprint(admin_bp, url_prefix='/api/admin')
 
 # --- Database Session Management ---
@@ -1199,9 +1205,28 @@ def _openai_chat(**kwargs):
         if not api_key:
             raise Exception("OpenAI API key not configured")
         _openai_client_v1 = openai.OpenAI(api_key=api_key)
-        return _openai_client_v1.chat.completions.create(**kwargs).choices[0].message.content
+        
+        try:
+            response = _openai_client_v1.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+            
+            if not content:
+                logger.error(f"❌ OpenAI returned empty content. Response: {response}")
+                logger.error(f"❌ Finish reason: {response.choices[0].finish_reason}")
+                raise Exception(f"OpenAI returned empty response. Finish reason: {response.choices[0].finish_reason}")
+            
+            return content
+        except Exception as e:
+            logger.error(f"❌ OpenAI API error: {str(e)}")
+            logger.error(f"❌ Model: {kwargs.get('model')}, Prompt length: {len(str(kwargs.get('messages', [])))}")
+            raise
     else:  # Old SDK (<=0.28.x)
-        return openai.ChatCompletion.create(**kwargs).choices[0].message.content
+        response = openai.ChatCompletion.create(**kwargs)
+        content = response.choices[0].message.content
+        if not content:
+            logger.error(f"❌ OpenAI returned empty content (legacy SDK)")
+            raise Exception("OpenAI returned empty response")
+        return content
 
 # Optional Sentry setup
 try:
@@ -2349,9 +2374,22 @@ def normalize_ai_output(ai_json: dict) -> dict:
     updates = ai_json.get('categorized_updates') or []
     normalized_updates = []
 
+    # Harden against malformed AI outputs
     for item in updates:
-        cat = canonicalize_category(item.get('category'))
-        details = item.get('details') or []
+        if not isinstance(item, dict):
+            continue
+        raw_cat = item.get('category') if 'category' in item else 'Others'
+        cat = canonicalize_category(raw_cat)
+        raw_details = item.get('details')
+        # Coerce details to a list of strings
+        if isinstance(raw_details, str):
+            details = [raw_details]
+        elif isinstance(raw_details, list):
+            details = [d for d in raw_details if isinstance(d, str) and d.strip()]
+        else:
+            details = []
+        if not details:
+            continue
         # If AI category is Others, try per-detail inference
         if cat not in VALID_CATEGORY_SET or cat == Categories.OTHERS:
             for d in details:
@@ -2367,10 +2405,14 @@ def normalize_ai_output(ai_json: dict) -> dict:
     # Merge same-category entries and de-duplicate details (case-insensitive)
     merged = {}
     for entry in normalized_updates:
-        c = entry['category']
+        if not isinstance(entry, dict):
+            logger.warning(f"Skipping non-dict entry in normalized_updates: {type(entry)}")
+            continue
+        c = entry.get('category') or Categories.OTHERS
+        ds = entry.get('details') or []
         existed = merged.setdefault(c, [])
-        for d in entry['details']:
-            if all(d.strip().lower() != e.strip().lower() for e in existed):
+        for d in ds:
+            if isinstance(d, str) and d.strip() and all(d.strip().lower() != e.strip().lower() for e in existed):
                 existed.append(d)
 
     ai_json['categorized_updates'] = [{"category": c, "details": ds} for c, ds in merged.items()]
@@ -2380,34 +2422,292 @@ def normalize_ai_output(ai_json: dict) -> dict:
 MASTER_PROMPT_TEMPLATE = """
 You are a world-class relationship intelligence analyst with perfect memory and a deep understanding of human psychology and interaction. Your task is to analyze a new piece of information about a person and extract every distinct fact.
 
-**GUIDING PRINCIPLES:**
-1.  **Do Not Summarize:** Your primary task is to extract every distinct fact from the 'New Information' and list it. Preserve all specific details, names, and preferences.
-2.  **Absolute Accuracy:** Base your analysis ONLY on the information provided. Do not infer or hallucinate.
-3.  **Structured Output:** Your final output must be a single, valid JSON object with the specified keys: "synthesized_narrative", "confidence_score", "reasoning_chain", and "categorized_updates". The "categorized_updates" must be an array of objects, each with a "category" and a "details" key, where "details" is an array of strings.
-4.  **CATEGORY ENUMERATION (STRICT):** The "category" value for every detail MUST be one of EXACTLY these tokens (case-sensitive): {allowed_categories}. If unsure, use "Others". Split details so each fact appears under the single best-fitting category.
+---
 
-**CATEGORIZATION RULES:**
-You must categorize information into exactly these 20 categories:
-- "Actionable" - Tasks, follow-ups, or actions needed
-- "Goals" - Personal or professional objectives
-- "Relationship_Strategy" - How to approach or maintain the relationship
-- "Social" - Social activities, events, or connections
-- "Wellbeing" - Health, mental state, or life satisfaction
-- "Avocation" - Hobbies, interests, or personal pursuits
-- "Professional_Background" - Career, work, or business information
-- "Environment_And_Lifestyle" - Living situation, lifestyle choices
-- "Psychology_And_Values" - Beliefs, values, or personality traits
-- "Communication_Style" - How they communicate or prefer to interact
-- "Challenges_And_Development" - Difficulties, growth, or learning
-- "Deeper_Insights" - Psychological patterns or deeper understanding
-- "Financial_Situation" - Money, resources, or financial status
-- "Admin_Matters" - Logistical details, contact info, or practical matters
-- "Established patterns" - Recurring behaviors or habits
-- "Core identity" - Fundamental aspects of who they are
-- "Information gaps" - Missing information or areas to explore
-- "Memory anchors" - Key details to remember about them
-- "Positionality" - Their role, status, or position in various contexts
-- "Others" - Information that doesn't fit other categories
+**GUIDING PRINCIPLES:**
+
+1. **Do Not Summarize:** Your job is to extract every distinct fact from the 'New Information' and list it clearly. Do not merge or condense facts into summaries.
+2. **Absolute Accuracy:** Base your analysis ONLY on the provided information. Do not fabricate or hallucinate.
+3. **Inference Rule:**  
+   - You may infer insights only in categories that explicitly allow interpretation (marked “inference supported”).  
+   - When doing so, prefix the detail with **“(Inferred)”** and, if your system supports it, include a confidence label (e.g., “(Inferred, medium)”).
+   - Inferences must logically follow from observed patterns or notes — never speculation.
+4. **Structured Output:**  
+   Your output must be a **single valid JSON object** with these keys:  
+   - `"synthesized_narrative"` – a short connecting summary of key themes.  
+   - `"confidence_score"` – numeric 1–10 confidence in accuracy.  
+   - `"reasoning_chain"` – a concise explanation of how you derived the facts.  
+   - `"categorized_updates"` – an array of `{{ "category": string, "details": [string, ...] }}`.
+5. **Category Enumeration (Strict):**  
+   Every `"category"` value must match exactly one of the 20 allowed tokens below.  
+   If truly uncertain, use `"Others"`.  
+   Each fact should belong to only one best-fitting category.
+6. **Maintain a Person-Centric Focus:**  
+   - When analyzing conversations (e.g., from Telegram, Instagram, or chat logs), prioritize extracting facts about the other person—their actions, thoughts, emotions, preferences, and behavior.
+   - Include information about yourself only when it clarifies the relationship dynamic or reveals how they perceive, respond to, or interact with you (for instance, “She comforted me when I was upset,” or “He ignored my message for two days”).
+   - The resulting profile should remain centered on their traits, patterns, and worldview, not function as a record of your own experiences or reflections.
+   
+   
+---
+
+## **CATEGORIZATION RULES**
+
+You must categorize information into exactly these 20 categories.  
+Each category includes at least two prototypical examples and one edge case.
+
+---
+
+### **1. Actionable**
+Concrete tasks, decisions, or next steps requiring follow-up by you or them. Usually time-bound or outcome-oriented.  
+**Include:** To-dos, follow-ups, decisions, reminders.  
+**Exclude:** Long-term aims (→ *Goals*), factual data (→ *Admin_Matters*).  
+**Examples:**  
+- “Schedule a follow-up meeting with John next Tuesday.”  
+- “Send birthday message on 12 Oct.”  
+- *(Edge)* “Draft a note to clarify scope.”
+
+---
+
+### **2. Goals**
+Desired end states or objectives—personal or professional—ranging from short-term targets to identity-linked ambitions.  
+**Include:** Aspirations, achievements sought, measurable outcomes.  
+**Exclude:** Immediate actions (*Actionable*), coping or self-improvement processes (*Challenges_And_Development*).  
+**Examples:**  
+- “Wants to learn Python this year.”  
+- “Aiming for promotion to manager.”  
+- *(Edge)* “(Inferred) Hopes to one day found her own non-profit.”
+
+---
+
+### **3. Relationship_Strategy**
+**Inference supported.**  
+Tactics for building, maintaining, or influencing a relationship—how to engage them effectively and avoid friction.  
+**Include:** Preferred tone, approach, leverage points, trust dynamics.  
+**Exclude:** Broad personality traits (*Psychology_And_Values*), simple communication choices (*Communication_Style*).  
+**Examples:**  
+- “Prefers empathy before advice.”  
+- “Values punctuality—arrive early and be prepared.”  
+- *(Edge)* “(Inferred) Public recognition motivates stronger cooperation.”
+
+---
+
+### **4. Social**
+**Inference supported.**  
+Their social world and interaction patterns: relationships, networks, affiliations, and social attitudes.  
+**Include:** Friends/family info, social events, community behavior, political/social engagement.  
+**Exclude:** Workplace relations (*Professional_Background*), moral worldviews (*Psychology_And_Values*).  
+**Examples:**  
+- “Attended a wedding in Bali with university friends.”  
+- “Has weekly dinners with siblings.”  
+- *(Edge)* “(Inferred) Tends to end friendships abruptly after conflict.”
+
+---
+
+### **5. Wellbeing**
+Physical, emotional, or mental health indicators and practices that affect energy or satisfaction.  
+**Include:** Mood, health status, stress, exercise or rest patterns for wellbeing.  
+**Exclude:** Leisure identity (*Avocation*), purely financial stress (*Financial_Situation*).  
+**Examples:**  
+- “Has been feeling burnt out from work.”  
+- “Practices meditation daily.”  
+- *(Edge)* “Feels mentally drained after social gatherings.”
+
+---
+
+### **6. Avocation**
+Non-work interests that express personality or provide meaning: hobbies, creativity, or volunteering.  
+**Include:** Recreational pursuits, creative work, service done for enjoyment.  
+**Exclude:** Career learning (*Professional_Background*), therapy/health routines (*Wellbeing*).  
+**Examples:**  
+- “Enjoys photography and hiking.”  
+- “Plays guitar on weekends.”  
+- *(Edge)* “Volunteers monthly at a food bank.”
+
+---
+
+### **7. Professional_Background**
+Career, education, and skill information including ambition and professional identity within work contexts.  
+**Include:** Roles, education, achievements, expertise, drive.  
+**Exclude:** Admin data (*Admin_Matters*), non-career traits (*Core identity*).  
+**Examples:**  
+- “Assistant Manager at HPB.”  
+- “Previously worked in market research.”  
+- *(Edge)* “(Inferred) Seeks high-impact roles to accelerate advancement.”
+
+---
+
+### **8. Environment_And_Lifestyle**
+Living conditions, routines, travel, fashion, and sensory or aesthetic preferences shaping daily rhythm.  
+**Include:** Residence, commute, fashion sense, travel habits, preferred settings.  
+**Exclude:** Spending motives (*Financial_Situation*), health effects (*Wellbeing*).  
+**Examples:**  
+- “Lives in Singapore but travels frequently.”  
+- “Prefers early mornings and outdoor cafés.”  
+- *(Edge)* “Values tailored clothing and minimalist interiors.”
+
+---
+
+### **9. Psychology_And_Values**
+Beliefs, moral compass, decision-making tendencies, and enduring personality traits.  
+**Include:** Principles, risk tolerance, emotional or analytical decision patterns.  
+**Exclude:** Situational tactics (*Relationship_Strategy*), explanatory syntheses (*Deeper_Insights*).  
+**Examples:**  
+- “Values independence and self-improvement.”  
+- “Believes in long-term loyalty.”  
+- *(Edge)* “Prefers data over intuition in major choices.”
+
+---
+
+### **10. Communication_Style**
+**Inference supported.**  
+Preferred communication modes, tone, and content focus (emotional vs factual, abstract vs concrete).  
+**Include:** Medium (text/voice), tone (direct/humorous/formal), favorite topics.  
+**Exclude:** Relationship manipulation (*Relationship_Strategy*), social network info (*Social*).  
+**Examples:**  
+- “Speaks directly and appreciates honesty.”  
+- “Uses humor to diffuse tension.”  
+- *(Edge)* “Responds better to short voice notes than long texts.”
+
+---
+
+### **11. Challenges_And_Development**
+Current difficulties, weaknesses, or areas for growth—including psychological blockers and fears.  
+**Include:** Skill gaps, procrastination, emotional barriers, avoidance patterns.  
+**Exclude:** Deep-rooted motives (*Deeper_Insights*), discrete tasks (*Actionable*).  
+**Examples:**  
+- “Struggles with delegating tasks.”  
+- “Wants to improve time management.”  
+- *(Edge)* “(Inferred) Avoids conflict by over-accommodating peers.”
+
+---
+
+### **12. Deeper_Insights**
+**Inference supported.**  
+Underlying explanations connecting multiple behaviors: motivations, defenses, coping mechanisms, or influence levers.  
+**Include:** Cross-category syntheses (e.g., guilt-driven prosociality), motivators (validation, autonomy, belonging).  
+**Exclude:** Single observable facts (keep in native category).  
+**Examples:**  
+- “(Inferred) Overcompensates for insecurity through overwork.”  
+- “(Inferred) Recognition motivates more than money.”  
+- *(Edge)* “(Inferred) Religious framing increases moral engagement.”
+
+---
+
+### **13. Financial_Situation**
+Money-related attitudes and behavior: earning, spending, saving, risk, and values around consumption.  
+**Include:** Income level, spending habits, investment mindset, lifestyle spending indicators.  
+**Exclude:** General lifestyle aesthetics (*Environment_And_Lifestyle*).  
+**Examples:**  
+- “Saving for a house.”  
+- “Prefers stable income to high-risk ventures.”  
+- *(Edge)* “Flies budget airlines but books boutique hotels.”
+
+---
+
+### **14. Admin_Matters**
+Logistical or factual data: contact details, schedules, travel plans, IDs.  
+**Include:** Addresses, phone numbers, meeting times, passport validity.  
+**Exclude:** To-dos (*Actionable*), personally meaningful memories (*Memory_anchors*).  
+**Examples:**  
+- “Phone number: +65 XXXX XXXX.”  
+- “Flight to Tokyo on March 12.”  
+- *(Edge)* “Passport expires May 2027.”
+
+---
+
+### **15. Established_patterns**
+**Inference supported.**  
+Repetitive behaviors or thought loops indicating predictability.  
+**Include:** Routines, recurring communication habits, repeated reaction styles.  
+**Exclude:** One-off behaviors (*Social*), deeper motive theories (*Deeper_Insights*).  
+**Examples:**  
+- “Always texts recaps after meetings.”  
+- “Starts mornings with journaling.”  
+- *(Edge)* “(Inferred) Says yes, then renegotiates deadlines late.”
+
+---
+
+### **16. Core identity**
+**Inference supported.**  
+Deep self-definitions and enduring roles—the narrative essence of who they are.  
+**Include:** Identity labels (“creator,” “caregiver”), life themes, fundamental affiliations.  
+**Exclude:** Temporary roles (*Professional_Background*).  
+**Examples:**  
+- “Identifies as a teacher at heart.”  
+- “Sees herself as a connector of people.”  
+- *(Edge)* “(Inferred) Thinks of himself primarily as a builder, not a manager.”
+
+---
+
+### **17. Information_gaps**
+**Inference supported.**  
+Unknowns or contradictions requiring follow-up questions or clarification.  
+**Include:** Missing role, unclear timeline, inconsistent preferences.  
+**Exclude:** Speculative guesses (record only the question).  
+**Examples:**  
+- “Unclear current job scope—ask for responsibilities.”  
+- “Need to verify family background.”  
+- *(Edge)* “Conflicting notes on risk tolerance—clarify.”
+
+---
+
+### **18. Memory_anchors**
+Memorable personal details useful for bonding or recall—unique quirks, favorites, or shared experiences.  
+**Include:** Pets, favorite foods, sentimental moments, sensory memories.  
+**Exclude:** Generic logistics (*Admin_Matters*).  
+**Examples:**  
+- “Has a cat named Mochi.”  
+- “Loves Kouign-Amann from Tiong Bahru Bakery.”  
+- *(Edge)* “We had French pastries together in a small café in France.”
+
+---
+
+### **19. Positionality**
+**Inference supported.**  
+How they perceive or relate to you; your relational standing or role in their eyes.  
+**Include:** Their trust level, authority dynamic, warmth, boundaries.  
+**Exclude:** Their general reputation (*Social*, *Professional_Background*).  
+**Examples:**  
+- “Sees me as a trusted sounding board.”  
+- “Prefers I take the lead in planning.”  
+- *(Edge)* “(Inferred) Thinks I’m ‘too salesy’—dial down persuasion.”
+
+---
+
+### **20. Others**
+Residual category for uncategorizable or ambiguous facts; use sparingly.  
+**Include:** Trivia, incomplete observations, anomalies awaiting pattern.  
+**Exclude:** Anything that reasonably fits elsewhere.  
+**Examples:**  
+- “Enjoys novelty socks.”  
+- “Knows a few words in Icelandic.”  
+- *(Edge)* “Uses blue stationery—no clear relevance yet.”
+
+---
+
+### **Disambiguation shortcuts**
+- Demands an action → *Actionable*  
+- Describes a goal/end state → *Goals*  
+- Tells how to engage them → *Relationship_Strategy*  
+- Mentions people/events → *Social*  
+- About health/mood → *Wellbeing*  
+- About leisure/meaning → *Avocation*  
+- About job/skills → *Professional_Background*  
+- About living/fashion/routines → *Environment_And_Lifestyle*  
+- About beliefs/personality → *Psychology_And_Values*  
+- About expression/tone → *Communication_Style*  
+- About barriers/fears → *Challenges_And_Development*  
+- Explains underlying motives → *Deeper_Insights*  
+- About money → *Financial_Situation*  
+- About logistics/data → *Admin_Matters*  
+- Repeated behaviors → *Established_patterns*  
+- Fundamental identity → *Core identity*  
+- Missing/unclear info → *Information_gaps*  
+- Personal bonding cues → *Memory_anchors*  
+- How they see me → *Positionality*  
+- None fit → *Others*
+
+---
 
 **CONTEXT PACKAGE:**
 
@@ -2418,7 +2718,7 @@ You must categorize information into exactly these 20 categories:
 {history}
 
 **YOUR TASK:**
-Based on the context package above, perform your analysis and return the JSON object. For each category, provide a "details" array containing each extracted fact as a separate string.
+Analyze the context package and return a single JSON object following the structure above.
 
 **EXAMPLE OUTPUT FORMAT:**
 ```json
@@ -3305,13 +3605,15 @@ def save_synthesis_endpoint():
             elif 'categorized_updates' in synthesis_data:
                 logger.info("🔧 DEBUG: Processing synthesis data (old format)")
                 for category_data in synthesis_data.get('categorized_updates', []):
-                    for detail in category_data.get('details', []):
-                        synthesized_entry = SynthesizedEntry(
-                            contact_id=contact_id,
-                            category=category_data['category'],
-                            content=detail
-                        )
-                        session.add(synthesized_entry)
+                    cat = canonicalize_category(category_data.get('category') or 'Others')
+                    for detail in (category_data.get('details') or []):
+                        if isinstance(detail, str) and detail.strip():
+                            synthesized_entry = SynthesizedEntry(
+                                contact_id=contact_id,
+                                category=cat,
+                                content=detail
+                            )
+                            session.add(synthesized_entry)
             
             session.commit()
             
@@ -3469,52 +3771,90 @@ def process_transcript_endpoint():
 
         master_prompt = MASTER_PROMPT_TEMPLATE.format(new_note=transcript, history=retrieved_history, allowed_categories=", ".join(CATEGORY_ORDER))
         
+        # Use smart model selection
         try:
-            response_content = _openai_chat(
-                messages=[{"role": "user", "content": master_prompt}],
-                model=OPENAI_MODEL,
-                max_tokens=DEFAULT_MAX_TOKENS,
-                temperature=DEFAULT_AI_TEMPERATURE,
+            from app.services.unified_ai_service import unified_ai_service
+            
+            # Always use telegram_history task type for Telegram transcripts to leverage Gemini's large context
+            task_type = "telegram_history"
+            logger.info(f"📱 Processing Telegram transcript: {len(transcript)} chars, using task_type={task_type}")
+            
+            # Analyze using smart model selection
+            ai_result = unified_ai_service.analyze_content(
+                content=transcript,
+                task_type=task_type,
+                prompt=master_prompt
             )
-        except Exception as openai_error:
-            logger.error(f"OpenAI API Error: {str(openai_error)}")
+            
+            if not ai_result['success']:
+                raise Exception(ai_result['error'])
+            
+            response_content = ai_result['content']
+            logger.info(f"Analysis completed using {ai_result['model']} ({ai_result['reason']})")
+            logger.info(f"📄 Raw AI response (first 500 chars): {response_content[:500]}")
+            
+        except Exception as ai_error:
+            logger.error(f"AI Analysis Error: {str(ai_error)}")
             logger.error(f"Prompt length: {len(master_prompt)}")
             logger.error(f"Transcript length: {len(transcript)}")
-            return jsonify({"error": f"OpenAI API Error: {str(openai_error)}"}), 500
+            return jsonify({"error": f"AI Analysis Error: {str(ai_error)}"}), 500
         
         if response_content.startswith('```json'):
             response_content = response_content.replace('```json', '').replace('```', '').strip()
         elif response_content.startswith('```'):
             response_content = response_content.replace('```', '').strip()
         
+        logger.info(f"📄 After code block cleanup (first 500 chars): {response_content[:500]}")
+        
         try:
             ai_json_response = json.loads(response_content)
-        except json.JSONDecodeError:
+            logger.info(f"✅ Successfully parsed AI JSON response")
+        except json.JSONDecodeError as json_err:
+            logger.error(f"❌ JSON decode failed: {json_err}")
+            logger.error(f"📄 Failed content (first 1000 chars): {response_content[:1000]}")
             json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
             if json_match:
-                ai_json_response = json.loads(json_match.group())
+                try:
+                    ai_json_response = json.loads(json_match.group())
+                    logger.info(f"✅ Successfully parsed JSON from regex match")
+                except:
+                    logger.error(f"❌ Regex match also failed to parse")
+                    return jsonify({"error": "Failed to parse AI response"}), 500
             else:
+                logger.error(f"❌ No JSON structure found in response")
                 return jsonify({"error": "Failed to parse AI response"}), 500
         
         normalized = normalize_ai_output(ai_json_response)
+        logger.info(f"📊 Normalized AI output structure: {list(normalized.keys())}")
+        logger.info(f"📊 Categorized updates type: {type(normalized.get('categorized_updates'))}")
+        if normalized.get('categorized_updates'):
+            logger.info(f"📊 First category_data type: {type(normalized['categorized_updates'][0]) if normalized['categorized_updates'] else 'empty'}")
 
         # Auto-save the analysis and log raw transcript + AI output
         session = get_session()
         try:
+            # Get user ID - use current_user.id if authenticated, otherwise default to 1 for internal calls
+            user_id = getattr(current_user, 'id', None) if hasattr(current_user, 'id') and current_user.id else 1
+            
             # Verify contact exists
-            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=user_id).first()
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
 
             # Save synthesized entries
-            for category_data in normalized.get('categorized_updates', []):
-                for detail in category_data.get('details', []):
-                    synthesized_entry = SynthesizedEntry(
-                        contact_id=contact_id,
-                        category=category_data['category'],
-                        content=detail
-                    )
-                    session.add(synthesized_entry)
+            for category_data in (normalized.get('categorized_updates', []) or []):
+                if not isinstance(category_data, dict):
+                    logger.warning(f"Skipping invalid category_data: {category_data}")
+                    continue
+                cat = canonicalize_category(category_data.get('category') or 'Others')
+                for detail in (category_data.get('details') or []):
+                    if isinstance(detail, str) and detail.strip():
+                        synthesized_entry = SynthesizedEntry(
+                            contact_id=contact_id,
+                            category=cat,
+                            content=detail
+                        )
+                        session.add(synthesized_entry)
             
             # Log raw transcript with categorized result
             tags_obj = {
@@ -3549,6 +3889,10 @@ def process_transcript_endpoint():
         finally:
             session.close()
     except Exception as e:
+        import traceback
+        traceback_str = traceback.format_exc()
+        logger.error(f"❌ Error processing transcript: {e}")
+        logger.error(f"Full traceback:\n{traceback_str}")
         print(f"❌ Error processing transcript: {e}")
         return jsonify({"error": f"An internal error occurred: {e}"}), 500
 
@@ -3641,7 +3985,7 @@ run_telegram_import("{task_id}", "{identifier}", {contact_id if contact_id else 
                 env = os.environ.copy()
                 env['TELEGRAM_API_ID'] = os.getenv('TELEGRAM_API_ID', '')
                 env['TELEGRAM_API_HASH'] = os.getenv('TELEGRAM_API_HASH', '')
-                env['KITH_API_URL'] = os.getenv('KITH_API_URL', 'http://127.0.0.1:5001')
+                env['KITH_API_URL'] = os.getenv('KITH_API_URL', 'http://127.0.0.1:8000')
                 env['KITH_API_TOKEN'] = os.getenv('KITH_API_TOKEN', 'dev_token')
                 
                 process = subprocess.Popen([
@@ -5540,26 +5884,26 @@ def transcribe_audio_endpoint():
                 client = openai.OpenAI(api_key=api_key)
                 
                 with open(tmp_path, 'rb') as f:
-                    # Enhanced Whisper parameters for better transcription
+                    # Enhanced GPT-4o Transcribe parameters for better transcription
                     resp = client.audio.transcriptions.create(
-                        model='whisper-1', 
+                        model=DEFAULT_TRANSCRIPTION_MODEL, 
                         file=f,
                         language='en',  # Specify English for better accuracy
                         prompt="This is a voice memo or conversation.",  # Context prompt
                         temperature=0.2  # Lower temperature for more consistent results
                     )
                 transcript_text = (getattr(resp, 'text', None) or '').strip()
-                logger.info(f"Whisper response: '{transcript_text}' (length: {len(transcript_text)})")
+                logger.info(f"GPT-4o Transcribe response: '{transcript_text}' (length: {len(transcript_text)})")
             else:
                 with open(tmp_path, 'rb') as f:
                     resp = openai.Audio.transcribe(
-                        model='whisper-1', 
+                        model=DEFAULT_TRANSCRIPTION_MODEL, 
                         file=f,
                         language='en',
                         prompt="This is a voice memo or conversation."
                     )
                 transcript_text = (resp.get('text') if isinstance(resp, dict) else '').strip()
-                logger.info(f"Whisper response: '{transcript_text}' (length: {len(transcript_text)})")
+                logger.info(f"GPT-4o Transcribe response: '{transcript_text}' (length: {len(transcript_text)})")
         finally:
             try:
                 if os.path.exists(tmp_path):

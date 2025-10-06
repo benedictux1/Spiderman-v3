@@ -16,7 +16,15 @@ DEFAULT_API_TOKEN = 'dev_token'
 # AI Processing
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_AI_TEMPERATURE = 0.1
-DEFAULT_OPENAI_MODEL = 'gpt-4'
+DEFAULT_OPENAI_MODEL = 'gpt-5'
+DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe'
+
+# Gemini Models
+GEMINI_MODEL = 'gemini-2.0-flash-exp'
+GEMINI_MAX_TOKENS = 1000000  # 1M tokens for large context
+
+# Model Selection Thresholds
+LARGE_CONTEXT_THRESHOLD = 150000  # 150K tokens - GPT-5's limit
 
 # Timeouts and Retries
 DEFAULT_TIMEOUT_SECONDS = 120

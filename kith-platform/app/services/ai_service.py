@@ -1,6 +1,9 @@
 import os
 import openai
-from openai.error import OpenAIError
+try:
+    from openai.error import OpenAIError
+except ImportError:
+    from openai import OpenAIError
 import google.generativeai as genai
 from typing import Dict, Any, List
 import logging

@@ -136,3 +136,8 @@ psutil==6.1.0  # System and process utilities for monitoring
 Flask-SQLAlchemy==3.1.1
 Flask-Migrate==4.0.7
 dependency-injector==4.41.0
+
+# Enhanced Telegram Integration Dependencies
+cryptography>=41.0.0  # For session encryption
+boto3>=1.35.0,<1.36.0  # AWS SDK for S3 storage (already present)
+redis==5.0.4  # Redis client (already present)

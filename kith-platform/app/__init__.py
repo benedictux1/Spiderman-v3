@@ -217,6 +217,21 @@ def create_app(config_class=None):
     except Exception as e:
         logging.warning(f"Failed to register telegram blueprint: {e}")
     
+    # Register enhanced Telegram blueprint
+    try:
+        from app.api.telegram_enhanced import telegram_enhanced_bp, telegram_auth_start, telegram_auth_verify, telegram_auth_password, telegram_auth_cancel
+        app.register_blueprint(telegram_enhanced_bp)
+        
+        # Register auth endpoints at app level (not under enhanced prefix)
+        app.add_url_rule('/api/telegram/auth/start', 'telegram_auth_start', telegram_auth_start, methods=['POST'])
+        app.add_url_rule('/api/telegram/auth/verify', 'telegram_auth_verify', telegram_auth_verify, methods=['POST'])
+        app.add_url_rule('/api/telegram/auth/password', 'telegram_auth_password', telegram_auth_password, methods=['POST'])
+        app.add_url_rule('/api/telegram/auth/cancel', 'telegram_auth_cancel', telegram_auth_cancel, methods=['POST'])
+        
+        logging.info("✅ Enhanced Telegram blueprint and auth endpoints registered successfully")
+    except Exception as e:
+        logging.warning(f"Failed to register Enhanced Telegram blueprint: {e}")
+    
     try:
         from app.api.admin import admin_bp
         app.register_blueprint(admin_bp, url_prefix='/api/admin')

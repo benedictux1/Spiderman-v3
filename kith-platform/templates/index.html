@@ -398,9 +398,114 @@
                 </div>
             </div>
 
-            <!-- Telegram Integration -->
+            <!-- Enhanced Telegram Integration -->
             <div class="settings-section">
-                <h3>💬 Telegram Integration</h3>
+                <h3>💬 Enhanced Telegram Integration</h3>
+                
+                <!-- Enhanced Telegram Section -->
+                <div id="telegram-enhanced-section" class="telegram-enhanced-section">
+                    <div class="telegram-enhanced-grid">
+                        <!-- Status Card -->
+                        <div class="telegram-enhanced-card">
+                            <div class="telegram-enhanced-header">
+                                <span class="telegram-enhanced-icon">📊</span>
+                                <h4>Status & Environment</h4>
+                            </div>
+                            <div class="telegram-enhanced-content">
+                                <div id="telegram-status-enhanced" class="status-display">
+                                    <div class="status-indicator">
+                                        <span class="status-dot" id="telegram-status-dot-enhanced"></span>
+                                        <span class="status-text" id="telegram-status-text-enhanced">Checking...</span>
+                                    </div>
+                                    <div class="status-details" id="telegram-status-details-enhanced"></div>
+                                </div>
+                                <div id="telegram-environment-info" class="environment-info"></div>
+                                <div id="telegram-user-info" class="user-info"></div>
+                                <div id="telegram-sync-status" class="sync-status"></div>
+                            </div>
+                        </div>
+
+                        <!-- Connection Card -->
+                        <div class="telegram-enhanced-card">
+                            <div class="telegram-enhanced-header">
+                                <span class="telegram-enhanced-icon">🔗</span>
+                                <h4>Connection</h4>
+                            </div>
+                            <div class="telegram-enhanced-content">
+                                <div class="telegram-enhanced-actions">
+                                    <!-- Authentication button - shown when no session -->
+                                    <button id="telegram-auth-start-enhanced" class="telegram-enhanced-button primary" style="display:none;">
+                                        📱 Authenticate with Phone/OTP
+                                    </button>
+                                    
+                                    <!-- Connect button - shown when session exists -->
+                                    <button id="telegram-connect-enhanced" class="telegram-enhanced-button primary">
+                                        🔗 Connect to Telegram
+                                    </button>
+                                    
+                                    <!-- Disconnect button - shown when connected -->
+                                    <button id="telegram-disconnect-enhanced" class="telegram-enhanced-button secondary" style="display:none;">
+                                        🔓 Disconnect
+                                    </button>
+                                </div>
+                                <div id="telegram-message-enhanced" class="message-display"></div>
+                            </div>
+                        </div>
+
+                        <!-- Sync Card -->
+                        <div class="telegram-enhanced-card">
+                            <div class="telegram-enhanced-header">
+                                <span class="telegram-enhanced-icon">🔄</span>
+                                <h4>Sync Operations</h4>
+                            </div>
+                            <div class="telegram-enhanced-content">
+                                <div class="telegram-enhanced-actions">
+                                    <button id="telegram-sync-all-enhanced" class="telegram-enhanced-button primary">
+                                        📥 Sync All History
+                                    </button>
+                                    <button id="telegram-sync-contact-enhanced" class="telegram-enhanced-button secondary">
+                                        👤 Sync Contact
+                                    </button>
+                                </div>
+                                <div class="sync-options">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="telegram-sync-contacts" checked>
+                                        <span>Include contacts</span>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="telegram-sync-messages" checked>
+                                        <span>Include messages</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Migration Card -->
+                        <div class="telegram-enhanced-card">
+                            <div class="telegram-enhanced-header">
+                                <span class="telegram-enhanced-icon">☁️</span>
+                                <h4>Storage Migration</h4>
+                            </div>
+                            <div class="telegram-enhanced-content">
+                                <div class="telegram-enhanced-actions">
+                                    <button id="telegram-migrate-to-cloud" class="telegram-enhanced-button primary">
+                                        ☁️ Migrate to Cloud
+                                    </button>
+                                    <button id="telegram-migrate-to-local" class="telegram-enhanced-button secondary">
+                                        💾 Migrate to Local
+                                    </button>
+                                    <button id="telegram-sync-storages" class="telegram-enhanced-button secondary">
+                                        🔄 Sync Storages
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Legacy Telegram Integration (Hidden by default) -->
+                <div class="settings-section" style="display:none;">
+                    <h3>💬 Legacy Telegram Integration</h3>
                 
                 <div class="telegram-grid">
                     <!-- Card 1: Setup & Status -->
@@ -920,32 +1025,7 @@
             noteInput.disabled = false;
         }
 
-        // Telegram functions
-        async function handleProfileTelegramSync() {
-            const contactId = document.getElementById('selected-contact-id')?.value;
-            if (!contactId) {
-                alert('Contact ID not found. Please refresh and try again.');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/telegram/start-import', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contact_id: contactId, days_back: 30 })
-                });
-                
-                const result = await response.json();
-                if (result.success) {
-                    alert('Telegram sync started! This may take a few moments.');
-                    pollImportStatus(result.task_id, null, () => loadContactProfile(contactId));
-                } else {
-                    alert('Error starting Telegram sync: ' + result.message);
-                }
-            } catch (error) {
-                alert('Error starting Telegram sync: ' + error.message);
-            }
-        }
+        // Telegram functions - handled in main.js to avoid conflicts
 
         async function checkTelegramStatus() {
             try {
@@ -2056,5 +2136,8 @@
     <script src="/static/js/settings.js"></script>
     <script src="/static/js/relationship-graph.js"></script>
     <script src="/static/js/ui-enhancements.js"></script>
+    
+    <!-- Enhanced Telegram Integration -->
+    <script src="/static/js/telegram-enhanced.js"></script>
 </body>
 </html>

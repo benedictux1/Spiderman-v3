@@ -98,13 +98,14 @@ def create_app(config_class=None):
         response.headers['X-XSS-Protection'] = '1; mode=block'
         
         # Content Security Policy
+        # Allow trusted CDNs for graph library
         csp = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https:; "
             "font-src 'self' data:; "
-            "connect-src 'self'; "
+            "connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net; "
             "frame-ancestors 'none';"
         )
         response.headers['Content-Security-Policy'] = csp
@@ -325,6 +326,16 @@ def create_app(config_class=None):
             logging.warning(f"Authentication check failed: {e}, showing login")
             return render_template('login.html')
     
+    # SPA-friendly route for Relationship Graph tab used in tests
+    @app.route('/graph')
+    def graph_page():
+        """Serve the main SPA with graph view available.
+        Tests expect GET /graph to be 200. We serve index.html to allow
+        the frontend router/JS to show the Relationship Graph section.
+        """
+        from flask import render_template
+        return render_template('index.html')
+
     
     @app.route('/health')
     def health_check():

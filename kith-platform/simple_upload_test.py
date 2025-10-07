@@ -8,16 +8,17 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Now import from app.py
-import app as flask_app
+# Use application factory pattern (new structure)
+from app import create_app
+from app.utils.database import DatabaseManager
+
+flask_app = create_app()
 
 print("1. Testing database connection...")
 try:
-    # Test the get_session function
-    session = flask_app.get_session()
-    if session:
+    dm = DatabaseManager()
+    with dm.get_session() as session:
         print("   ✓ Database connection works")
-        session.close()
 except Exception as e:
     print(f"   ✗ Database error: {e}")
 

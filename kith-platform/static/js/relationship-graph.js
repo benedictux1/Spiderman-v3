@@ -129,12 +129,26 @@ async function initializeGraphView() {
         network.on('click', function(params) {
             if (params.nodes.length > 0) {
                 const nodeId = params.nodes[0];
-                console.log('Node clicked:', nodeId);
+                console.log('🖱️ Node clicked:', nodeId);
+            }
+        });
+        
+        // Add double-click event listener for navigation to contact profile
+        network.on('doubleClick', function(params) {
+            console.log('🖱️🖱️ Double-click event triggered!', params);
+            if (params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                console.log('🖱️🖱️ Node double-clicked:', nodeId);
                 
-                // If it's not the "You" node, show contact profile
+                // If it's not the "You" node, navigate to contact profile
                 if (nodeId !== 0) {
-                    showContactProfile(nodeId);
+                    console.log('🚀 Navigating to contact profile for node:', nodeId);
+                    navigateToContactProfile(nodeId);
+                } else {
+                    console.log('ℹ️ Ignoring double-click on "You" node');
                 }
+            } else {
+                console.log('ℹ️ Double-click on empty space (no node)');
             }
         });
         
@@ -518,6 +532,62 @@ function showContactProfile(contactId) {
     // by calling the appropriate function from main.js or contacts.js
     if (typeof window.showContactProfile === 'function') {
         window.showContactProfile(contactId);
+    }
+}
+
+function navigateToContactProfile(contactId) {
+    console.log('📍 navigateToContactProfile called with ID:', contactId);
+    
+    // Get the contact name from the graph data
+    const contactNode = graphData.nodes.get(contactId);
+    const contactName = contactNode ? contactNode.label : 'Contact';
+    console.log('📍 Contact name:', contactName);
+    
+    // Use the existing openContactProfile function from main.js
+    console.log('📍 Checking for window.openContactProfile:', typeof window.openContactProfile);
+    if (typeof window.openContactProfile === 'function') {
+        console.log('✅ Calling window.openContactProfile');
+        window.openContactProfile(contactId, contactName);
+    } else if (typeof window.viewContactProfile === 'function') {
+        console.log('✅ Calling window.viewContactProfile');
+        window.viewContactProfile(contactId);
+    } else {
+        // Fallback: try to navigate manually
+        console.log('⚠️ Fallback navigation to contact profile');
+        
+        // Hide graph view and show profile view
+        const graphView = document.getElementById('graph-view');
+        const profileView = document.getElementById('profile-view');
+        const mainView = document.getElementById('main-view');
+        
+        console.log('📍 graphView exists:', !!graphView);
+        console.log('📍 profileView exists:', !!profileView);
+        console.log('📍 mainView exists:', !!mainView);
+        
+        if (graphView) graphView.style.display = 'none';
+        if (mainView) mainView.style.display = 'none';
+        if (profileView) profileView.style.display = 'block';
+        
+        // Set the contact ID
+        const hiddenId = document.getElementById('selected-contact-id');
+        if (hiddenId) {
+            hiddenId.value = String(contactId);
+            console.log('✅ Set selected-contact-id to:', contactId);
+        }
+        
+        // Update the header
+        const header = document.getElementById('contact-profile-name');
+        if (header) {
+            header.textContent = contactName;
+            console.log('✅ Set contact-profile-name to:', contactName);
+        }
+        
+        // Load the contact profile
+        console.log('📍 Checking for window.loadContactProfile:', typeof window.loadContactProfile);
+        if (typeof window.loadContactProfile === 'function') {
+            console.log('✅ Calling window.loadContactProfile');
+            window.loadContactProfile(contactId);
+        }
     }
 }
 

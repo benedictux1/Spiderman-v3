@@ -177,6 +177,8 @@ function showProfileView() {
     document.getElementById('review-view').style.display = 'none';
     document.getElementById('profile-view').style.display = 'block';
     document.getElementById('settings-view').style.display = 'none';
+    const graphView = document.getElementById('graph-view');
+    if (graphView) graphView.style.display = 'none';
     currentView = 'profile';
 }
 

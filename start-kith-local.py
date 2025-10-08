@@ -47,7 +47,15 @@ try:
     # Import the main app.py file directly
     import sys
     sys.path.insert(0, kith_dir)
-    import app as main_app
+    
+    # Import the Flask app from the app.py module (not the app/ directory)
+    # We need to use importlib to avoid confusion with the app/ directory
+    import importlib.util
+    app_py_path = os.path.join(kith_dir, 'app.py')
+    spec = importlib.util.spec_from_file_location("main_app_module", app_py_path)
+    main_app = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(main_app)
+    
     from app.utils.database import DatabaseManager
     from app.models import Base, User
     from werkzeug.security import generate_password_hash

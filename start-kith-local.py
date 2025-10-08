@@ -44,12 +44,16 @@ print("=" * 50)
 # Initialize database and create admin user
 print("🔧 Setting up database...")
 try:
-    from app import create_app
+    # Import the main app.py file directly
+    import sys
+    sys.path.insert(0, kith_dir)
+    import app as main_app
     from app.utils.database import DatabaseManager
     from app.models import Base, User
     from werkzeug.security import generate_password_hash
 
-    app = create_app()
+    # The Flask app is defined as 'app' in the main app.py file
+    app = main_app.app
     
     with app.app_context():
         db_manager = DatabaseManager()

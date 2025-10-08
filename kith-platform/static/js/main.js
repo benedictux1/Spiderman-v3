@@ -115,7 +115,7 @@ function deleteSelectedContacts(contactIds) {
 // Helper function to edit contact profile
 function editContactProfile(contactId) {
     // Find the contact data
-    fetch(`/api/contact/${contactId}`)
+    fetch(`/api/contacts/${contactId}`)
     .then(response => response.json())
     .then(contact => {
         const newName = prompt('Enter new name:', contact?.contact_info?.full_name || '');
@@ -126,7 +126,7 @@ function editContactProfile(contactId) {
         if (newHandle !== null) payload.telegram_username = (newHandle || '').replace(/^@/, '').trim();
         if (Object.keys(payload).length === 0) return;
         // Update the contact
-        fetch(`/api/contact/${contactId}`, {
+        fetch(`/api/contacts/${contactId}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json'
@@ -255,7 +255,7 @@ async function handleProfileTelegramSync() {
     let identifier = '';
     try {
       if (contactId) {
-        const res = await fetch(`/api/contact/${contactId}`);
+        const res = await fetch(`/api/contacts/${contactId}`);
         const payload = await res.json().catch(() => ({}));
         const info = (payload && payload.contact_info) || (payload && payload.data && payload.data.contact_info) || payload;
         const uname = (info && (info.telegram_username || info.username)) || '';
@@ -328,12 +328,12 @@ function openContactProfile(contactId, contactName) {
 // Fetch and render a contact profile, including all categories
 async function loadContactProfile(contactId) {
   try {
-    // Use the correct endpoint (/api/contact/:id)
-    let res = await fetch(`/api/contact/${contactId}`);
+    // Use the correct endpoint (/api/contacts/:id) - plural form
+    let res = await fetch(`/api/contacts/${contactId}`);
     let payload = await res.json().catch(() => ({}));
     // If modular route not available, try legacy
     if (!res.ok || (payload && payload.error)) {
-      res = await fetch(`/api/contact/${contactId}`);
+      res = await fetch(`/api/contacts/${contactId}`);
       payload = await res.json().catch(() => ({}));
     }
 
@@ -348,7 +348,7 @@ async function loadContactProfile(contactId) {
     try {
       const hasAnyCategory = normalized && normalized.categorized_data && Object.values(normalized.categorized_data).some(arr => Array.isArray(arr) && arr.length > 0);
       if (!hasAnyCategory) {
-        const legacyRes = await fetch(`/api/contact/${contactId}`);
+        const legacyRes = await fetch(`/api/contacts/${contactId}`);
         if (legacyRes.ok) {
           const legacyPayload = await legacyRes.json().catch(() => ({}));
           const legacy = (legacyPayload && legacyPayload.success && legacyPayload.data)
@@ -377,7 +377,7 @@ async function loadContactProfile(contactId) {
           await window.fetchAndRenderRawLogs(contactId);
         } else {
           // Fallback: render with basic table logic
-          const logsRes = await fetch(`/api/contact/${contactId}/raw-logs`);
+          const logsRes = await fetch(`/api/contacts/${contactId}/raw-logs`);
           const entries = await logsRes.json();
           const box = document.getElementById('raw-logs-content');
           if (!box) return;
@@ -499,7 +499,8 @@ function renderContactProfile(profileData, noticeMessage) {
   const header = document.getElementById('contact-profile-name');
   if (header) {
     const tierLabel = info?.tier ? ` (Tier ${info.tier})` : '';
-    header.textContent = `${info?.full_name || ''}${tierLabel}`;
+    const contactName = info?.full_name || header.textContent || '';
+    header.textContent = `${contactName}${tierLabel}`;
   }
 
   container.innerHTML = '';
@@ -564,11 +565,11 @@ function renderContactProfile(profileData, noticeMessage) {
         btn.disabled = true; btn.textContent = 'Seeding...';
         try {
           // Prefer modular API if available
-          let res = await fetch(`/api/contact/${id}/seed-demo`, { method: 'POST' });
+          let res = await fetch(`/api/contacts/${id}/seed-demo`, { method: 'POST' });
           let out = await res.json().catch(() => ({}));
           if (!res.ok || out.error) {
             // fallback to legacy
-            res = await fetch(`/api/contact/${id}/seed-demo`, { method: 'POST' });
+            res = await fetch(`/api/contacts/${id}/seed-demo`, { method: 'POST' });
             out = await res.json().catch(() => ({}));
           }
           if (!res.ok || out.error) throw new Error(out.error || 'Failed to seed');
@@ -705,7 +706,7 @@ function wireProfileButtons() {
         payload.categorized_updates.push({ category: cat, details: lines });
       });
       try {
-        const res = await fetch(`/api/contact/${id}/categories`, {
+        const res = await fetch(`/api/contacts/${id}/categories`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -714,7 +715,7 @@ function wireProfileButtons() {
         if (!res.ok || out.error) throw new Error(out.error || out.message || 'Failed to save');
         // Immediately fetch categories from modular GET to ensure UI reflects latest
         try {
-          const catsRes = await fetch(`/api/contact/${id}/categories`);
+          const catsRes = await fetch(`/api/contacts/${id}/categories`);
           if (catsRes.ok) {
             const cats = await catsRes.json();
             if (cats && cats.categorized_data) {
@@ -744,7 +745,7 @@ function wireProfileButtons() {
       const id = parseInt(document.getElementById('selected-contact-id').value, 10);
       try {
         // Load current contact info
-        const infoRes = await fetch(`/api/contact/${id}`);
+        const infoRes = await fetch(`/api/contacts/${id}`);
         const infoData = await infoRes.json();
         if (infoData.error) throw new Error(infoData.error);
         const curHandle = infoData?.contact_info?.telegram_username || infoData?.contact_info?.telegram_handle || '';
@@ -770,7 +771,7 @@ function wireProfileButtons() {
             if (startBtn) { startBtn.disabled = true; startBtn.textContent = 'Starting…'; }
             // Save username if changed/missing
             if (username !== curHandle.replace(/^@/, '')) {
-              const patchRes = await fetch(`/api/contact/${id}`, {
+              const patchRes = await fetch(`/api/contacts/${id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ telegram_username: username })
@@ -839,7 +840,7 @@ function wireProfileButtons() {
       if (handle !== null) payload.telegram_username = (handle || '').trim();
       if (Object.keys(payload).length === 0) return alert('No changes provided.');
       try {
-        const res = await fetch(`/api/contact/${id}`, {
+        const res = await fetch(`/api/contacts/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -859,7 +860,7 @@ function wireProfileButtons() {
       const id = parseInt(document.getElementById('selected-contact-id').value, 10);
       if (!confirm('Delete this contact and all associated data?')) return;
       try {
-        const res = await fetch(`/api/contact/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
         const out = await res.json();
         if (out.error) throw new Error(out.error);
         alert('Contact deleted.');

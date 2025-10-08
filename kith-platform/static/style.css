@@ -544,6 +544,18 @@ button {
     flex: 0 0 auto;
 }
 
+.contact-name-small {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #000000;
+    margin-right: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+    display: inline-block;
+}
+
 .back-btn-compact {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
@@ -2888,6 +2900,30 @@ button {
 .modal .form-group textarea {
     resize: vertical;
     min-height: 80px;
+}
+
+/* Color picker styling */
+.modal .form-group input[type="color"] {
+    width: 60px;
+    height: 40px;
+    padding: 4px;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    background: none;
+}
+
+.modal .form-group input[type="color"]:hover {
+    border-color: var(--border-focus);
+}
+
+.modal .form-group input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.modal .form-group input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: var(--radius-sm);
 }
 
 /* Responsive Design for Tags */

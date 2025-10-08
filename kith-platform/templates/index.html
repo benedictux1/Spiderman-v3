@@ -130,7 +130,7 @@
             <input type="hidden" id="selected-contact-id" />
             <div class="profile-header-compact">
                 <div class="profile-header-left">
-                    <h2 id="contact-profile-name"></h2>
+                    <span id="contact-profile-name" class="contact-name-small"></span>
                 </div>
                 <div class="profile-header-right">
                     <button id="back-to-main-from-profile" class="back-btn-compact">← Back to Main</button>
@@ -182,7 +182,7 @@
             <div class="tags-section card">
                 <div class="tags-header">
                     <h3>Tags</h3>
-                    <button id="manage-tags-btn" class="secondary-btn">Manage Tags</button>
+                    <button id="manage-tags-btn" class="secondary-btn" type="button">Manage Tags</button>
                 </div>
                 <div id="contact-tags-container" class="tags-container">
                     <!-- Tags will be dynamically loaded here -->
@@ -191,10 +191,10 @@
                     <select id="tag-select" class="tag-select">
                         <option value="">Select a tag to assign...</option>
                     </select>
-                    <button id="assign-tag-btn" class="primary-btn">Assign Tag</button>
-                    <button id="cancel-assign-tag-btn" class="secondary-btn">Cancel</button>
+                    <button id="assign-tag-btn" class="primary-btn" type="button">Assign Tag</button>
+                    <button id="cancel-assign-tag-btn" class="secondary-btn" type="button">Cancel</button>
                 </div>
-                <button id="add-tag-btn" class="primary-btn">+ Add Tag</button>
+                <button id="add-tag-btn" class="primary-btn" type="button">+ Add Tag</button>
             </div>
 
             <!-- Import Progress UI -->

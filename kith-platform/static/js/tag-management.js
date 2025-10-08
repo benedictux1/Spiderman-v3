@@ -152,7 +152,7 @@ async function loadAllTags() {
 // Load tags for a specific contact
 async function loadContactTags(contactId) {
     try {
-        const response = await fetch(`/api/contacts/${contactId}/tags`, { credentials: 'include' });
+        const response = await fetch(`/api/tags/contacts/${contactId}`, { credentials: 'include' });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -304,11 +304,11 @@ async function assignTagToContact() {
         renderContactTags();
     }
     try {
-        const response = await fetch(`/api/contacts/${contactId}/tags`, {
+        const response = await fetch(`/api/tags/${selectedId}/contacts/${contactId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ tag_id: selectedId })
+            body: JSON.stringify({})
         });
         if (!response.ok) {
             const errorData = await response.json();
@@ -339,7 +339,7 @@ async function removeTagFromContact(tagId) {
     currentContactTags = currentContactTags.filter(t => t.id !== tagId);
     renderContactTags();
     try {
-        const response = await fetch(`/api/contacts/${contactId}/tags/${tagId}`, { method: 'DELETE', credentials: 'include' });
+        const response = await fetch(`/api/tags/${tagId}/contacts/${contactId}`, { method: 'DELETE', credentials: 'include' });
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
@@ -563,9 +563,113 @@ async function confirmDeleteTag() {
     }
 }
 
-// Edit tag (placeholder for future implementation)
+// Edit tag
 function editTag(tag) {
-    showToast('Tag editing will be implemented in a future update', 'info');
+    // Create edit modal
+    const modal = document.createElement('div');
+    modal.id = 'edit-tag-modal';
+    modal.className = 'modal';
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Tag</h3>
+                <button class="close-btn" onclick="closeModal('edit-tag-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-tag-form">
+                    <div class="form-group">
+                        <label for="edit-tag-name">Tag Name</label>
+                        <input type="text" id="edit-tag-name" value="${escapeHtml(tag.name)}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-tag-color">Color</label>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <input type="color" id="edit-tag-color" value="${tag.color}" style="width: 50px; height: 40px; border: 2px solid #e5e7eb; border-radius: 6px; cursor: pointer;">
+                            <div id="color-preview" style="width: 40px; height: 40px; border-radius: 6px; border: 2px solid #e5e7eb; background-color: ${tag.color};"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-tag-description">Description (optional)</label>
+                        <textarea id="edit-tag-description" rows="3">${escapeHtml(tag.description || '')}</textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="secondary-btn" onclick="closeModal('edit-tag-modal')">Cancel</button>
+                <button type="button" class="primary-btn" onclick="saveTagEdit(${tag.id})">Save Changes</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    modal.style.display = 'flex';
+    
+    // Focus on name input
+    document.getElementById('edit-tag-name').focus();
+    
+    // Add color picker change listener
+    const colorInput = document.getElementById('edit-tag-color');
+    const colorPreview = document.getElementById('color-preview');
+    
+    colorInput.addEventListener('input', function() {
+        colorPreview.style.backgroundColor = this.value;
+    });
+    
+    // Ensure modal is properly centered
+    setTimeout(() => {
+        modal.style.display = 'flex';
+    }, 10);
+}
+
+// Save tag edit
+async function saveTagEdit(tagId) {
+    const name = document.getElementById('edit-tag-name').value.trim();
+    const color = document.getElementById('edit-tag-color').value;
+    const description = document.getElementById('edit-tag-description').value.trim();
+    
+    if (!name) {
+        showToast('Tag name is required', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/tags/${tagId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                name: name,
+                color: color,
+                description: description
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        showToast(result.message, 'success');
+        
+        // Close modal
+        closeModal('edit-tag-modal');
+        
+        // Refresh tags list
+        await loadAllTags();
+        
+        // If we're in settings, refresh the management view
+        if (document.getElementById('tags-management-container')) {
+            renderTagsManagement();
+        }
+        
+    } catch (error) {
+        console.error('Error updating tag:', error);
+        showToast(`Failed to update tag: ${error.message}`, 'error', 0); // Persistent
+    }
 }
 
 // Close modal

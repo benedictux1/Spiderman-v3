@@ -101,6 +101,12 @@ except Exception as e:
     logger.error(f"❌ Failed to register Enhanced Telegram blueprint: {e}", exc_info=True)
 app.register_blueprint(admin_bp, url_prefix='/api/admin')
 
+# Test route to verify basic route registration
+@app.route('/api/test', methods=['GET'])
+def test_route():
+    """Simple test route to verify Flask app is working."""
+    return jsonify({"message": "Test route working!"})
+
 # --- Database Session Management ---
 try:
     _db_manager = DatabaseManager()
@@ -3225,6 +3231,21 @@ def get_contact_details(contact_id):
         return jsonify({"error": f"Could not retrieve contact data: {e}"}), 500
     finally:
         session.close()
+
+# Route alias to fix the frontend issue
+@app.route('/api/contacts/<int:contact_id>', methods=['GET'])
+@login_required
+def get_contact_details_alias(contact_id):
+    """Route alias for /api/contact/<id> to fix frontend compatibility."""
+    # Call the existing get_contact_details function
+    return get_contact_details(contact_id)
+
+# Test route to verify route registration
+@app.route('/api/contact/<int:contact_id>/test', methods=['GET'])
+@login_required
+def test_contact_route(contact_id):
+    """Test route to verify contact route registration works."""
+    return jsonify({"message": f"Contact route test successful for contact {contact_id}"})
 
 @app.route('/api/contact/<int:contact_id>/seed-demo', methods=['POST'])
 @login_required
@@ -6419,13 +6440,33 @@ def get_contact_tags(contact_id):
 def assign_tag_to_contact(contact_id):
     """Assign a tag to a contact."""
     try:
+        logger.info(f"📌 TAG ASSIGNMENT REQUEST: contact_id={contact_id}")
+        logger.info(f"📌 Request headers: {dict(request.headers)}")
+        logger.info(f"📌 Request content_type: {request.content_type}")
+        logger.info(f"📌 Request data (raw): {request.data}")
+        
         data = request.get_json()
+        logger.info(f"📌 Request JSON parsed: {data}")
+        
         if not data:
+            logger.error("📌 No data provided in request")
             return jsonify({"error": "No data provided"}), 400
         
         tag_id = data.get('tag_id')
-        if not tag_id:
+        logger.info(f"📌 tag_id extracted: {tag_id} (type: {type(tag_id)})")
+        
+        if tag_id is None:
+            logger.error("📌 tag_id is None")
             return jsonify({"error": "tag_id is required"}), 400
+        # Strictly validate and coerce tag_id to an integer
+        try:
+            tag_id = int(str(tag_id).strip())
+            logger.info(f"📌 tag_id converted to int: {tag_id}")
+            if tag_id <= 0:
+                raise ValueError("tag_id must be a positive integer")
+        except Exception as e:
+            logger.error(f"📌 tag_id validation failed: {e}")
+            return jsonify({"error": "Invalid tag_id. Must be a positive integer."}), 400
         
         session = get_session()
         try:

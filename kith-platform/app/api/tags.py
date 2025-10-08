@@ -174,6 +174,22 @@ def add_tag_to_contact(tag_id: int, contact_id: int, tag_service: TagService = P
         logger.error(f"Error adding tag {tag_id} to contact {contact_id}: {e}")
         return jsonify({'error': 'Failed to add tag to contact'}), 500
 
+@tags_bp.route('/contacts/<int:contact_id>', methods=['GET'])
+@login_required
+@inject
+def get_tags_for_contact(contact_id: int, tag_service: TagService = Provide[Container.tag_service]):
+    """Get all tags assigned to a specific contact"""
+    try:
+        tags = tag_service.get_tags_for_contact(contact_id, current_user.id)
+        if tags is None:
+            return jsonify({'error': 'Contact not found'}), 404
+        
+        return jsonify([tag.to_dict() for tag in tags])
+        
+    except Exception as e:
+        logger.error(f"Error retrieving tags for contact {contact_id}: {e}")
+        return jsonify({'error': 'Failed to retrieve tags for contact'}), 500
+
 @tags_bp.route('/<int:tag_id>/contacts/<int:contact_id>', methods=['DELETE'])
 @login_required
 @inject

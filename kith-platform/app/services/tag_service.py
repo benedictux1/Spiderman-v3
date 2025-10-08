@@ -219,6 +219,33 @@ class TagService:
             logger.error(f"Error retrieving contacts for tag {tag_id}: {e}")
             return []
     
+    def get_tags_for_contact(self, contact_id: int, user_id: int) -> Optional[List[Tag]]:
+        """Get all tags assigned to a specific contact"""
+        try:
+            with self.db_manager.get_session() as session:
+                # Verify contact ownership
+                contact = session.query(Contact).filter(
+                    Contact.id == contact_id,
+                    Contact.user_id == user_id
+                ).first()
+                
+                if not contact:
+                    logger.warning(f"Contact {contact_id} not found for user {user_id}")
+                    return None
+                
+                # Get tags through the many-to-many relationship
+                tags = session.query(Tag).join(ContactTag).filter(
+                    ContactTag.contact_id == contact_id,
+                    Tag.user_id == user_id
+                ).all()
+                
+                logger.info(f"Retrieved {len(tags)} tags for contact {contact_id}")
+                return tags
+                
+        except Exception as e:
+            logger.error(f"Error retrieving tags for contact {contact_id}: {e}")
+            return None
+    
     def add_tag_to_contact(self, contact_id: int, tag_id: int, user_id: int) -> bool:
         """Add a tag to a contact"""
         try:

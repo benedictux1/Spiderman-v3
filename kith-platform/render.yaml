@@ -4,7 +4,40 @@ services:
     env: python
     branch: ux-improvements
     runtime: python-3.11.0
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      pip install -r requirements.txt
+      python -c "
+      import os
+      from app import create_app
+      from app.utils.database import DatabaseManager
+      from app.models import Base, User
+      from werkzeug.security import generate_password_hash
+      
+      print('🔧 Initializing database and admin user...')
+      app = create_app()
+      
+      with app.app_context():
+          db_manager = DatabaseManager()
+          Base.metadata.create_all(db_manager.engine)
+          print('✅ Database tables created')
+          
+          with db_manager.get_session() as session:
+              admin_user = session.query(User).filter(User.username == 'admin').first()
+              if not admin_user:
+                  hashed = generate_password_hash('admin123', method='pbkdf2:sha256')
+                  admin_user = User(
+                      username='admin',
+                      password_hash=hashed,
+                      password_plaintext='admin123',
+                      role='admin'
+                  )
+                  session.add(admin_user)
+                  session.commit()
+                  print('✅ Admin user created: admin / admin123')
+              else:
+                  print('✅ Admin user already exists')
+      print('🎉 Database setup complete!')
+      "
     startCommand: gunicorn --workers 2 --bind 0.0.0.0:$PORT wsgi:application
     envVars:
       - key: PYTHON_VERSION
@@ -13,10 +46,14 @@ services:
         generateValue: true
       - key: FLASK_ENV
         value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-platform-db
+          property: connectionString
       - key: DEFAULT_ADMIN_USER
         value: admin
       - key: DEFAULT_ADMIN_PASS
-        generateValue: true
+        value: admin123
     healthCheckPath: /health
     healthCheckTimeout: 300
 

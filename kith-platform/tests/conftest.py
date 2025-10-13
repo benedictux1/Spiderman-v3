@@ -184,16 +184,17 @@ def sample_note(db_session, sample_contact):
 
 @pytest.fixture
 def authenticated_user(client, sample_user):
-    """Create an authenticated user session"""
+    """Create an authenticated user session using proper Flask-Login"""
     import logging
-    logger = logging.getLogger(__name__)
+    from flask_login import login_user
     
+    logger = logging.getLogger(__name__)
     logger.info(f"🔧 DEBUG: Creating authenticated user session for: {sample_user.username} (ID: {sample_user.id})")
     
-    with client.session_transaction() as sess:
-        sess['_user_id'] = str(sample_user.id)
-        sess['_fresh'] = True
-        logger.info(f"🔧 DEBUG: Session variables set - _user_id: {sess.get('_user_id')}, _fresh: {sess.get('_fresh')}")
+    # Use proper Flask-Login authentication instead of session manipulation
+    with client.application.test_request_context():
+        login_user(sample_user)
+        logger.info(f"🔧 DEBUG: User logged in via Flask-Login - {sample_user.username}")
     
     logger.info(f"✅ Authenticated user session created for: {sample_user.username}")
     return sample_user
@@ -219,16 +220,17 @@ def admin_user(db_session):
 
 @pytest.fixture
 def authenticated_admin_user(client, admin_user):
-    """Create an authenticated admin user session"""
+    """Create an authenticated admin user session using proper Flask-Login"""
     import logging
-    logger = logging.getLogger(__name__)
+    from flask_login import login_user
     
+    logger = logging.getLogger(__name__)
     logger.info(f"🔧 DEBUG: Creating authenticated admin user session for: {admin_user.username} (ID: {admin_user.id})")
     
-    with client.session_transaction() as sess:
-        sess['_user_id'] = str(admin_user.id)
-        sess['_fresh'] = True
-        logger.info(f"🔧 DEBUG: Session variables set - _user_id: {sess.get('_user_id')}, _fresh: {sess.get('_fresh')}")
+    # Use proper Flask-Login authentication instead of session manipulation
+    with client.application.test_request_context():
+        login_user(admin_user)
+        logger.info(f"🔧 DEBUG: Admin user logged in via Flask-Login - {admin_user.username}")
     
     logger.info(f"✅ Authenticated admin user session created for: {admin_user.username}")
     return admin_user

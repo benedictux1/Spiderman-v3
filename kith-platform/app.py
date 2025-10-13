@@ -39,6 +39,39 @@ from datetime import datetime
 from analytics import RelationshipAnalytics
 from calendar_integration import CalendarIntegration
 
+
+def compute_detailed_diff(before: dict, after: dict) -> dict:
+    """Compute granular item-level changes between before and after states."""
+    all_categories = set(list(before.keys()) + list(after.keys()))
+    changes = {}
+    
+    for category in all_categories:
+        before_items = set(before.get(category, []) or [])
+        after_items = set(after.get(category, []) or [])
+        
+        added = list(after_items - before_items)
+        removed = list(before_items - after_items)
+        unchanged = list(before_items & after_items)
+        
+        if added or removed:  # Only include if there were actual changes
+            changes[category] = {
+                "added": added,
+                "removed": removed,
+                "unchanged": unchanged
+            }
+    
+    return changes
+
+
+def get_contact_state_snapshot(session, contact_id):
+    """Get current synthesized entries grouped by category."""
+    entries = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).all()
+    state = {}
+    for entry in entries:
+        state.setdefault(entry.category, []).append(entry.content)
+    return state
+
+
 # Import API blueprints
 from app.api.analytics import analytics_bp
 from app.api.auth import auth_bp
@@ -3360,9 +3393,15 @@ def get_raw_logs_for_contact(contact_id):
             for log in raw_notes:
                 details = None
                 try:
-                    if log.tags:
-                        details = json.loads(log.tags)
-                except Exception:
+                    if log.metadata_tags:
+                        # metadata_tags is already a dict in SQLAlchemy with JSON column
+                        if isinstance(log.metadata_tags, dict):
+                            details = log.metadata_tags
+                        else:
+                            # Fallback for string JSON
+                            details = json.loads(log.metadata_tags)
+                except Exception as e:
+                    logger.warning(f"Failed to parse metadata_tags for log {log.id}: {e}")
                     details = None
                 # Compute engine badge info when applicable
                 engine = None
@@ -3588,12 +3627,18 @@ def save_synthesis_endpoint():
                 return jsonify({"error": "Contact not found"}), 404
 
             logger.info(f"🔧 DEBUG: Contact found - {contact.full_name}")
+            
+            # Capture before state for detailed logging
+            before_state = get_contact_state_snapshot(session, contact_id)
+            logger.info(f"🔧 DEBUG: Before state captured: {before_state}")
+            
             # Log the raw note with full details
             if isinstance(raw_note_text, str) and raw_note_text.strip():
                 logger.info("🔧 DEBUG: Creating RawNote with metadata_tags")
                 tags_obj = {
                     "type": "manual_note",
-                    "raw_note": raw_note_text.strip(),
+                    "source": "ui_note_input",
+                    "raw_input": raw_note_text.strip(),
                     "categorized_updates": synthesis_data.get('categorized_updates', [])
                 }
                 logger.info(f"🔧 DEBUG: tags_obj = {tags_obj}")
@@ -3637,6 +3682,25 @@ def save_synthesis_endpoint():
                             session.add(synthesized_entry)
             
             session.commit()
+            
+            # Capture after state and compute detailed changes for enhanced logging
+            after_state = get_contact_state_snapshot(session, contact_id)
+            detailed_changes = compute_detailed_diff(before_state, after_state)
+            
+            # Update the raw note with enhanced metadata if it exists
+            if isinstance(raw_note_text, str) and raw_note_text.strip():
+                # Find the raw note we just created and update its metadata
+                latest_raw_note = session.query(RawNote).filter_by(contact_id=contact_id).order_by(RawNote.created_at.desc()).first()
+                if latest_raw_note:
+                    enhanced_tags = latest_raw_note.metadata_tags or {}
+                    enhanced_tags.update({
+                        "before": before_state,
+                        "after": after_state,
+                        "detailed_changes": detailed_changes
+                    })
+                    latest_raw_note.metadata_tags = enhanced_tags
+                    session.add(latest_raw_note)
+                    session.commit()
             
             # Audit logging
             try:
@@ -3862,6 +3926,9 @@ def process_transcript_endpoint():
             if not contact:
                 return jsonify({"error": "Contact not found"}), 404
 
+            # Capture before state for detailed logging
+            before_state = get_contact_state_snapshot(session, contact_id)
+
             # Save synthesized entries
             for category_data in (normalized.get('categorized_updates', []) or []):
                 if not isinstance(category_data, dict):
@@ -3877,11 +3944,20 @@ def process_transcript_endpoint():
                         )
                         session.add(synthesized_entry)
             
-            # Log raw transcript with categorized result
+            # Capture after state and compute detailed changes
+            after_state = get_contact_state_snapshot(session, contact_id)
+            detailed_changes = compute_detailed_diff(before_state, after_state)
+            
+            # Log raw transcript with enhanced metadata
             tags_obj = {
                 "type": "telegram_sync",
-                "transcript": transcript,
-                "categorized_updates": normalized.get('categorized_updates', [])
+                "source": "telegram_import",
+                "raw_input": transcript,
+                "message_count": transcript.count('\n') + 1,
+                "before": before_state,
+                "after": after_state,
+                "categorized_updates": normalized.get('categorized_updates', []),
+                "detailed_changes": detailed_changes
             }
             raw_note = RawNote(
                 contact_id=contact_id,
@@ -4147,8 +4223,12 @@ def get_or_create_contact_by_identifier(identifier):
         return None
 
 @app.route('/api/export/csv', methods=['GET'])
+@login_required
 def export_all_data_csv():
     """Streams all user data as a single, comprehensive CSV file using a Record-Type CSV format."""
+    # Cache user_id before creating the generator to avoid Flask-Login context issues
+    user_id = current_user.id
+    
     def generate_csv():
         output = StringIO()
         writer = csv.writer(output)
@@ -4166,7 +4246,7 @@ def export_all_data_csv():
                 # CONTACT rows
                 cur = conn.execute('''
                     SELECT id, full_name, tier, created_at FROM contacts WHERE user_id = ? ORDER BY id
-                ''')
+                ''', (user_id,))
                 for row in cur:
                     writer.writerow([
                         'CONTACT', row['id'], row['id'], row['full_name'], row['tier'],
@@ -4181,7 +4261,7 @@ def export_all_data_csv():
                     JOIN contacts c ON c.id = se.contact_id
                     WHERE c.user_id = ?
                     ORDER BY se.id
-                ''')
+                ''', (user_id,))
                 for row in cur:
                     writer.writerow([
                         'SYNTHESIZED_DETAIL', row['se_id'], row['contact_id'], row['full_name'], row['tier'],
@@ -4196,7 +4276,7 @@ def export_all_data_csv():
                     JOIN contacts c ON c.id = rn.contact_id
                     WHERE c.user_id = ?
                     ORDER BY rn.id
-                ''')
+                ''', (user_id,))
                 for row in cur:
                     raw_content = ''
                     try:
@@ -4221,7 +4301,7 @@ def export_all_data_csv():
                     FROM contact_audit_log
                     WHERE user_id = ?
                     ORDER BY id
-                ''')
+                ''', (user_id,))
                 for row in cur:
                     writer.writerow([
                         'AUDIT_LOG', row['id'], row['contact_id'], '', '',
@@ -4241,61 +4321,82 @@ def export_all_data_csv():
     return response
 
 @app.route('/api/contact/<int:contact_id>/categories', methods=['PUT'])
+@login_required
 def replace_contact_categories(contact_id: int):
-    """Replace all synthesized category entries for a contact with provided updates and log the change."""
+    """Replace all synthesized category entries for a contact with provided updates using SQLAlchemy.
+
+    Ensures consistency with other endpoints that read via SQLAlchemy so data persists across reloads.
+    """
     try:
         payload = request.get_json() or {}
         updates = payload.get('categorized_updates', [])
         raw_note = payload.get('raw_note')
+
+        logger.info(f"📝 Save categories request for contact {contact_id}")
+        logger.info(f"📦 Received {len(updates)} category updates")
+
         if not isinstance(updates, list):
+            logger.error("❌ categorized_updates is not a list")
             return jsonify({"error": "categorized_updates must be a list"}), 400
-        # Validate categories and normalize structure
+
+        # Normalize and clean input
         cleaned = []
         for item in updates:
-            cat = canonicalize_category(item.get('category'))
-            details = [sanitize_text(d) for d in (item.get('details') or []) if sanitize_text(d)]
-            if not details:
-                continue
-            cleaned.append({"category": cat, "details": details})
-        conn = get_db_connection()
-        try:
-            # Snapshot before state
-            before = {}
-            cur = conn.execute('SELECT category, content FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
-            for row in cur.fetchall():
-                before.setdefault(row['category'], []).append(row['content'])
+            raw_cat = (item or {}).get('category', '')
+            cat = canonicalize_category(raw_cat)
+            details = [d for d in [(sanitize_text(x) if sanitize_text(x) else '') for x in (item or {}).get('details') or []] if d]
+            if details:
+                cleaned.append({"category": cat, "details": details})
+                logger.debug(f"  ✅ Category: '{raw_cat}' → '{cat}' ({len(details)} items)")
+            elif raw_cat:
+                logger.debug(f"  📭 Category: '{raw_cat}' is empty, skipping")
 
-            # Replace within a transaction
-            conn.execute('BEGIN')
-            conn.execute('DELETE FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
+        logger.info(f"✅ Cleaned {len(cleaned)} categories with data")
+
+        # Use SQLAlchemy session to ensure same DB as readers
+        session = get_session()
+        try:
+            # Verify ownership
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
+            if not contact:
+                return jsonify({"error": "Contact not found"}), 404
+
+            # Snapshot before
+            before = {}
+            existing = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).all()
+            for e in existing:
+                before.setdefault(e.category, []).append(e.content)
+
+            # Replace all
+            session.query(SynthesizedEntry).filter_by(contact_id=contact_id).delete(synchronize_session=False)
             for item in cleaned:
                 for detail in item['details']:
-                    conn.execute(
-                        'INSERT INTO synthesized_entries (contact_id, category, content) VALUES (?, ?, ?)',
-                        (contact_id, item['category'], detail)
-                    )
-            # Snapshot after state
+                    session.add(SynthesizedEntry(contact_id=contact_id, category=item['category'], content=detail, created_at=datetime.utcnow()))
+
+            session.flush()
+
+            # Snapshot after
             after = {}
-            cur2 = conn.execute('SELECT category, content FROM synthesized_entries WHERE contact_id = ?', (contact_id,))
-            for row in cur2.fetchall():
-                after.setdefault(row['category'], []).append(row['content'])
- 
-            # Build dynamic summary for log content based on real changes
+            new_entries = session.query(SynthesizedEntry).filter_by(contact_id=contact_id).all()
+            for e in new_entries:
+                after.setdefault(e.category, []).append(e.content)
+
+            # Build summary
             changed_categories = []
             added_count = 0
             removed_count = 0
-            for category in set(list(before.keys()) + list(after.keys())):
-                before_items = before.get(category, []) or []
-                after_items = after.get(category, []) or []
-                if before_items != after_items:
-                    changed_categories.append(category)
-                    added_count += sum(1 for x in after_items if x not in before_items)
-                    removed_count += sum(1 for x in before_items if x not in after_items)
+            all_cats = set(list(before.keys()) + list(after.keys()))
+            for cat in all_cats:
+                b = before.get(cat, []) or []
+                a = after.get(cat, []) or []
+                if b != a:
+                    changed_categories.append(cat)
+                    added_count += sum(1 for x in a if x not in b)
+                    removed_count += sum(1 for x in b if x not in a)
 
             if changed_categories:
                 if len(changed_categories) == 1:
-                    cats_part = changed_categories[0].replace('_', ' ')
-                    summary = f"Edited 1 category via UI: {cats_part}"
+                    summary = f"Edited 1 category via UI: {changed_categories[0].replace('_', ' ')}"
                 else:
                     preview = ', '.join([c.replace('_', ' ') for c in changed_categories[:3]])
                     ellipsis = '…' if len(changed_categories) > 3 else ''
@@ -4304,24 +4405,93 @@ def replace_contact_categories(contact_id: int):
             else:
                 summary = 'Saved categories with no changes'
 
-            # Prefer dynamic summary over any client-provided note
-            log_text = summary
-            tags_obj = {"type": "category_edit", "before": before, "after": after}
-            conn.execute('INSERT INTO raw_notes (contact_id, content, metadata_tags, created_at) VALUES (?, ?, ?, ?)', (
-                contact_id, log_text, json.dumps(tags_obj), datetime.now().isoformat()
-            ))
+            detailed_changes = compute_detailed_diff(before, after)
+            
+            # Debug logging
+            logger.info(f"📊 Before state: {before}")
+            logger.info(f"📊 After state: {after}")
+            logger.info(f"📊 Detailed changes: {detailed_changes}")
 
-            conn.commit()
-            try:
-                log_audit_event(contact_id, 1, 'SYNTHESIS_EDITED', 'MANUAL_USER', before, after, raw_note)
-            except Exception:
-                pass
-            return jsonify({"status": "success", "message": "Categories updated"})
+            tags_obj = {
+                "type": "category_edit",
+                "source": "ui_edit",
+                "before": before,
+                "after": after,
+                "detailed_changes": detailed_changes,
+                "summary": {
+                    "categories_modified": [cat.replace('_', ' ') for cat in changed_categories],
+                    "total_added": added_count,
+                    "total_removed": removed_count
+                }
+            }
+
+            session.add(RawNote(contact_id=contact_id, content=summary, metadata_tags=tags_obj, created_at=datetime.utcnow()))
+            session.commit()
+
+            logger.info(f"✅ Successfully saved {len(cleaned)} categories for contact {contact_id}")
+            logger.info(f"📊 Summary: {len(changed_categories)} categories modified, +{added_count} added, -{removed_count} removed")
+
+            return jsonify({
+                "status": "success",
+                "message": "Categories updated",
+                "details": {
+                    "categories_saved": len(cleaned),
+                    "categories_modified": len(changed_categories),
+                    "items_added": added_count,
+                    "items_removed": removed_count
+                }
+            })
+        except Exception as inner_e:
+            session.rollback()
+            logger.error(f"❌ Failed to save categories for contact {contact_id}: {str(inner_e)}", exc_info=True)
+            return jsonify({"error": f"Failed to replace categories: {inner_e}"}), 500
         finally:
-            conn.close()
+            session.close()
     except Exception as e:
-        logger.error(f"Failed to replace categories: {e}")
-        return jsonify({"error": f"Failed to replace categories: {e}"}), 500
+        logger.error(f"❌ Outer exception in replace_contact_categories: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Failed to process request: {e}"}), 500
+
+@app.route('/api/contact/<int:contact_id>/categories', methods=['GET'])
+@login_required
+def get_contact_categories(contact_id: int):
+    """Return all synthesized category entries for a contact using SQLAlchemy (consistent with readers)."""
+    try:
+        logger.info(f"📖 Loading categories for contact {contact_id}")
+
+        session = get_session()
+        try:
+            # Verify ownership
+            contact = session.query(Contact).filter_by(id=contact_id, user_id=current_user.id).first()
+            if not contact:
+                logger.warning(f"⚠️ Contact {contact_id} not found for user {current_user.id}")
+                return jsonify({"error": "Contact not found"}), 404
+
+            entries = (
+                session.query(SynthesizedEntry)
+                .filter_by(contact_id=contact_id)
+                .order_by(SynthesizedEntry.category.asc(), SynthesizedEntry.id.asc())
+                .all()
+            )
+
+            categorized = {}
+            for e in entries:
+                categorized.setdefault(e.category, []).append(e.content)
+
+            logger.info(f"✅ Loaded {len(entries)} entries across {len(categorized)} categories")
+
+            return jsonify({
+                "status": "success",
+                "contact_id": contact_id,
+                "categorized_data": categorized
+            })
+        except Exception as inner_e:
+            logger.error(f"❌ Failed to fetch categories for contact {contact_id}: {str(inner_e)}", exc_info=True)
+            return jsonify({"error": f"Failed to fetch categories: {inner_e}"}), 500
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"❌ Outer exception in get_contact_categories: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Failed to process request: {e}"}), 500
 
 @app.route('/api/contact/<int:contact_id>/audit-log', methods=['GET'])
 def get_audit_log_for_contact(contact_id: int):
@@ -5829,21 +5999,49 @@ def run_file_analysis_job(task_id: str, file_id: int):
         session = get_session()
         try:
             from models import RawNote, UploadedFile
-            # Create raw note
+            uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
+            
+            # Capture before state for detailed logging
+            before_state = get_contact_state_snapshot(session, contact_id)
+            
+            # Create raw note with enhanced metadata
             raw_note = RawNote(
                 contact_id=contact_id,
                 content=f"--- Analysis of uploaded file ---\n{extracted_text}",
-                metadata_tags={"source": "file_upload", "used_google_ocr": used_google_ocr, "used_openai_mm": used_openai_mm, "used_gemini": used_gemini}
+                metadata_tags={
+                    "type": "file_upload",
+                    "source": "file_upload",
+                    "file_name": uploaded_file.original_filename if uploaded_file else "unknown",
+                    "file_type": mime_type,
+                    "raw_input": extracted_text,
+                    "used_google_ocr": used_google_ocr,
+                    "used_openai_mm": used_openai_mm,
+                    "used_gemini": used_gemini
+                }
             )
             session.add(raw_note)
             session.flush()  # Get the ID without committing
             
             # Update uploaded file with raw note ID
-            uploaded_file = session.query(UploadedFile).filter_by(id=file_id).first()
             if uploaded_file:
                 uploaded_file.generated_raw_note_id = raw_note.id
                 session.add(uploaded_file)
             
+            session.commit()
+            
+            # Capture after state and compute detailed changes
+            after_state = get_contact_state_snapshot(session, contact_id)
+            detailed_changes = compute_detailed_diff(before_state, after_state)
+            
+            # Update the raw note with enhanced metadata
+            enhanced_tags = raw_note.metadata_tags or {}
+            enhanced_tags.update({
+                "before": before_state,
+                "after": after_state,
+                "detailed_changes": detailed_changes
+            })
+            raw_note.metadata_tags = enhanced_tags
+            session.add(raw_note)
             session.commit()
         except Exception as e:
             session.rollback()

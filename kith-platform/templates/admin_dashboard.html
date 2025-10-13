@@ -625,6 +625,98 @@
       document.getElementById('healthCheckCard').style.display = 'none';
     }
 
+    async function exportAllUsersCSV(){
+      const statusEl = document.getElementById('exportImportStatus');
+      statusEl.textContent = 'Exporting...';
+      try{
+        const res = await fetch('/admin/api/export/all-users-csv', {
+          method: 'GET',
+          credentials: 'include'
+        });
+        
+        if(!res.ok){
+          const error = await res.json().catch(() => ({error: 'Export failed'}));
+          throw new Error(error.detail || error.error || `HTTP ${res.status}`);
+        }
+        
+        // Get the filename from Content-Disposition header or use default
+        const contentDisposition = res.headers.get('Content-Disposition');
+        let filename = 'all_users_contacts.csv';
+        if(contentDisposition){
+          const match = contentDisposition.match(/filename="(.+)"/);
+          if(match) filename = match[1];
+        }
+        
+        // Download the file
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        statusEl.textContent = '✅ Export completed!';
+        statusEl.style.color = '#16a34a';
+        
+      }catch(err){
+        statusEl.textContent = `❌ Export failed: ${err.message}`;
+        statusEl.style.color = '#dc2626';
+        console.error('Export error:', err);
+      }
+    }
+
+    async function importCSV(){
+      const fileInput = document.getElementById('importFile');
+      const statusEl = document.getElementById('exportImportStatus');
+      
+      if(!fileInput.files || fileInput.files.length === 0){
+        statusEl.textContent = '❌ Please select a CSV file first';
+        statusEl.style.color = '#dc2626';
+        return;
+      }
+      
+      const file = fileInput.files[0];
+      if(!file.name.toLowerCase().endsWith('.csv')){
+        statusEl.textContent = '❌ Please select a CSV file';
+        statusEl.style.color = '#dc2626';
+        return;
+      }
+      
+      statusEl.textContent = 'Importing...';
+      statusEl.style.color = '#64748b';
+      
+      try{
+        const formData = new FormData();
+        formData.append('backup_file', file);
+        
+        const res = await fetch('/admin/api/import/all-users-csv', {
+          method: 'POST',
+          credentials: 'include',
+          body: formData
+        });
+        
+        if(!res.ok){
+          const error = await res.json().catch(() => ({error: 'Import failed'}));
+          throw new Error(error.detail || error.error || `HTTP ${res.status}`);
+        }
+        
+        const result = await res.json();
+        statusEl.innerHTML = `✅ Import completed! Created: ${result.created}, Updated: ${result.updated}`;
+        statusEl.style.color = '#16a34a';
+        
+        // Clear the file input
+        fileInput.value = '';
+        
+      }catch(err){
+        statusEl.textContent = `❌ Import failed: ${err.message}`;
+        statusEl.style.color = '#dc2626';
+        console.error('Import error:', err);
+      }
+    }
+
     function init(){
       document.getElementById('runBtn').addEventListener('click', startRun);
       document.getElementById('diagnosticBtn').addEventListener('click', startDiagnostic);
@@ -632,6 +724,9 @@
       document.getElementById('healthCheckBtn').addEventListener('click', runComprehensiveHealthCheck);
       document.getElementById('closeDetailedResults').addEventListener('click', closeDetailedResults);
       document.getElementById('closeHealthCheck').addEventListener('click', closeHealthCheck);
+      document.getElementById('exportBtn').addEventListener('click', exportAllUsersCSV);
+      document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+      document.getElementById('importFile').addEventListener('change', importCSV);
       refreshOverview();
       refreshTrends();
       refreshCategories();
@@ -680,6 +775,23 @@
       <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
         <span style="color:#9333ea; font-size:12px;">Health Check Status:</span>
         <span id="healthStatus" class="muted" style="font-size:12px;"></span>
+      </div>
+    </div>
+    
+    <!-- Export/Import Section -->
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+        <h3 style="margin:0; color:#334155;">📊 Data Export/Import</h3>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+        <button id="exportBtn" style="background:#16a34a; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">📥 Export All Users CSV</button>
+        <input type="file" id="importFile" accept=".csv" style="display:none;">
+        <button id="importBtn" style="background:#2563eb; border:0; color:#fff; border-radius:8px; padding:10px 14px; cursor:pointer;">📤 Import CSV</button>
+        <span id="exportImportStatus" class="muted"></span>
+      </div>
+      <div style="font-size:12px; color:#64748b;">
+        💡 <strong>Export:</strong> Downloads all users and their contacts in a single CSV file<br>
+        💡 <strong>Import:</strong> Upload a CSV file to restore or update contact data
       </div>
     </div>
     <div class="grid">

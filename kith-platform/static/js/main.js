@@ -701,25 +701,49 @@ function wireProfileButtons() {
   if (saveAllBtn) {
     saveAllBtn.onclick = async () => {
       const id = parseInt(document.getElementById('selected-contact-id').value, 10);
+      console.log('💾 Saving all categories for contact:', id);
+      
       const payload = { categorized_updates: [], raw_note: 'Edited multiple categories via UI' };
       document.querySelectorAll('textarea.category-edit').forEach(ta => {
         const cat = ta.getAttribute('data-category');
         const lines = ta.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
         payload.categorized_updates.push({ category: cat, details: lines });
       });
+      
+      console.log('📦 Payload:', JSON.stringify(payload, null, 2));
+      console.log(`📊 Sending ${payload.categorized_updates.length} category updates`);
+      
+      // Disable button to prevent double-clicks
+      saveAllBtn.disabled = true;
+      saveAllBtn.textContent = 'Saving...';
+      
       try {
-        const res = await fetch(`/api/contacts/${id}/categories`, {
+        console.log('🚀 Sending PUT request to /api/contact/' + id + '/categories');
+        const res = await fetch(`/api/contact/${id}/categories`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(payload)
         });
+        
+        console.log('📡 Response status:', res.status, res.statusText);
         const out = await res.json();
-        if (!res.ok || out.error) throw new Error(out.error || out.message || 'Failed to save');
+        console.log('📥 Response data:', out);
+        
+        if (!res.ok || out.error) {
+          throw new Error(out.error || out.message || 'Failed to save');
+        }
+        
+        console.log('✅ Save successful, reloading categories...');
+        
         // Immediately fetch categories from modular GET to ensure UI reflects latest
         try {
-          const catsRes = await fetch(`/api/contacts/${id}/categories`);
+          const catsRes = await fetch(`/api/contact/${id}/categories`, {
+            credentials: 'include'
+          });
           if (catsRes.ok) {
             const cats = await catsRes.json();
+            console.log('📖 Reloaded categories:', Object.keys(cats.categorized_data || {}).length, 'categories');
             if (cats && cats.categorized_data) {
               // Render with latest categories while keeping existing contact info in DOM
               const currentName = document.getElementById('contact-profile-name')?.textContent || '';
@@ -728,16 +752,30 @@ function wireProfileButtons() {
               await loadContactProfile(id);
             }
           } else {
+            console.warn('⚠️ Failed to reload categories, doing full profile reload');
             await loadContactProfile(id);
           }
-        } catch (_) {
+        } catch (reloadErr) {
+          console.error('❌ Error reloading categories:', reloadErr);
           await loadContactProfile(id);
         }
         // after reload, buttons reset via renderContactProfile
-        alert('All categories saved.');
+        // Refresh raw logs to show the new detailed entry
+        if (typeof window.fetchAndRenderRawLogs === 'function') {
+          await window.fetchAndRenderRawLogs(id);
+        }
+        
+        const summary = out.details 
+          ? `Saved! ${out.details.items_added} items added, ${out.details.items_removed} removed across ${out.details.categories_modified} categories.`
+          : 'All categories saved successfully!';
+        alert(summary);
       } catch (e) {
-        console.error(e);
+        console.error('❌ Save failed:', e);
         alert('Failed to save all categories: ' + (e.message || e));
+      } finally {
+        // Re-enable button
+        saveAllBtn.disabled = false;
+        saveAllBtn.textContent = 'Save All Notes';
       }
     };
   }

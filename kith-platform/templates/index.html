@@ -1260,50 +1260,40 @@
               return;
             }
             
-            let html = '<div class="change-history">';
+            let html = '<div class="change-history-timeline">';
             
             entries.forEach((entry, index) => {
-              let date = 'Unknown date';
-              if (entry.date) {
-                try {
-                  date = new Date(entry.date).toLocaleString();
-                } catch (e) {
-                  date = entry.date;
-                }
-              }
               const details = entry.details;
-              const engine = entry.engine;
+              const entryId = `log-entry-${index}`;
               
-              html += `<div class="change-entry">`;
-              html += `<div class="change-header">`;
-              html += `<div class="change-date">${date}</div>`;
-              html += `<div class="change-meta">`;
-              if (engine) {
-                const label = engine === 'vision' ? 'Google Vision' : engine === 'openai' ? 'OpenAI' : engine === 'gemini' ? 'Gemini' : 'Local';
-                const icon = engine === 'vision' ? '👁️' : engine === 'openai' ? '🤖' : engine === 'gemini' ? '✨' : '📄';
-                html += `<span class="engine-badge ${engine}" title="Processed by ${label}">${icon} ${label}</span>`;
-              }
-              html += `</div>`; // change-meta
-              html += `</div>`; // change-header
+              // Timeline entry container
+              html += `<div class="timeline-entry" data-entry-id="${entryId}">`;
               
-              html += `<div class="change-description">${entry.content}</div>`;
-              
-              // Only show detailed tables for entries with before/after data
-              if (details && typeof details === 'object' && !Array.isArray(details) && details.before && details.after) {
-                html += `<div class="change-details">`;
-                html += createBeforeAfterTable(details.before, details.after);
-                html += `</div>`;
-              } else if (details && typeof details === 'object' && !Array.isArray(details) && details.categorized_updates) {
-                html += `<div class="change-details">`;
-                html += createCategorizationTable(details.categorized_updates, details.type);
-                html += `</div>`;
-              } else {
-                html += `<div class="change-details-simple">`;
-                html += `<p>Basic event - no detailed changes available</p>`;
-                html += `</div>`;
-              }
-              
+              // Timeline dot/connector
+              html += `<div class="timeline-connector">`;
+              html += `<div class="timeline-dot"></div>`;
               html += `</div>`;
+              
+              // Entry content
+              html += `<div class="timeline-content">`;
+              
+              // Header (always visible)
+              html += `<div class="timeline-header" onclick="toggleTimelineEntry('${entryId}')">`;
+              html += `<div class="timeline-date">${formatDate(entry.date)}</div>`;
+              html += `<div class="timeline-summary">${generateSummary(entry, details)}</div>`;
+              html += `<div class="timeline-badges">`;
+              html += generateBadges(details, entry.engine);
+              html += `<span class="expand-icon">▼</span>`;
+              html += `</div>`;
+              html += `</div>`;
+              
+              // Expandable details (hidden by default)
+              html += `<div class="timeline-details" id="${entryId}-details" style="display: none;">`;
+              html += renderDetailedChanges(details);
+              html += `</div>`;
+              
+              html += `</div>`; // timeline-content
+              html += `</div>`; // timeline-entry
             });
             
             html += '</div>';
@@ -1398,6 +1388,201 @@
           const div = document.createElement('div');
           div.textContent = text;
           return div.innerHTML;
+        }
+
+        function formatDate(dateString) {
+          if (!dateString) return 'Unknown date';
+          try {
+            return new Date(dateString).toLocaleString();
+          } catch (e) {
+            return dateString;
+          }
+        }
+
+        function generateSummary(entry, details) {
+          // Create concise one-line summary based on details
+          if (!details) return entry.content || 'Change recorded';
+          
+          const type = details.type;
+          const source = details.source;
+          
+          if (type === 'category_edit' && details.summary) {
+            return `Edited ${details.summary.categories_modified?.join(', ') || 'categories'}`;
+          } else if (type === 'manual_note') {
+            return 'Added note and updated categories';
+          } else if (type === 'telegram_sync') {
+            return `Synced ${details.message_count || 'multiple'} Telegram messages`;
+          } else if (type === 'file_upload') {
+            return `Analyzed file: ${details.file_name || 'uploaded document'}`;
+          }
+          
+          return entry.content || 'Data change';
+        }
+
+        function generateBadges(details, engine) {
+          let html = '';
+          
+          // Source badge
+          if (details?.source) {
+            const sourceLabels = {
+              'ui_edit': { icon: '✏️', label: 'UI Edit' },
+              'ui_note_input': { icon: '📝', label: 'Manual Note' },
+              'telegram_import': { icon: '💬', label: 'Telegram' },
+              'file_upload': { icon: '📎', label: 'File Upload' }
+            };
+            const source = sourceLabels[details.source] || { icon: '📄', label: details.source };
+            html += `<span class="source-badge">${source.icon} ${source.label}</span>`;
+          }
+          
+          // Engine badge (for file uploads)
+          if (engine) {
+            const engineLabels = {
+              'vision': { icon: '👁️', label: 'Google Vision' },
+              'openai': { icon: '🤖', label: 'OpenAI' },
+              'gemini': { icon: '✨', label: 'Gemini' },
+              'local': { icon: '📄', label: 'Local' }
+            };
+            const eng = engineLabels[engine] || { icon: '🔧', label: engine };
+            html += `<span class="engine-badge ${engine}">${eng.icon} ${eng.label}</span>`;
+          }
+          
+          return html;
+        }
+
+        function toggleTimelineEntry(entryId) {
+          const details = document.getElementById(`${entryId}-details`);
+          const entry = document.querySelector(`[data-entry-id="${entryId}"]`);
+          const icon = entry.querySelector('.expand-icon');
+          
+          if (details.style.display === 'none') {
+            details.style.display = 'block';
+            icon.textContent = '▲';
+            entry.classList.add('expanded');
+          } else {
+            details.style.display = 'none';
+            icon.textContent = '▼';
+            entry.classList.remove('expanded');
+          }
+        }
+
+        function expandRawInput(button) {
+          const section = button.closest('.raw-input-section');
+          const preview = section.querySelector('.raw-input-content > pre:first-child');
+          const fullInput = section.querySelector('.full-raw-input');
+          
+          if (fullInput.style.display === 'none') {
+            preview.style.display = 'none';
+            fullInput.style.display = 'block';
+            button.textContent = 'Show Less';
+          } else {
+            preview.style.display = 'block';
+            fullInput.style.display = 'none';
+            button.textContent = 'Show Full Input';
+          }
+        }
+
+        function renderDetailedChanges(details) {
+          if (!details || typeof details !== 'object') {
+            return '<div class="no-details">No detailed information available</div>';
+          }
+          
+          let html = '';
+          
+          // 1. Raw Input Section
+          if (details.raw_input || details.transcript) {
+            const rawText = details.raw_input || details.transcript;
+            html += `<div class="detail-section raw-input-section">`;
+            html += `<h4 class="section-title">📝 Raw Input</h4>`;
+            html += `<div class="raw-input-content">`;
+            html += `<pre>${escapeHtml(rawText.substring(0, 500))}${rawText.length > 500 ? '...' : ''}</pre>`;
+            if (rawText.length > 500) {
+              html += `<button class="expand-raw-btn" onclick="expandRawInput(this)">Show Full Input</button>`;
+              html += `<pre class="full-raw-input" style="display:none;">${escapeHtml(rawText)}</pre>`;
+            }
+            html += `</div></div>`;
+          }
+          
+          // 2. Detailed Changes Section
+          if (details.detailed_changes && Object.keys(details.detailed_changes).length > 0) {
+            html += `<div class="detail-section changes-section">`;
+            html += `<h4 class="section-title">🔄 What Changed</h4>`;
+            html += renderDetailedDiff(details.detailed_changes);
+            html += `</div>`;
+          } 
+          // Fallback to before/after if detailed_changes not available
+          else if (details.before && details.after) {
+            html += `<div class="detail-section changes-section">`;
+            html += `<h4 class="section-title">🔄 What Changed</h4>`;
+            html += createBeforeAfterTable(details.before, details.after);
+            html += `</div>`;
+          }
+          // Show categorized updates for additions (telegram/notes without before state)
+          else if (details.categorized_updates) {
+            html += `<div class="detail-section changes-section">`;
+            html += `<h4 class="section-title">➕ Information Added</h4>`;
+            html += createCategorizationTable(details.categorized_updates, details.type);
+            html += `</div>`;
+          }
+          
+          // 3. Metadata Section
+          html += renderMetadata(details);
+          
+          return html;
+        }
+
+        function renderDetailedDiff(detailedChanges) {
+          let html = `<div class="detailed-diff">`;
+          
+          Object.entries(detailedChanges).forEach(([category, changes]) => {
+            html += `<div class="category-change-group">`;
+            html += `<div class="category-header">${category.replace(/_/g, ' ')}</div>`;
+            
+            // Added items
+            if (changes.added && changes.added.length > 0) {
+              html += `<div class="change-group added-group">`;
+              html += `<div class="change-label">✅ Added (${changes.added.length})</div>`;
+              changes.added.forEach(item => {
+                html += `<div class="change-item added-item">${escapeHtml(item)}</div>`;
+              });
+              html += `</div>`;
+            }
+            
+            // Removed items
+            if (changes.removed && changes.removed.length > 0) {
+              html += `<div class="change-group removed-group">`;
+              html += `<div class="change-label">❌ Removed (${changes.removed.length})</div>`;
+              changes.removed.forEach(item => {
+                html += `<div class="change-item removed-item">${escapeHtml(item)}</div>`;
+              });
+              html += `</div>`;
+            }
+            
+            // Unchanged items (collapsed by default)
+            if (changes.unchanged && changes.unchanged.length > 0) {
+              html += `<details class="unchanged-details">`;
+              html += `<summary class="unchanged-summary">Unchanged (${changes.unchanged.length})</summary>`;
+              html += `<div class="change-group unchanged-group">`;
+              changes.unchanged.forEach(item => {
+                html += `<div class="change-item unchanged-item">${escapeHtml(item)}</div>`;
+              });
+              html += `</div>`;
+              html += `</details>`;
+            }
+            
+            html += `</div>`; // category-change-group
+          });
+          
+          html += `</div>`;
+          return html;
+        }
+
+        function renderMetadata(details) {
+          let html = '<div class="detail-section metadata-section">';
+          html += '<details><summary>Technical Details</summary>';
+          html += '<pre class="metadata-json">';
+          html += JSON.stringify(details, null, 2);
+          html += '</pre></details></div>';
+          return html;
         }
 
         // Additional event listeners

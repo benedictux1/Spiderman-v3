@@ -245,6 +245,14 @@ def create_app(config_class=None):
     except Exception as e:
         logging.warning(f"Failed to register analytics blueprint: {e}")
 
+    # Register export/import blueprints
+    try:
+        from app.api.admin_export_import import admin_export_import_bp
+        app.register_blueprint(admin_export_import_bp, url_prefix='/admin/api')
+    except Exception as e:
+        logging.warning(f"Failed to register admin export/import blueprint: {e}")
+
+
     # Register categories blueprint for Save All Notes
     try:
         from app.api.categories import categories_bp

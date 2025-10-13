@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, Response
 from flask_login import login_required, current_user
 from dependency_injector.wiring import inject, Provide
 from app.services.settings_service import SettingsService
@@ -267,3 +267,81 @@ def update_integrations(settings_service: SettingsService = Provide[Container.se
     except Exception as e:
         logger.error(f"Error updating integrations: {e}")
         return jsonify({'error': 'Failed to update integrations'}), 500
+
+
+@settings_bp.route('/export/contacts-csv', methods=['GET'])
+@login_required
+def export_contacts_csv():
+    """Export current user's contacts to CSV"""
+    try:
+        from app.services.export_service import ExportService
+        from app.utils.database import DatabaseManager
+        from app.models import Contact
+
+        dm = DatabaseManager()
+        with dm.get_session() as session:
+            # Use filter_by to avoid binding issues
+            contacts = session.query(Contact).filter_by(user_id=current_user.id).all()
+            rows = []
+            for c in contacts:
+                cf = c.custom_fields or {}
+                rows.append({
+                    'user_id': current_user.id,
+                    'user_username': getattr(current_user, 'username', ''),
+                    'user_email': getattr(current_user, 'email', ''),
+                    'contact_id': c.id,
+                    'contact_external_id': c.vector_collection_id,
+                    'contact_name': c.full_name,
+                    'contact_phone': c.telegram_phone,
+                    'contact_email': (cf or {}).get('email'),
+                    'categories': cf.get('categories'),
+                    'tags': cf.get('tags'),
+                    'sources': cf.get('sources'),
+                    'raw_logs_json': cf.get('raw_logs'),
+                    'edits_json': cf.get('edits'),
+                    'created_at': c.created_at.isoformat() if c.created_at else '',
+                    'updated_at': c.updated_at.isoformat() if c.updated_at else '',
+                })
+            csv_bytes = ExportService.generate_contacts_csv(rows)
+        return Response(
+            csv_bytes,
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment; filename="my_contacts.csv"'}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting contacts: {e}")
+        return jsonify({'error': 'Failed to export contacts'}), 500
+
+
+@settings_bp.route('/import/contacts-csv', methods=['POST'])
+@login_required
+def import_contacts_csv():
+    """Import contacts from CSV for current user"""
+    try:
+        if 'backup_file' not in request.files:
+            return jsonify({'error': 'CSV file is required (field name: backup_file)'}), 400
+        file = request.files['backup_file']
+        data = file.read()
+        from app.services.import_service import ImportService
+        from app.utils.database import DatabaseManager
+        dm = DatabaseManager()
+        rows, parse_errors = ImportService.parse_and_validate(data)
+        if parse_errors:
+            return jsonify({'status': 'error', 'errors': parse_errors}), 400
+        # Restrict to current user only regardless of provided user_id
+        filtered = []
+        for r in rows:
+            r['user_id'] = current_user.id
+            filtered.append(r)
+        with dm.get_session() as session:
+            result = ImportService.upsert_contacts(session, filtered)
+        return jsonify({
+            'status': 'success',
+            'total_rows': result.total_rows,
+            'created': result.created,
+            'updated': result.updated,
+            'errors': result.errors
+        })
+    except Exception as e:
+        logger.error(f"Error importing contacts: {e}")
+        return jsonify({'error': 'Failed to import contacts'}), 500

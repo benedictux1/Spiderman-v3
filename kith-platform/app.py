@@ -2816,6 +2816,53 @@ def logout_page():
     from flask import redirect
     return redirect('/')
 
+@app.route('/init-admin-user', methods=['GET', 'POST'])
+def init_admin_user():
+    """Public endpoint to initialize admin user - for deployment setup only"""
+    try:
+        from app.utils.database import DatabaseManager
+        from app.models import User
+        from werkzeug.security import generate_password_hash
+        import os
+        
+        logging.info("🔧 Initializing admin user via endpoint...")
+        
+        db_manager = DatabaseManager()
+        with db_manager.get_session() as session:
+            admin_user = session.query(User).filter(User.username == 'admin').first()
+            
+            if not admin_user:
+                admin_username = os.getenv('DEFAULT_ADMIN_USER', 'admin')
+                admin_password = os.getenv('DEFAULT_ADMIN_PASS', 'admin123')
+                
+                hashed = generate_password_hash(admin_password, method='pbkdf2:sha256')
+                admin_user = User(
+                    username=admin_username,
+                    password_hash=hashed,
+                    password_plaintext=admin_password,
+                    role='admin'
+                )
+                session.add(admin_user)
+                session.commit()
+                logging.info(f"✅ Admin user created: {admin_username}")
+                return jsonify({
+                    "status": "success",
+                    "message": f"Admin user created: {admin_username}",
+                    "password": admin_password
+                })
+            else:
+                logging.info("✅ Admin user already exists")
+                return jsonify({
+                    "status": "success",
+                    "message": "Admin user already exists",
+                    "username": admin_user.username
+                })
+    except Exception as e:
+        logging.error(f"❌ Error initializing admin user: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 @app.route('/health')
 def health_check():
     """Health check endpoint for production monitoring."""

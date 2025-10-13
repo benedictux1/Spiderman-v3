@@ -305,7 +305,7 @@ def create_app(config_class=None):
             
             db_manager = DatabaseManager()
             with db_manager.get_session() as session:
-                user = session.query(User).filter(User.id == user_id).first()
+                user = session.query(User).filter(User.id == int(user_id)).first()
                 if user:
                     # Create lightweight AuthUser to avoid SQLAlchemy session issues
                     from app.api.auth import AuthUser

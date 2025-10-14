@@ -1,0 +1,14 @@
+# Telegram API Credentials
+# Get these from https://my.telegram.org
+TELEGRAM_API_ID=your_api_id_here
+TELEGRAM_API_HASH=your_api_hash_here
+
+# Optional: Bot token (if using bot authentication)
+# TELEGRAM_BOT_TOKEN=your_bot_token_here
+# TELEGRAM_USE_BOT_TOKEN=false
+
+# Optional: Custom session name
+# TELEGRAM_SESSION_NAME=kith_telegram_session
+
+# Optional: Encryption key (will be auto-generated if not set)
+# TELEGRAM_ENCRYPTION_KEY=your_encryption_key_here

@@ -97,3 +97,39 @@ def delete_contact(contact_id, contact_service: ContactService = Provide[Contain
     if success:
         return jsonify({'message': 'Contact deleted successfully'})
     return jsonify({'error': 'Contact not found'}), 404
+
+
+@contacts_bp.route('/upload', methods=['POST'])
+@login_required
+def upload_contacts_file():
+    """Upload contacts from a file (CSV/VCF). Returns basic success for now."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        file = request.files['file']
+        if not file or file.filename == '':
+            return jsonify({'error': 'Invalid file'}), 400
+        # Minimal implementation: accept and return created status
+        return jsonify({'message': 'File received', 'filename': file.filename}), 201
+    except Exception as e:
+        current_app.logger.error(f"Error uploading contacts file: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@contacts_bp.route('/search', methods=['GET'])
+@login_required
+def search_contacts():
+    """Semantic search placeholder using ChromaDB; returns empty results if unavailable."""
+    try:
+        query = request.args.get('q', '').strip()
+        results = []
+        try:
+            from app.utils.chromadb_client import chroma_client
+            # Placeholder: this demo just returns empty results; real impl will query collections per user
+            _ = chroma_client.get_client()
+        except Exception:
+            pass
+        return jsonify({'query': query, 'results': results}), 200
+    except Exception as e:
+        current_app.logger.error(f"Search error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500

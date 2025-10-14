@@ -1,11 +1,12 @@
 import os
 import logging
 from celery import Celery
+from typing import Optional
 from config.settings import Config
 
 logger = logging.getLogger(__name__)
 
-def create_celery_app():
+def create_celery_app(flask_app: Optional[object] = None):
     """Create and configure Celery application"""
     # Get Redis URL with fallback and validation
     redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
@@ -54,7 +55,24 @@ def create_celery_app():
     except Exception as e:
         logger.debug(f"Autodiscover skipped: {e}")
     
+    # Optionally bind Flask app context for tasks
+    if flask_app is not None:
+        TaskBase = celery.Task
+        class ContextTask(TaskBase):
+            def __call__(self, *args, **kwargs):
+                with flask_app.app_context():
+                    return TaskBase.__call__(self, *args, **kwargs)
+        celery.Task = ContextTask
+        logger.info("Celery tasks bound to Flask application context")
+
     return celery
 
 # Create the Celery app instance
-celery_app = create_celery_app()
+try:
+    # Try to import the Flask app to bind context when used from worker
+    from app import create_app
+    _flask_app = create_app()
+    celery_app = create_celery_app(_flask_app)
+except Exception as _bind_err:
+    logger.warning(f"Could not bind Celery to Flask app at import time: {_bind_err}")
+    celery_app = create_celery_app()

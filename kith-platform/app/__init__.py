@@ -55,6 +55,28 @@ def create_app(config_class=None):
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
     
+    # Configure caching (Redis preferred, fallback to SimpleCache)
+    try:
+        from flask_caching import Cache
+        redis_url = os.getenv('REDIS_URL') or os.getenv('REDIS_INTERNAL_URL')
+        if redis_url:
+            app.config.update({
+                "CACHE_TYPE": "RedisCache",
+                "CACHE_REDIS_URL": redis_url,
+                "CACHE_DEFAULT_TIMEOUT": 3600,
+            })
+            logging.info(f"Cache configured with Redis at: {redis_url[:40]}...")
+        else:
+            app.config.update({
+                "CACHE_TYPE": "SimpleCache",
+                "CACHE_DEFAULT_TIMEOUT": 600,
+            })
+            logging.warning("Using SimpleCache (no REDIS_URL set)")
+        cache = Cache(app)
+        app.extensions['cache'] = cache
+    except Exception as e:
+        logging.warning(f"Cache initialization failed or flask_caching missing: {e}")
+
     # Configure CORS
     from flask_cors import CORS
     CORS(app, 
@@ -138,6 +160,14 @@ def create_app(config_class=None):
     except Exception as e:
         logging.warning(f"Monitoring initialization failed: {e}. Continuing without monitoring.")
     
+    # Initialize ChromaDB client (optional; lazy-loaded via utility)
+    try:
+        from app.utils.chromadb_client import chroma_client
+        app.extensions['chromadb'] = chroma_client
+        logging.info("ChromaDB client registered in app extensions")
+    except Exception as e:
+        logging.warning(f"ChromaDB unavailable or not installed: {e}")
+
     # Register blueprints (with error handling)
     try:
         from app.api.auth import auth_bp
@@ -244,6 +274,13 @@ def create_app(config_class=None):
         app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
     except Exception as e:
         logging.warning(f"Failed to register analytics blueprint: {e}")
+
+    # Register calendar blueprint
+    try:
+        from app.api.calendar import calendar_bp
+        app.register_blueprint(calendar_bp, url_prefix='/api/calendar')
+    except Exception as e:
+        logging.warning(f"Failed to register calendar blueprint: {e}")
 
     # Register export/import blueprints
     try:

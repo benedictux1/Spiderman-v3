@@ -57,6 +57,35 @@ def process_note():
         logger.exception(f"Note processing failed for contact {contact_id}")
         return jsonify({"error": "Internal server error"}), 500
 
+
+@notes_bp.route('/analyze', methods=['POST'])
+@login_required
+def analyze_note():
+    """Alias endpoint for note analysis that enqueues async processing when available."""
+    try:
+        data = request.get_json() or {}
+        contact_id = data.get('contact_id')
+        note_text = data.get('note') or data.get('note_text') or ''
+        if not contact_id or not note_text:
+            return jsonify({'error': 'contact_id and note_text required'}), 400
+
+        # Try to enqueue Celery task; if Celery unavailable, fall back to sync AIService
+        try:
+            task = process_note_async.delay(contact_id, note_text, current_user.id)
+            return jsonify({'status': 'queued', 'task_id': task.id}), 202
+        except Exception:
+            ai_service = AIService()
+            db_manager = DatabaseManager()
+            with db_manager.get_session() as session:
+                contact = session.query(Contact).filter(Contact.id == contact_id, Contact.user_id == current_user.id).first()
+                if not contact:
+                    return jsonify({'error': 'Contact not found'}), 404
+                analysis_result = ai_service.analyze_note(content=note_text, contact_name=contact.full_name)
+                return jsonify({'status': 'completed', 'synthesis': analysis_result.get('categories', {}), 'contact_name': contact.full_name}), 200
+    except Exception as e:
+        logger.error(f"Analyze note error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @notes_bp.route('/task/<task_id>/status', methods=['GET'])
 @login_required
 def get_task_status(task_id):

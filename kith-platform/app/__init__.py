@@ -242,6 +242,15 @@ def create_app(config_class=None):
     except Exception as e:
         logging.warning(f"Failed to register notes blueprint: {e}")
     
+    # Backward compatibility for legacy /api/process-note route
+    try:
+        from app.api.notes import process_note as notes_process_note
+        @app.route('/api/process-note', methods=['POST'])
+        def legacy_process_note():
+            return notes_process_note()
+    except Exception as e:
+        logging.warning(f"Failed to register legacy /api/process-note route: {e}")
+    
     try:
         from app.api.telegram import telegram_bp
         app.register_blueprint(telegram_bp, url_prefix='/api/telegram')

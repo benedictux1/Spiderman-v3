@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Graph Visibility Diagnostic</title>
+    <style>
+        .view {
+            border: 2px solid red;
+            padding: 20px;
+            margin: 10px;
+        }
+        #main-view { background: lightblue; }
+        #graph-view { background: lightgreen; }
+    </style>
+</head>
+<body>
+    <h1>Graph Visibility Test</h1>
+    <button onclick="testVisibility()">Test Visibility</button>
+    <button onclick="showGraph()">Show Graph</button>
+    <button onclick="showMain()">Show Main (Bug Simulation)</button>
+    <div id="output"></div>
+    
+    <div id="main-view" class="view" style="display: block;">
+        <h2>Main View</h2>
+        <p>This is the main view content</p>
+    </div>
+    
+    <div id="graph-view" class="view" style="display: none;">
+        <h2>Graph View</h2>
+        <div id="graph-container" style="width: 100%; height: 400px; background: white; border: 1px solid #ddd;">
+            <canvas width="800" height="400"></canvas>
+        </div>
+    </div>
+    
+    <script>
+        function testVisibility() {
+            const graphView = document.getElementById('graph-view');
+            const mainView = document.getElementById('main-view');
+            const canvas = document.querySelector('#graph-container canvas');
+            
+            const output = document.getElementById('output');
+            output.innerHTML = `
+                <h3>Visibility Report:</h3>
+                <p><strong>graph-view display:</strong> ${getComputedStyle(graphView).display}</p>
+                <p><strong>graph-view offsetParent:</strong> ${graphView.offsetParent !== null}</p>
+                <p><strong>graph-view z-index:</strong> ${getComputedStyle(graphView).zIndex}</p>
+                <p><strong>graph-view position:</strong> ${getComputedStyle(graphView).position}</p>
+                <p><strong>main-view display:</strong> ${getComputedStyle(mainView).display}</p>
+                <p><strong>main-view z-index:</strong> ${getComputedStyle(mainView).zIndex}</p>
+                <p><strong>Canvas rect:</strong> ${JSON.stringify(canvas.getBoundingClientRect())}</p>
+                <p><strong>Graph rect:</strong> ${JSON.stringify(graphView.getBoundingClientRect())}</p>
+            `;
+        }
+        
+        function showGraph() {
+            // Simulate relationship-graph.js
+            document.getElementById('graph-view').style.display = 'block';
+            testVisibility();
+        }
+        
+        function showMain() {
+            // Simulate main.js showMainView() - DOES NOT HIDE GRAPH-VIEW!
+            document.getElementById('main-view').style.display = 'block';
+            // Note: graph-view is NOT hidden here
+            testVisibility();
+        }
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tag Assignment Debug</title>
+</head>
+<body>
+    <h1>Tag Assignment URL Debug</h1>
+    
+    <input type="hidden" id="selected-contact-id" value="" />
+    <button onclick="testAssignment()">Test Assignment</button>
+    
+    <div id="output"></div>
+    
+    <script>
+        async function testAssignment() {
+            const contactId = document.getElementById('selected-contact-id').value;
+            const output = document.getElementById('output');
+            
+            output.innerHTML = `
+                <p><strong>Contact ID value:</strong> "${contactId}"</p>
+                <p><strong>Contact ID type:</strong> ${typeof contactId}</p>
+                <p><strong>Contact ID length:</strong> ${contactId.length}</p>
+                <p><strong>Is empty:</strong> ${!contactId}</p>
+                <p><strong>URL will be:</strong> /api/contacts/${contactId}/tags</p>
+            `;
+            
+            // This is what happens in the actual code
+            if (!contactId) {
+                output.innerHTML += `<p style="color: red;"><strong>ERROR: No contact selected!</strong></p>`;
+            }
+        }
+    </script>
+</body>
+</html>
+
+

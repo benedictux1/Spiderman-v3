@@ -1,0 +1,319 @@
+import os
+import tempfile
+import subprocess
+import xml.etree.ElementTree as ET
+import time
+from datetime import datetime
+from typing import List, Optional
+from celery import states, Task
+from app.celery_app import celery_app
+from app.utils.database import DatabaseManager
+from app.models import Base, TestRun, TestResult
+
+
+def _ensure_tables(dm: DatabaseManager):
+    try:
+        Base.metadata.create_all(dm.engine)
+    except Exception:
+        # Best-effort; migrations should normally handle this
+        pass
+
+
+# Register task on the project Celery app to ensure proper discovery by the worker
+@celery_app.task(bind=True, name='app.tasks.test_tasks.run_test_suite', queue='test_queue')
+def run_test_suite(self: Task, markers: Optional[List[str]] = None, parallel: bool = True, triggered_by: str = "admin"):
+    """Execute pytest, collect JUnit XML, and persist results to DB.
+
+    Args:
+        markers: Optional list of pytest markers to select subsets (e.g., ["api", "unit"]).
+        parallel: Currently unused placeholder for future xdist usage.
+        triggered_by: Who triggered the run.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"🔧 DEBUG: Starting test suite execution...")
+    logger.info(f"🔧 DEBUG: Parameters - markers: {markers}, parallel: {parallel}, triggered_by: {triggered_by}")
+    logger.info(f"🔧 DEBUG: Environment variables:")
+    logger.info(f"  - DATABASE_URL: {os.getenv('DATABASE_URL')}")
+    logger.info(f"  - FORCE_SQLITE_FOR_TESTS: {os.getenv('FORCE_SQLITE_FOR_TESTS')}")
+    logger.info(f"  - FLASK_ENV: {os.getenv('FLASK_ENV')}")
+    logger.info(f"  - PYTEST_DISABLE_PLUGIN_AUTOLOAD: {os.getenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD')}")
+    
+    dm = DatabaseManager()
+    logger.info("🔧 DEBUG: Database manager created")
+    _ensure_tables(dm)
+    logger.info("🔧 DEBUG: Database tables ensured")
+
+    with dm.get_session() as session:
+        logger.info("🔧 DEBUG: Creating test run record...")
+        run = TestRun(
+            status="running",
+            triggered_by=triggered_by,
+            trigger_type="manual",
+            environment=os.getenv("FLASK_ENV", "production"),
+            version=os.getenv("GIT_COMMIT", "unknown"),
+            started_at=datetime.utcnow(),
+        )
+        session.add(run)
+        session.flush()
+        run_id = run.id
+        logger.info(f"🔧 DEBUG: Test run created with ID: {run_id}")
+
+    # Only update state if we're running in a Celery context
+    if hasattr(self, 'request') and self.request.id:
+        self.update_state(state=states.STARTED, meta={"run_id": run_id, "status": "running"})
+        logger.info("🔧 DEBUG: Celery task state updated to STARTED")
+    else:
+        logger.info("🔧 DEBUG: Running outside Celery context, skipping state update")
+
+    # Build pytest command
+    with tempfile.TemporaryDirectory() as td:
+        junit_path = os.path.join(td, "junit.xml")
+        # Use python3 explicitly to avoid command not found issues
+        python_cmd = "python3" if os.system("which python3 > /dev/null 2>&1") == 0 else "python"
+        cmd = [python_cmd, "-m", "pytest", "tests/", "-q", f"--junitxml={junit_path}", "--tb=short"]
+        logger.info(f"🔧 DEBUG: Base pytest command: {cmd}")
+        
+        # Disable external plugins for stability
+        env = os.environ.copy()
+        env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        env["FORCE_SQLITE_FOR_TESTS"] = "1"
+        env["FLASK_ENV"] = "testing"
+        
+        logger.info(f"🔧 DEBUG: Environment variables for pytest:")
+        logger.info(f"  - PYTEST_DISABLE_PLUGIN_AUTOLOAD: {env.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD')}")
+        logger.info(f"  - FORCE_SQLITE_FOR_TESTS: {env.get('FORCE_SQLITE_FOR_TESTS')}")
+        logger.info(f"  - DATABASE_URL: {env.get('DATABASE_URL')}")
+        
+        if markers:
+            # Combine markers with or logic: -m "m1 or m2"
+            expr = " or ".join(markers)
+            cmd += ["-m", expr]
+            logger.info(f"🔧 DEBUG: Added markers: {expr}")
+
+        logger.info(f"🔧 DEBUG: Final pytest command: {cmd}")
+        logger.info(f"🔧 DEBUG: Working directory: {os.getcwd()}")
+        logger.info(f"🔧 DEBUG: JUnit XML path: {junit_path}")
+
+        # Run pytest from the worker's repository root (Render sets cwd to /opt/render/project/src/kith-platform)
+        # Ensure we're in the correct directory with tests
+        test_dir = os.getcwd()
+        if not os.path.exists(os.path.join(test_dir, "tests")):
+            # Try to find the tests directory
+            for root, dirs, files in os.walk("/opt/render/project/src"):
+                if "tests" in dirs and "requirements.txt" in files:
+                    test_dir = root
+                    break
+        
+        logger.info(f"🔧 DEBUG: Using test directory: {test_dir}")
+        logger.info(f"🔧 DEBUG: Tests directory exists: {os.path.exists(os.path.join(test_dir, 'tests'))}")
+        logger.info(f"🔧 DEBUG: Requirements.txt exists: {os.path.exists(os.path.join(test_dir, 'requirements.txt'))}")
+        
+        # Set PYTHONPATH after test_dir is determined
+        env["PYTHONPATH"] = test_dir
+        
+        logger.info("🔧 DEBUG: Executing pytest...")
+        start_time = time.time()
+        proc = subprocess.run(cmd, cwd=test_dir, env=env, capture_output=True, text=True)
+        end_time = time.time()
+        actual_duration = end_time - start_time
+        logger.info(f"🔧 DEBUG: Actual test execution time: {actual_duration:.2f} seconds")
+        
+        logger.info(f"🔧 DEBUG: Pytest completed with return code: {proc.returncode}")
+        logger.info(f"🔧 DEBUG: stdout length: {len(proc.stdout)} characters")
+        logger.info(f"🔧 DEBUG: stderr length: {len(proc.stderr)} characters")
+        
+        if proc.stdout:
+            logger.info(f"🔧 DEBUG: stdout preview: {proc.stdout[:500]}...")
+        if proc.stderr:
+            logger.info(f"🔧 DEBUG: stderr preview: {proc.stderr[:500]}...")
+
+        total = passed = failed = skipped = 0
+        duration_sum = 0.0
+        results: list[TestResult] = []
+
+        # Parse JUnit XML if exists
+        logger.info(f"🔧 DEBUG: Checking for JUnit XML at: {junit_path}")
+        logger.info(f"🔧 DEBUG: JUnit XML file exists: {os.path.exists(junit_path)}")
+        logger.info(f"🔧 DEBUG: JUnit XML file size: {os.path.getsize(junit_path) if os.path.exists(junit_path) else 'N/A'}")
+        if os.path.exists(junit_path):
+            logger.info("🔧 DEBUG: JUnit XML found, parsing...")
+            try:
+                tree = ET.parse(junit_path)
+                root = tree.getroot()
+                logger.info(f"🔧 DEBUG: JUnit XML root tag: {root.tag}")
+                
+                # JUnit schema variants: testsuite or testsuites
+                for ts in root.iter("testsuite"):
+                    logger.info(f"🔧 DEBUG: Found testsuite with {len(list(ts.iter('testcase')))} test cases")
+                    for tc in ts.iter("testcase"):
+                        total += 1
+                        name = tc.attrib.get("name", "")
+                        classname = tc.attrib.get("classname", "")
+                        time_s = float(tc.attrib.get("time", 0.0) or 0.0)
+                        duration_sum += time_s
+                        status = "passed"
+                        failure_message = None
+                        traceback_excerpt = None
+                        category = None
+
+                        # Status detection
+                        failure = tc.find("failure")
+                        skipped_tag = tc.find("skipped")
+                        if failure is not None:
+                            status = "failed"
+                            failed += 1
+                            failure_message = failure.attrib.get("message") or (failure.text or "").strip()[:2000]
+                            traceback_excerpt = (failure.text or "").strip()[:4000]
+                            logger.error(f"❌ TEST FAILED: {name}")
+                            logger.error(f"❌ Failure message: {failure_message[:200]}...")
+                            logger.error(f"❌ Traceback excerpt: {traceback_excerpt[:300]}...")
+                        elif skipped_tag is not None:
+                            status = "skipped"
+                            skipped += 1
+                            skip_reason = skipped_tag.attrib.get("message") or (skipped_tag.text or "").strip()[:2000]
+                            logger.info(f"🔧 DEBUG: Test skipped: {name}")
+                            logger.info(f"🔧 DEBUG: Skip reason: {skip_reason[:200]}...")
+                        else:
+                            passed += 1
+                            logger.info(f"🔧 DEBUG: Test passed: {name}")
+
+                        # Derive category from classname or markers in name (best effort)
+                        lname = (name or "").lower()
+                        if "health" in lname:
+                            category = "health_check"
+                        elif "component" in lname:
+                            category = "component"
+                        elif "integration" in lname:
+                            category = "integration"
+                        elif "performance" in lname:
+                            category = "performance"
+
+                        # Capture skip reason for skipped tests
+                        skip_reason = None
+                        if status == "skipped" and skipped_tag is not None:
+                            skip_reason = skipped_tag.attrib.get("message") or (skipped_tag.text or "").strip()[:2000]
+                        
+                        results.append(TestResult(
+                            run_id=run_id,
+                            test_name=name,
+                            nodeid=f"{classname}::{name}" if classname else name,
+                            test_module=classname,
+                            test_category=category,
+                            status=status,
+                            execution_time_seconds=time_s,
+                            failure_message=failure_message,
+                            traceback_excerpt=traceback_excerpt,
+                            skip_reason=skip_reason,
+                        ))
+                
+                logger.info(f"🔧 DEBUG: Parsed {total} tests: {passed} passed, {failed} failed, {skipped} skipped")
+            except Exception as e:
+                logger.error(f"❌ JUnit XML parsing error: {e}")
+                logger.error(f"🔧 DEBUG: Error type: {type(e).__name__}")
+                logger.error(f"🔧 DEBUG: Error details: {str(e)}")
+                # Fall back to aggregate only
+                pass
+        
+        # Use task duration if JUnit XML duration seems unrealistic (too fast)
+        logger.info(f"🔧 DEBUG: Timing decision - duration_sum: {duration_sum:.3f}, actual_duration: {actual_duration:.3f}")
+        logger.info(f"🔧 DEBUG: Condition 1 (duration_sum > 0): {duration_sum > 0}")
+        logger.info(f"🔧 DEBUG: Condition 2 (duration_sum < 1.0): {duration_sum < 1.0}")
+        logger.info(f"🔧 DEBUG: Condition 3 (actual_duration > duration_sum * 2): {actual_duration > duration_sum * 2}")
+        logger.info(f"🔧 DEBUG: duration_sum * 2 = {duration_sum * 2:.3f}")
+        
+        if duration_sum > 0 and duration_sum < 1.0 and actual_duration > duration_sum * 2:
+            logger.warning(f"⚠️ JUnit XML duration ({duration_sum:.2f}s) seems unrealistic, using task duration ({actual_duration:.2f}s)")
+            duration_sum = actual_duration
+        elif duration_sum == 0.0 and actual_duration > 0:
+            duration_sum = actual_duration
+            logger.info(f"🔧 DEBUG: Using fallback duration: {duration_sum:.2f} seconds")
+        elif duration_sum == 0.0:
+            # Use actual task duration as final fallback
+            duration_sum = actual_duration
+            logger.warning(f"⚠️ JUnit XML not found, using task duration: {duration_sum:.2f} seconds")
+        else:
+            logger.info(f"🔧 DEBUG: Using JUnit XML duration: {duration_sum:.2f} seconds")
+
+    # Persist aggregate and details
+    logger.info("🔧 DEBUG: Persisting test results to database...")
+    with dm.get_session() as session:
+        run = session.get(TestRun, run_id)
+        if run:
+            # Consider it successful if tests executed properly, even with some failures
+            # Exit code 1 means tests ran but some failed (this is normal)
+            # Exit code 2 is often a usage error but tests can still pass
+            # Only mark as failed if no tests were executed or there was a process error
+            if total == 0:
+                final_status = "failed"
+                run.error_message = "No tests were executed"
+            elif proc.returncode == 0:
+                final_status = "completed"
+            elif proc.returncode == 1 and total > 0:
+                final_status = "completed"  # Tests ran, some failed (normal)
+            elif proc.returncode == 2 and failed == 0:
+                final_status = "completed"  # Usage error but tests passed
+            else:
+                final_status = "failed"
+                run.error_message = f"Test process failed with exit code {proc.returncode}"
+            run.status = final_status
+            run.total_tests = total
+            run.passed_tests = passed
+            run.failed_tests = failed
+            run.skipped_tests = skipped
+            run.execution_time_seconds = duration_sum
+            run.completed_at = datetime.utcnow()
+            
+            logger.info(f"🔧 DEBUG: Final test results: {total} total, {passed} passed, {failed} failed, {skipped} skipped")
+            logger.info(f"🔧 DEBUG: Pytest return code: {proc.returncode}")
+            logger.info(f"🔧 DEBUG: Final status: {final_status}")
+            
+            if proc.returncode != 0 and failed == 0:
+                run.error_message = "Test process returned non-zero exit code"
+                logger.warning("⚠️ Test process returned non-zero exit code but no individual test failures detected")
+            
+            logger.info(f"🔧 DEBUG: Adding {len(results)} individual test results...")
+            for r in results:
+                session.add(r)
+            
+            logger.info("✅ Test results persisted to database")
+
+    result = {"run_id": run_id, "status": "completed" if (proc.returncode == 0 or (proc.returncode == 2 and failed == 0)) else "failed"}
+    logger.info(f"🔧 DEBUG: Returning result: {result}")
+    return result
+
+
+@celery_app.task(bind=True, name='app.tasks.test_tasks.test_health_check_task', queue='test_queue')
+def test_health_check_task(self: Task):
+    """Simple health check task for testing Celery connectivity"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Health check task started")
+    
+    # Simulate some work
+    time.sleep(1)
+    
+    result = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "task_id": self.request.id if hasattr(self, 'request') else None
+    }
+    
+    logger.info(f"🔧 DEBUG: Health check task completed: {result}")
+    return result
+
+
+@celery_app.task(bind=True, name='app.tasks.test_tasks.test_failure_task', queue='test_queue', max_retries=3)
+def test_failure_task(self: Task):
+    """Task that intentionally fails for testing failure handling"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔧 DEBUG: Failure test task started")
+    
+    # This task will always fail
+    raise Exception("Intentional failure for testing retry logic")
+
+

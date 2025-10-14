@@ -13,6 +13,12 @@ services:
         generateValue: true
       - key: FLASK_ENV
         value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kith-platform-main-db
+          property: connectionString
+      - key: REDIS_URL
+        value: ${REDIS_URL}
       - key: DEFAULT_ADMIN_USER
         value: admin
       - key: DEFAULT_ADMIN_PASS

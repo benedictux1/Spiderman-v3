@@ -23,33 +23,33 @@ def upload_file(file_service: FileService = Provide[Container.file_service]):
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
         
-        # Get contact ID (optional for initial consolidation tests)
+        # Get contact ID
         contact_id = request.form.get('contact_id', type=int)
+        if not contact_id:
+            return jsonify({'error': 'Contact ID is required'}), 400
         
         # Get optional description
         description = request.form.get('description', '')
         
         # Upload file
-        if contact_id:
-            uploaded_file = file_service.upload_file(
-                file=file,
-                contact_id=contact_id,
-                user_id=current_user.id,
-                description=description
-            )
-            if not uploaded_file:
-                return jsonify({'error': 'Failed to upload file'}), 400
-            return jsonify({
-                'success': True,
-                'file_id': uploaded_file['id'],
-                'file_path': uploaded_file['file_path'],
-                'original_filename': uploaded_file['original_filename'],
-                'file_size': uploaded_file['file_size_bytes'],
-                'file_type': uploaded_file['file_type']
-            }), 201
-        else:
-            # Minimal success response when no contact_id provided
-            return jsonify({'success': True, 'message': 'File received', 'filename': file.filename}), 201
+        uploaded_file = file_service.upload_file(
+            file=file,
+            contact_id=contact_id,
+            user_id=current_user.id,
+            description=description
+        )
+        
+        if not uploaded_file:
+            return jsonify({'error': 'Failed to upload file'}), 400
+        
+        return jsonify({
+            'success': True,
+            'file_id': uploaded_file['id'],
+            'file_path': uploaded_file['file_path'],
+            'original_filename': uploaded_file['original_filename'],
+            'file_size': uploaded_file['file_size_bytes'],
+            'file_type': uploaded_file['file_type']
+        })
         
     except Exception as e:
         logger.error(f"Error uploading file: {e}")

@@ -46,7 +46,8 @@ class AIService:
         if not self.openai_api_key:
             self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if not self.gemini_api_key:
-            self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+            # Support both GEMINI_API_KEY and GOOGLE_API_KEY
+            self.gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         
         # Validate API keys - be more lenient for testing
         if not self.openai_api_key and not self.gemini_api_key:
@@ -66,6 +67,13 @@ class AIService:
             
         if self.openai_api_key:
             openai.api_key = self.openai_api_key
+        # Configure Gemini client if available
+        if self.gemini_api_key:
+            try:
+                genai.configure(api_key=self.gemini_api_key)
+                logger.info("Gemini client configured")
+            except Exception as e:
+                logger.warning(f"Failed to configure Gemini client: {e}")
 
     @log_performance("ai_analysis")
     def analyze_note(self, content: str, contact_name: str) -> Dict[str, Any]:
@@ -107,7 +115,9 @@ class AIService:
         import re
         import google.api_core.exceptions
         
-        model = genai.GenerativeModel('gemini-pro-latest')
+        # Use requested model; default to latest if not available
+        model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
+        model = genai.GenerativeModel(model_name)
         
         prompt = f"""
         Analyze this note about {contact_name} and extract structured information.
